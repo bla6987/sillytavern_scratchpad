@@ -27,6 +27,10 @@ function createDrawer() {
     drawerElement.id = 'scratch-pad-drawer';
     drawerElement.className = 'sp-drawer';
 
+    // Force a consistent initial hidden state even if CSS loads late
+    drawerElement.style.transition = 'none';
+    drawerElement.style.transform = 'translateX(100%)';
+
     const content = document.createElement('div');
     content.className = 'sp-drawer-content';
     drawerElement.appendChild(content);
@@ -58,14 +62,26 @@ export function openScratchPad(threadId = null) {
     // Prevent body scroll
     document.body.classList.add('sp-drawer-open');
 
-    // Show drawer
-    drawer.classList.add('open');
+    // Ensure a consistent initial state before opening
+    drawer.classList.remove('open');
+
+    // Show drawer on next frame to avoid style-load timing issues
+    requestAnimationFrame(() => {
+        // Re-enable CSS transitions after the initial hidden state is applied
+        drawer.style.transition = '';
+        drawer.style.transform = '';
+        drawer.classList.add('open');
+    });
 
     // Render appropriate view
-    if (threadId) {
-        openThread(threadId);
-    } else {
-        renderThreadList(content);
+    try {
+        if (threadId) {
+            openThread(threadId);
+        } else {
+            renderThreadList(content);
+        }
+    } catch (err) {
+        console.error('[ScratchPad] Failed to render drawer content:', err);
     }
 }
 
@@ -122,8 +138,13 @@ export function refreshScratchPadUI() {
  * Initialize the UI
  */
 export function initUI() {
-    // Create drawer on init
-    createDrawer();
+    // Clean up any stale drawer from previous loads
+    const existingDrawer = document.getElementById('scratch-pad-drawer');
+    if (existingDrawer) {
+        existingDrawer.remove();
+    }
+    drawerElement = null;
+    document.body.classList.remove('sp-drawer-open');
 
     // Handle escape key to close
     document.addEventListener('keydown', (e) => {
