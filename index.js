@@ -39,8 +39,8 @@ function ensureStylesLoaded() {
 
     const hrefCandidates = [
         getLocalUrl('./style.css'),
-        '/scripts/extensions/third-party/SillyTavern-ScratchPad/style.css',
-        '/extensions/third-party/SillyTavern-ScratchPad/style.css',
+        '/scripts/extensions/third-party/sillytavern_scratchpad/style.css',
+        '/extensions/third-party/sillytavern_scratchpad/style.css',
     ];
 
     const link = document.createElement('link');
@@ -72,8 +72,8 @@ async function loadSettingsHTML() {
     try {
         const html = await fetchFirstOkText([
             getLocalUrl('./settings.html'),
-            '/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html',
-            '/extensions/third-party/SillyTavern-ScratchPad/settings.html',
+            '/scripts/extensions/third-party/sillytavern_scratchpad/settings.html',
+            '/extensions/third-party/sillytavern_scratchpad/settings.html',
         ]);
 
         if (html) {
