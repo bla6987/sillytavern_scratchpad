@@ -19,13 +19,13 @@ let pendingMessage = null;
 export function openThread(threadId, initialMessage = null) {
     currentThreadId = threadId;
     pendingMessage = initialMessage;
-    
+
     const drawer = document.getElementById('scratch-pad-drawer');
     if (!drawer) return;
-    
+
     const content = drawer.querySelector('.sp-drawer-content');
     if (!content) return;
-    
+
     renderConversation(content);
 }
 
@@ -35,13 +35,13 @@ export function openThread(threadId, initialMessage = null) {
 export function startNewThread() {
     currentThreadId = null;
     pendingMessage = null;
-    
+
     const drawer = document.getElementById('scratch-pad-drawer');
     if (!drawer) return;
-    
+
     const content = drawer.querySelector('.sp-drawer-content');
     if (!content) return;
-    
+
     renderConversation(content, true);
 }
 
@@ -52,16 +52,16 @@ export function startNewThread() {
  */
 export function renderConversation(container, isNewThread = false) {
     conversationContainer = container;
-    
+
     const thread = currentThreadId ? getThread(currentThreadId) : null;
-    
+
     container.innerHTML = '';
     container.className = 'sp-conversation-view';
-    
+
     // Header
     const header = document.createElement('div');
     header.className = 'sp-header sp-conversation-header';
-    
+
     const backBtn = createButton({
         icon: Icons.back,
         className: 'sp-back-btn',
@@ -69,10 +69,10 @@ export function renderConversation(container, isNewThread = false) {
         onClick: () => goBackToThreadList()
     });
     header.appendChild(backBtn);
-    
+
     const titleContainer = document.createElement('div');
     titleContainer.className = 'sp-title-container';
-    
+
     const titleEl = document.createElement('h2');
     titleEl.className = 'sp-title sp-thread-title';
     titleEl.textContent = thread ? thread.name : 'New Thread';
@@ -82,14 +82,14 @@ export function renderConversation(container, isNewThread = false) {
         }
     });
     titleContainer.appendChild(titleEl);
-    
+
     const subtitleEl = document.createElement('span');
     subtitleEl.className = 'sp-subtitle';
     subtitleEl.textContent = 'Out of Character';
     titleContainer.appendChild(subtitleEl);
-    
+
     header.appendChild(titleContainer);
-    
+
     const closeBtn = createButton({
         icon: Icons.close,
         className: 'sp-close-btn',
@@ -97,20 +97,20 @@ export function renderConversation(container, isNewThread = false) {
         onClick: () => closeScratchPadDrawer()
     });
     header.appendChild(closeBtn);
-    
+
     container.appendChild(header);
-    
+
     // Messages area
     const messagesContainer = document.createElement('div');
     messagesContainer.className = 'sp-messages';
     messagesContainer.id = 'sp-messages';
-    
+
     if (thread && thread.messages.length > 0) {
         // Implement virtual scrolling for large threads
-        const messagesToShow = thread.messages.length > 50 
-            ? thread.messages.slice(-50) 
+        const messagesToShow = thread.messages.length > 50
+            ? thread.messages.slice(-50)
             : thread.messages;
-        
+
         if (thread.messages.length > 50) {
             const loadMoreBtn = createButton({
                 text: `Load ${thread.messages.length - 50} earlier messages`,
@@ -119,7 +119,7 @@ export function renderConversation(container, isNewThread = false) {
             });
             messagesContainer.appendChild(loadMoreBtn);
         }
-        
+
         messagesToShow.forEach(msg => {
             const msgEl = createMessageElement(msg);
             messagesContainer.appendChild(msgEl);
@@ -139,22 +139,22 @@ export function renderConversation(container, isNewThread = false) {
         `;
         messagesContainer.appendChild(emptyState);
     }
-    
+
     container.appendChild(messagesContainer);
-    
+
     // Input area
     const inputContainer = document.createElement('div');
     inputContainer.className = 'sp-input-container';
-    
+
     const inputWrapper = document.createElement('div');
     inputWrapper.className = 'sp-input-wrapper';
-    
+
     const textarea = document.createElement('textarea');
     textarea.className = 'sp-message-input';
     textarea.id = 'sp-message-input';
     textarea.placeholder = 'Ask a question...';
     textarea.rows = 2;
-    
+
     const sendBtn = createButton({
         icon: Icons.send,
         text: 'Send',
@@ -162,32 +162,34 @@ export function renderConversation(container, isNewThread = false) {
         onClick: () => handleSendMessage()
     });
     sendBtn.id = 'sp-send-btn';
-    
+
     textarea.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleSendMessage();
+            handleSendMessage().catch(err => {
+                console.error('[ScratchPad] Send message error:', err);
+            });
         }
     });
-    
+
     // Auto-resize textarea
     textarea.addEventListener('input', debounce(() => {
         textarea.style.height = 'auto';
         textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
     }, 50));
-    
+
     inputWrapper.appendChild(textarea);
     inputWrapper.appendChild(sendBtn);
     inputContainer.appendChild(inputWrapper);
     container.appendChild(inputContainer);
-    
+
     // Scroll to bottom
     scrollToBottom();
-    
+
     // Focus input
     setTimeout(() => {
         textarea.focus();
-        
+
         // Handle pending message
         if (pendingMessage) {
             textarea.value = pendingMessage;
@@ -195,7 +197,7 @@ export function renderConversation(container, isNewThread = false) {
             handleSendMessage();
         }
     }, 100);
-    
+
     // Handle keyboard/viewport
     setupViewportHandlers();
 }
@@ -209,21 +211,21 @@ function createMessageElement(message) {
     const msgEl = document.createElement('div');
     msgEl.className = `sp-message sp-message-${message.role}`;
     msgEl.dataset.messageId = message.id;
-    
+
     if (message.status === 'failed') {
         msgEl.classList.add('sp-message-failed');
     }
-    
+
     // Role label
     const roleEl = document.createElement('div');
     roleEl.className = 'sp-message-role';
     roleEl.textContent = message.role === 'user' ? 'You' : 'Assistant';
     msgEl.appendChild(roleEl);
-    
+
     // Content
     const contentEl = document.createElement('div');
     contentEl.className = 'sp-message-content';
-    
+
     if (message.status === 'pending') {
         contentEl.appendChild(createSpinner());
     } else if (message.status === 'failed') {
@@ -233,7 +235,7 @@ function createMessageElement(message) {
                 <span>Generation failed${message.error ? `: ${message.error}` : ''}</span>
             </div>
         `;
-        
+
         const retryBtn = createButton({
             icon: Icons.retry,
             text: 'Retry',
@@ -244,15 +246,15 @@ function createMessageElement(message) {
     } else {
         contentEl.innerHTML = renderMarkdown(message.content);
     }
-    
+
     msgEl.appendChild(contentEl);
-    
+
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-message-time';
     timeEl.textContent = formatTimestamp(message.timestamp);
     msgEl.appendChild(timeEl);
-    
+
     return msgEl;
 }
 
@@ -261,22 +263,22 @@ function createMessageElement(message) {
  */
 async function handleSendMessage() {
     if (isGenerating) return;
-    
+
     const textarea = document.getElementById('sp-message-input');
     const sendBtn = document.getElementById('sp-send-btn');
     if (!textarea) return;
-    
+
     const message = textarea.value.trim();
     if (!message) return;
-    
+
     // Clear input
     textarea.value = '';
     textarea.style.height = 'auto';
-    
+
     // Disable send
     isGenerating = true;
     if (sendBtn) sendBtn.disabled = true;
-    
+
     try {
         // Create thread if needed
         if (!currentThreadId) {
@@ -289,7 +291,7 @@ async function handleSendMessage() {
             currentThreadId = newThread.id;
             await saveMetadata();
         }
-        
+
         // Refresh UI to show user message immediately
         const messagesContainer = document.getElementById('sp-messages');
         if (messagesContainer) {
@@ -299,10 +301,10 @@ async function handleSendMessage() {
                 emptyState.remove();
             }
         }
-        
+
         // Generate response with streaming
         let streamingMsgEl = null;
-        
+
         const result = await generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
             // Update streaming message element
             if (!streamingMsgEl) {
@@ -310,7 +312,7 @@ async function handleSendMessage() {
                 refreshConversation();
                 streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
             }
-            
+
             if (streamingMsgEl) {
                 if (!isComplete) {
                     streamingMsgEl.innerHTML = renderMarkdown(partialResponse);
@@ -318,14 +320,14 @@ async function handleSendMessage() {
                 scrollToBottom();
             }
         });
-        
+
         if (!result.success) {
             showToast(`Error: ${result.error}`, 'error');
         }
-        
+
         // Refresh conversation to show final state
         refreshConversation();
-        
+
         // Update thread name in header if changed
         const thread = getThread(currentThreadId);
         if (thread) {
@@ -334,7 +336,7 @@ async function handleSendMessage() {
                 titleEl.textContent = thread.name;
             }
         }
-        
+
     } finally {
         isGenerating = false;
         if (sendBtn) sendBtn.disabled = false;
@@ -348,11 +350,11 @@ async function handleSendMessage() {
  */
 async function handleRetry(messageId) {
     if (isGenerating || !currentThreadId) return;
-    
+
     const sendBtn = document.getElementById('sp-send-btn');
     isGenerating = true;
     if (sendBtn) sendBtn.disabled = true;
-    
+
     try {
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
             const msgEl = document.querySelector(`[data-message-id="${messageId}"] .sp-message-content`);
@@ -361,13 +363,13 @@ async function handleRetry(messageId) {
             }
             scrollToBottom();
         });
-        
+
         if (!result.success) {
             showToast(`Retry failed: ${result.error}`, 'error');
         }
-        
+
         refreshConversation();
-        
+
     } finally {
         isGenerating = false;
         if (sendBtn) sendBtn.disabled = false;
@@ -380,16 +382,16 @@ async function handleRetry(messageId) {
  */
 async function handleRenameThread(thread) {
     const newName = await showPromptDialog('Enter new thread name:', thread.name);
-    
+
     if (newName && newName.trim() && newName.trim() !== thread.name) {
         updateThread(thread.id, { name: newName.trim() });
         await saveMetadata();
-        
+
         const titleEl = document.querySelector('.sp-thread-title');
         if (titleEl) {
             titleEl.textContent = newName.trim();
         }
-        
+
         showToast('Thread renamed', 'success');
     }
 }
@@ -399,13 +401,13 @@ async function handleRenameThread(thread) {
  */
 function goBackToThreadList() {
     currentThreadId = null;
-    
+
     const drawer = document.getElementById('scratch-pad-drawer');
     if (!drawer) return;
-    
+
     const content = drawer.querySelector('.sp-drawer-content');
     if (!content) return;
-    
+
     // Import dynamically to avoid circular dependency
     import('./threadList.js').then(({ renderThreadList }) => {
         renderThreadList(content);
@@ -428,14 +430,14 @@ function refreshConversation() {
 function loadAllMessages(thread) {
     const messagesContainer = document.getElementById('sp-messages');
     if (!messagesContainer) return;
-    
+
     messagesContainer.innerHTML = '';
-    
+
     thread.messages.forEach(msg => {
         const msgEl = createMessageElement(msg);
         messagesContainer.appendChild(msgEl);
     });
-    
+
     scrollToBottom();
 }
 
@@ -472,7 +474,7 @@ function setupViewportHandlers() {
                 const viewportHeight = window.visualViewport.height;
                 const windowHeight = window.innerHeight;
                 const keyboardHeight = windowHeight - viewportHeight;
-                
+
                 if (keyboardHeight > 0) {
                     inputContainer.style.bottom = `${keyboardHeight}px`;
                 } else {
@@ -481,7 +483,7 @@ function setupViewportHandlers() {
             }
             scrollToBottom();
         }, 50);
-        
+
         window.visualViewport.addEventListener('resize', handleResize);
     }
 }

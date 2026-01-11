@@ -31,19 +31,19 @@ export function formatTimestamp(isoTimestamp) {
     if (moment) {
         return moment(isoTimestamp).fromNow();
     }
-    
+
     const date = new Date(isoTimestamp);
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
-    
+
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
+
     return date.toLocaleDateString();
 }
 
@@ -65,31 +65,52 @@ export function truncateText(text, maxLength = 50) {
  */
 export function createButton({ text, icon, className, onClick, ariaLabel, disabled = false }) {
     const button = document.createElement('button');
+    button.type = 'button'; // Prevent default submit behavior
     button.className = `sp-button ${className || ''}`.trim();
     button.disabled = disabled;
-    
+
     if (ariaLabel) {
         button.setAttribute('aria-label', ariaLabel);
     }
-    
+
     if (icon) {
         const iconSpan = document.createElement('span');
         iconSpan.className = 'sp-button-icon';
         iconSpan.innerHTML = icon;
         button.appendChild(iconSpan);
     }
-    
+
     if (text) {
         const textSpan = document.createElement('span');
         textSpan.className = 'sp-button-text';
         textSpan.textContent = text;
         button.appendChild(textSpan);
     }
-    
+
     if (onClick) {
-        button.addEventListener('click', onClick);
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                const result = onClick(e);
+                // Handle async functions - log errors instead of swallowing them
+                if (result instanceof Promise) {
+                    result.catch(err => {
+                        console.error('[ScratchPad] Button click error:', err);
+                        if (typeof toastr !== 'undefined') {
+                            toastr.error(`Error: ${err.message}`);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error('[ScratchPad] Button click error:', err);
+                if (typeof toastr !== 'undefined') {
+                    toastr.error(`Error: ${err.message}`);
+                }
+            }
+        });
     }
-    
+
     return button;
 }
 
@@ -100,23 +121,23 @@ export function createButton({ text, icon, className, onClick, ariaLabel, disabl
  */
 export function createInput({ type = 'text', placeholder, value, className, onInput, onKeyDown, multiline = false }) {
     const input = document.createElement(multiline ? 'textarea' : 'input');
-    
+
     if (!multiline) {
         input.type = type;
     }
-    
+
     input.className = `sp-input ${className || ''}`.trim();
     input.placeholder = placeholder || '';
     input.value = value || '';
-    
+
     if (onInput) {
         input.addEventListener('input', onInput);
     }
-    
+
     if (onKeyDown) {
         input.addEventListener('keydown', onKeyDown);
     }
-    
+
     return input;
 }
 
@@ -128,7 +149,7 @@ export function createInput({ type = 'text', placeholder, value, className, onIn
  */
 export async function showConfirmDialog(message, options = {}) {
     const { callGenericPopup, POPUP_TYPE } = SillyTavern.getContext();
-    
+
     if (callGenericPopup && POPUP_TYPE) {
         return await callGenericPopup(
             message,
@@ -140,7 +161,7 @@ export async function showConfirmDialog(message, options = {}) {
             }
         );
     }
-    
+
     // Fallback to native confirm
     return confirm(message);
 }
@@ -153,7 +174,7 @@ export async function showConfirmDialog(message, options = {}) {
  */
 export async function showPromptDialog(message, defaultValue = '') {
     const { callGenericPopup, POPUP_TYPE } = SillyTavern.getContext();
-    
+
     if (callGenericPopup && POPUP_TYPE) {
         return await callGenericPopup(
             message,
@@ -161,7 +182,7 @@ export async function showPromptDialog(message, defaultValue = '') {
             defaultValue
         );
     }
-    
+
     // Fallback to native prompt
     return prompt(message, defaultValue);
 }

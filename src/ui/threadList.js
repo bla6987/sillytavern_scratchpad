@@ -22,10 +22,10 @@ let threadListContainer = null;
  */
 export function renderThreadList(container) {
     threadListContainer = container;
-    
+
     container.innerHTML = '';
     container.className = 'sp-thread-list-view';
-    
+
     // Header
     const header = document.createElement('div');
     header.className = 'sp-header';
@@ -33,7 +33,7 @@ export function renderThreadList(container) {
         <h2 class="sp-title">Scratch Pad</h2>
         <span class="sp-subtitle">Out of Character</span>
     `;
-    
+
     const closeBtn = createButton({
         icon: Icons.close,
         className: 'sp-close-btn',
@@ -42,11 +42,11 @@ export function renderThreadList(container) {
     });
     header.appendChild(closeBtn);
     container.appendChild(header);
-    
+
     // Action bar
     const actionBar = document.createElement('div');
     actionBar.className = 'sp-action-bar';
-    
+
     const newThreadBtn = createButton({
         icon: Icons.add,
         text: 'New Thread',
@@ -55,14 +55,14 @@ export function renderThreadList(container) {
     });
     actionBar.appendChild(newThreadBtn);
     container.appendChild(actionBar);
-    
+
     // Thread list
     const listContainer = document.createElement('div');
     listContainer.className = 'sp-thread-list';
     listContainer.id = 'sp-thread-list';
-    
+
     const threads = getThreads();
-    
+
     if (threads.length === 0) {
         const emptyState = document.createElement('div');
         emptyState.className = 'sp-empty-state';
@@ -78,32 +78,34 @@ export function renderThreadList(container) {
             listContainer.appendChild(threadItem);
         });
     }
-    
+
     container.appendChild(listContainer);
-    
+
     // Quick input at bottom
     const inputContainer = document.createElement('div');
     inputContainer.className = 'sp-quick-input-container';
-    
+
     const quickInput = document.createElement('textarea');
     quickInput.className = 'sp-quick-input';
     quickInput.placeholder = 'Ask a question to start a new thread...';
     quickInput.rows = 2;
-    
+
     const sendBtn = createButton({
         icon: Icons.send,
         text: 'Send',
         className: 'sp-send-btn',
         onClick: () => handleQuickSend(quickInput.value)
     });
-    
+
     quickInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleQuickSend(quickInput.value);
+            handleQuickSend(quickInput.value).catch(err => {
+                console.error('[ScratchPad] Quick send error:', err);
+            });
         }
     });
-    
+
     inputContainer.appendChild(quickInput);
     inputContainer.appendChild(sendBtn);
     container.appendChild(inputContainer);
@@ -118,7 +120,7 @@ function createThreadItem(thread) {
     const item = document.createElement('div');
     item.className = 'sp-thread-item';
     item.dataset.threadId = thread.id;
-    
+
     // Main clickable area
     const mainContent = document.createElement('div');
     mainContent.className = 'sp-thread-main';
@@ -126,13 +128,13 @@ function createThreadItem(thread) {
         const { openThread } = await getConversationModule();
         openThread(thread.id);
     });
-    
+
     // Thread name
     const nameEl = document.createElement('div');
     nameEl.className = 'sp-thread-name';
     nameEl.textContent = thread.name;
     mainContent.appendChild(nameEl);
-    
+
     // Preview of last message
     const lastMessage = thread.messages[thread.messages.length - 1];
     if (lastMessage) {
@@ -141,19 +143,19 @@ function createThreadItem(thread) {
         previewEl.textContent = truncateText(lastMessage.content, 60);
         mainContent.appendChild(previewEl);
     }
-    
+
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-thread-time';
     timeEl.textContent = formatTimestamp(thread.updatedAt);
     mainContent.appendChild(timeEl);
-    
+
     item.appendChild(mainContent);
-    
+
     // Actions
     const actions = document.createElement('div');
     actions.className = 'sp-thread-actions';
-    
+
     const renameBtn = createButton({
         icon: Icons.edit,
         className: 'sp-action-btn sp-rename-btn',
@@ -163,7 +165,7 @@ function createThreadItem(thread) {
             handleRenameThread(thread);
         }
     });
-    
+
     const deleteBtn = createButton({
         icon: Icons.delete,
         className: 'sp-action-btn sp-delete-btn',
@@ -173,19 +175,19 @@ function createThreadItem(thread) {
             handleDeleteThread(thread);
         }
     });
-    
+
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
     item.appendChild(actions);
-    
+
     // Swipe to delete (touch support)
     let touchStartX = 0;
     let touchEndX = 0;
-    
+
     item.addEventListener('touchstart', (e) => {
         touchStartX = e.changedTouches[0].screenX;
     });
-    
+
     item.addEventListener('touchend', (e) => {
         touchEndX = e.changedTouches[0].screenX;
         if (touchStartX - touchEndX > 100) {
@@ -196,7 +198,7 @@ function createThreadItem(thread) {
             item.classList.remove('sp-swipe-delete');
         }
     });
-    
+
     return item;
 }
 
@@ -215,22 +217,22 @@ async function handleNewThread() {
 async function handleQuickSend(message) {
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
-    
+
     // Clear input
     const quickInput = document.querySelector('.sp-quick-input');
     if (quickInput) {
         quickInput.value = '';
     }
-    
+
     // Create new thread and open it
     const thread = createThread('New Thread');
     if (!thread) {
         showToast('Failed to create thread', 'error');
         return;
     }
-    
+
     await saveMetadata();
-    
+
     // Open the thread and send the message
     const { openThread } = await getConversationModule();
     openThread(thread.id, trimmedMessage);
@@ -242,7 +244,7 @@ async function handleQuickSend(message) {
  */
 async function handleRenameThread(thread) {
     const newName = await showPromptDialog('Enter new thread name:', thread.name);
-    
+
     if (newName && newName.trim() && newName.trim() !== thread.name) {
         updateThread(thread.id, { name: newName.trim() });
         await saveMetadata();
@@ -260,7 +262,7 @@ async function handleDeleteThread(thread) {
         `Delete thread "${thread.name}"? This cannot be undone.`,
         { confirmText: 'Delete', cancelText: 'Cancel' }
     );
-    
+
     if (confirmed) {
         deleteThread(thread.id);
         await saveMetadata();
