@@ -54,8 +54,12 @@ function createDrawer() {
  * @param {string} [threadId] Optional thread ID to open directly
  */
 export function openScratchPad(threadId = null) {
-    const drawer = createDrawer();
-    const content = drawer.querySelector('.sp-drawer-content');
+    // Reuse existing drawer if it exists, otherwise create new
+    if (!drawerElement) {
+        drawerElement = createDrawer();
+    }
+
+    const content = drawerElement.querySelector('.sp-drawer-content');
 
     if (!content) return;
 
@@ -63,14 +67,14 @@ export function openScratchPad(threadId = null) {
     document.body.classList.add('sp-drawer-open');
 
     // Ensure a consistent initial state before opening
-    drawer.classList.remove('open');
+    drawerElement.classList.remove('open');
 
     // Show drawer on next frame to avoid style-load timing issues
     requestAnimationFrame(() => {
         // Re-enable CSS transitions after the initial hidden state is applied
-        drawer.style.transition = '';
-        drawer.style.transform = '';
-        drawer.classList.add('open');
+        drawerElement.style.transition = '';
+        drawerElement.style.transform = '';
+        drawerElement.classList.add('open');
     });
 
     // Render appropriate view
@@ -93,6 +97,14 @@ export function closeScratchPad() {
 
     drawerElement.classList.remove('open');
     document.body.classList.remove('sp-drawer-open');
+
+    // Remove drawer element after transition completes (300ms as per CSS)
+    setTimeout(() => {
+        if (drawerElement && !drawerElement.classList.contains('open')) {
+            drawerElement.remove();
+            drawerElement = null;
+        }
+    }, 350);
 }
 
 /**
