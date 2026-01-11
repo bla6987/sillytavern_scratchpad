@@ -30,11 +30,7 @@ function createDrawer() {
     drawerElement.id = 'scratch-pad-drawer';
     drawerElement.className = 'sp-drawer';
 
-    // Force a consistent initial hidden state even if CSS loads late
-    drawerElement.style.transition = 'none';
-    drawerElement.style.transform = 'translateX(100%)';
-
-    console.log('[ScratchPad UI] Drawer element created with transform:', drawerElement.style.transform);
+    console.log('[ScratchPad UI] Drawer element created');
 
     const content = document.createElement('div');
     content.className = 'sp-drawer-content';
@@ -89,19 +85,14 @@ export function openScratchPad(threadId = null) {
     // Prevent body scroll
     document.body.classList.add('sp-drawer-open');
 
-    // Ensure a consistent initial state before opening
-    console.log('[ScratchPad UI] Removing open class before animation');
-    drawerElement.classList.remove('open');
-
-    // Show drawer on next frame to avoid style-load timing issues
+    // Add open class to trigger CSS animation
+    console.log('[ScratchPad UI] Adding open class to drawer');
+    // Use a small delay to ensure the element is fully rendered
     requestAnimationFrame(() => {
-        console.log('[ScratchPad UI] Animating drawer open');
-        // Re-enable CSS transitions after the initial hidden state is applied
-        drawerElement.style.transition = '';
-        drawerElement.style.transform = '';
         drawerElement.classList.add('open');
         console.log('[ScratchPad UI] Drawer classes:', drawerElement.className);
-        console.log('[ScratchPad UI] Drawer transform:', drawerElement.style.transform);
+        const computedStyle = window.getComputedStyle(drawerElement);
+        console.log('[ScratchPad UI] Computed transform:', computedStyle.transform);
     });
 
     // Render appropriate view

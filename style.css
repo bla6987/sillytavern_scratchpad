@@ -58,7 +58,7 @@ body.sp-drawer-open {
 }
 
 .sp-drawer.open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
 }
 
 @media (max-width: 480px) {
@@ -371,6 +371,7 @@ body.sp-drawer-open {
         opacity: 0;
         transform: translateY(10px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -544,9 +545,13 @@ body.sp-drawer-open {
 }
 
 @keyframes sp-bounce {
-    0%, 80%, 100% {
+
+    0%,
+    80%,
+    100% {
         transform: scale(0);
     }
+
     40% {
         transform: scale(1);
     }
@@ -794,6 +799,7 @@ body.sp-drawer-open {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+
     .sp-drawer,
     .sp-popup,
     .sp-popup-sheet,
@@ -802,13 +808,15 @@ body.sp-drawer-open {
     .sp-button {
         transition: none;
     }
-    
+
     .sp-spinner-dot {
         animation: none;
     }
-    
+
     @keyframes sp-message-in {
-        from, to {
+
+        from,
+        to {
             opacity: 1;
             transform: none;
         }
