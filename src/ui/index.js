@@ -30,6 +30,23 @@ function createDrawer() {
     drawerElement.id = 'scratch-pad-drawer';
     drawerElement.className = 'sp-drawer';
 
+    // Apply critical inline styles as fallback in case CSS doesn't load
+    Object.assign(drawerElement.style, {
+        position: 'fixed',
+        top: '0',
+        right: '0',
+        height: '100%',
+        width: '100%',
+        maxWidth: '400px',
+        zIndex: '9999',
+        background: '#1a1a2e',
+        transform: 'translateX(100%)',
+        transition: 'transform 0.3s ease',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.5)'
+    });
+
     console.log('[ScratchPad UI] Drawer element created');
 
     const content = document.createElement('div');
@@ -90,6 +107,8 @@ export function openScratchPad(threadId = null) {
     // Use a small delay to ensure the element is fully rendered
     requestAnimationFrame(() => {
         drawerElement.classList.add('open');
+        // Force transform to ensure visibility (fallback if CSS isn't loaded)
+        drawerElement.style.transform = 'translateX(0)';
         console.log('[ScratchPad UI] Drawer classes:', drawerElement.className);
         const computedStyle = window.getComputedStyle(drawerElement);
         console.log('[ScratchPad UI] Computed transform:', computedStyle.transform);
@@ -122,6 +141,8 @@ export function closeScratchPad() {
 
     console.log('[ScratchPad UI] Removing open class and body lock');
     drawerElement.classList.remove('open');
+    // Reset inline transform to allow CSS default (translateX(100%)) for close animation
+    drawerElement.style.transform = '';
     document.body.classList.remove('sp-drawer-open');
 
     // Remove drawer element after transition completes (300ms as per CSS)
