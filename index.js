@@ -18,12 +18,12 @@ const EXTENSION_NAME = 'Scratch Pad';
 async function loadSettingsHTML() {
     const context = SillyTavern.getContext();
     const settingsContainer = document.getElementById('scratch_pad_settings');
-    
+
     if (settingsContainer) {
         // Settings already loaded
         return;
     }
-    
+
     try {
         const response = await fetch('/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html');
         if (!response.ok) {
@@ -52,12 +52,12 @@ function appendSettingsHTML(html) {
         console.warn('[ScratchPad] Extensions settings container not found');
         return;
     }
-    
+
     const settingsDiv = document.createElement('div');
     settingsDiv.id = 'scratch_pad_settings';
     settingsDiv.innerHTML = html;
     extensionsSettings.appendChild(settingsDiv);
-    
+
     // Initialize settings UI
     loadSettingsUI();
     initSettingsListeners();
@@ -68,15 +68,16 @@ function appendSettingsHTML(html) {
  * Add the scratch pad button to the UI
  */
 function addScratchPadButton() {
-    // Check if button already exists
-    if (document.getElementById('scratch_pad_button')) {
-        return;
+    // Check if button already exists and remove it (stale)
+    const existingButton = document.getElementById('scratch_pad_button');
+    if (existingButton) {
+        existingButton.remove();
     }
-    
+
     // Find the extensions menu or create a button in the wand menu
     const extensionsMenu = document.getElementById('extensionsMenu');
     const wandMenu = document.getElementById('wand_menu');
-    
+
     // Create button
     const button = document.createElement('div');
     button.id = 'scratch_pad_button';
@@ -86,7 +87,7 @@ function addScratchPadButton() {
         <i class="fa-solid fa-clipboard"></i>
         <span>Scratch Pad</span>
     `;
-    
+
     button.addEventListener('click', () => {
         if (!isChatActive()) {
             toastr.warning('Open a chat to use Scratch Pad');
@@ -94,7 +95,7 @@ function addScratchPadButton() {
         }
         openScratchPad();
     });
-    
+
     // Add to extensions menu
     if (extensionsMenu) {
         extensionsMenu.appendChild(button);
@@ -119,7 +120,7 @@ function addScratchPadButton() {
 function handleChatChanged() {
     // Ensure scratch pad data exists for new chat
     ensureScratchPadExists();
-    
+
     // Refresh UI if open
     if (isScratchPadOpen()) {
         refreshScratchPadUI();
@@ -131,37 +132,37 @@ function handleChatChanged() {
  */
 async function init() {
     console.log(`[${EXTENSION_NAME}] Initializing...`);
-    
+
     // Get context
     const context = SillyTavern.getContext();
     const { eventSource, event_types } = context;
-    
+
     // Initialize settings
     getSettings();
-    
+
     // Initialize popup functions for commands
     initPopupFunctions();
-    
+
     // Register slash commands
     registerCommands();
-    
+
     // Initialize UI
     initUI();
-    
+
     // Load settings HTML
     await loadSettingsHTML();
-    
+
     // Add button to UI
     addScratchPadButton();
-    
+
     // Ensure scratch pad exists for current chat
     ensureScratchPadExists();
-    
+
     // Listen for chat changes
     if (eventSource && event_types) {
         eventSource.on(event_types.CHAT_CHANGED, handleChatChanged);
     }
-    
+
     console.log(`[${EXTENSION_NAME}] Initialized successfully`);
 }
 

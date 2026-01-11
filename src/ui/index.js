@@ -17,16 +17,20 @@ let drawerElement = null;
  * Create the scratch pad drawer element
  */
 function createDrawer() {
-    if (drawerElement) return drawerElement;
-    
+    // Check if drawer exists in DOM (stale from previous load)
+    const existingDrawer = document.getElementById('scratch-pad-drawer');
+    if (existingDrawer) {
+        existingDrawer.remove();
+    }
+
     drawerElement = document.createElement('div');
     drawerElement.id = 'scratch-pad-drawer';
     drawerElement.className = 'sp-drawer';
-    
+
     const content = document.createElement('div');
     content.className = 'sp-drawer-content';
     drawerElement.appendChild(content);
-    
+
     // Prevent body scroll when drawer is open
     drawerElement.addEventListener('touchmove', (e) => {
         const target = e.target;
@@ -35,9 +39,9 @@ function createDrawer() {
             // Allow scrolling only in scrollable containers
         }
     }, { passive: true });
-    
+
     document.body.appendChild(drawerElement);
-    
+
     return drawerElement;
 }
 
@@ -48,15 +52,15 @@ function createDrawer() {
 export function openScratchPad(threadId = null) {
     const drawer = createDrawer();
     const content = drawer.querySelector('.sp-drawer-content');
-    
+
     if (!content) return;
-    
+
     // Prevent body scroll
     document.body.classList.add('sp-drawer-open');
-    
+
     // Show drawer
     drawer.classList.add('open');
-    
+
     // Render appropriate view
     if (threadId) {
         openThread(threadId);
@@ -70,7 +74,7 @@ export function openScratchPad(threadId = null) {
  */
 export function closeScratchPad() {
     if (!drawerElement) return;
-    
+
     drawerElement.classList.remove('open');
     document.body.classList.remove('sp-drawer-open');
 }
@@ -99,12 +103,12 @@ export function isScratchPadOpen() {
  */
 export function refreshScratchPadUI() {
     if (!isScratchPadOpen()) return;
-    
+
     const content = drawerElement.querySelector('.sp-drawer-content');
     if (!content) return;
-    
+
     const currentThread = getCurrentThreadId();
-    
+
     if (currentThread) {
         // Refresh conversation view
         renderConversation(content);
@@ -120,7 +124,7 @@ export function refreshScratchPadUI() {
 export function initUI() {
     // Create drawer on init
     createDrawer();
-    
+
     // Handle escape key to close
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -131,7 +135,7 @@ export function initUI() {
             }
         }
     });
-    
+
     // Handle back button on mobile
     window.addEventListener('popstate', () => {
         if (isPopupVisible()) {
