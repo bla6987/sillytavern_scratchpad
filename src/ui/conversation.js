@@ -297,9 +297,12 @@ async function handleSendMessage() {
     textarea.value = '';
     textarea.style.height = 'auto';
 
-    // Disable send
+    // Disable send and show generating indicator
     isGenerating = true;
     if (sendBtn) sendBtn.disabled = true;
+    textarea.disabled = true;
+    textarea.placeholder = 'Generating...';
+    showGeneratingIndicator(true);
 
     try {
         // Create thread if needed
@@ -362,6 +365,9 @@ async function handleSendMessage() {
     } finally {
         isGenerating = false;
         if (sendBtn) sendBtn.disabled = false;
+        textarea.disabled = false;
+        textarea.placeholder = 'Ask a question...';
+        showGeneratingIndicator(false);
         textarea.focus();
     }
 }
@@ -504,6 +510,32 @@ function setupViewportHandlers() {
         }, 50);
 
         window.visualViewport.addEventListener('resize', handleResize);
+    }
+}
+
+/**
+ * Show or hide the generating indicator
+ * @param {boolean} show Whether to show the indicator
+ */
+function showGeneratingIndicator(show) {
+    const inputContainer = document.querySelector('.sp-input-container');
+    if (!inputContainer) return;
+
+    // Remove existing indicator
+    const existing = inputContainer.querySelector('.sp-generating-indicator');
+    if (existing) existing.remove();
+
+    if (show) {
+        const indicator = document.createElement('div');
+        indicator.className = 'sp-generating-indicator';
+        indicator.innerHTML = `
+            <div class="sp-generating-spinner"></div>
+            <span>Generating response...</span>
+        `;
+        inputContainer.insertBefore(indicator, inputContainer.firstChild);
+        inputContainer.classList.add('sp-generating');
+    } else {
+        inputContainer.classList.remove('sp-generating');
     }
 }
 

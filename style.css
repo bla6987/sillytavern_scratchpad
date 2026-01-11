@@ -813,6 +813,54 @@ body.sp-drawer-open {
 }
 
 /* ========================================
+   Generating Indicator
+   ======================================== */
+.sp-generating-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    color: var(--sp-accent);
+    font-size: 0.8125rem;
+    animation: sp-pulse 1.5s ease-in-out infinite;
+}
+
+.sp-generating-spinner {
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 2px solid var(--sp-border);
+    border-top-color: var(--sp-accent);
+    border-radius: 50%;
+    animation: sp-spin 0.8s linear infinite;
+}
+
+@keyframes sp-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes sp-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.sp-input-container.sp-generating .sp-input-wrapper {
+    opacity: 0.6;
+}
+
+.sp-input-container.sp-generating .sp-message-input {
+    cursor: not-allowed;
+}
+
+/* ========================================
    Scrollbar Styling
    ======================================== */
 .sp-messages::-webkit-scrollbar,
