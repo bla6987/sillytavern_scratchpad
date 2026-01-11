@@ -1,0 +1,12 @@
+{
+    "display_name": "Scratch Pad",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "SillyTavern Community",
+    "version": "1.0.0",
+    "homePage": "https://github.com/bla6987/sillytavern_scratchpad",
+    "auto_update": true
+}

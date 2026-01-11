@@ -1,0 +1,68 @@
+<div class="scratch-pad-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Scratch Pad</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="scratch_pad_settings_block">
+                <h4>Context Settings</h4>
+                
+                <label for="sp_chat_history_limit">
+                    <span>Maximum chat messages to include:</span>
+                    <small>Limits how much of the main chat history is sent for context</small>
+                </label>
+                <div class="range-block">
+                    <input type="range" id="sp_chat_history_limit" min="0" max="500" step="10" value="0">
+                    <span id="sp_chat_history_limit_value">All</span>
+                </div>
+                
+                <hr>
+                
+                <h4>Content Inclusion</h4>
+                
+                <label class="checkbox_label" for="sp_include_char_card">
+                    <input type="checkbox" id="sp_include_char_card" checked>
+                    <span>Include Character Card</span>
+                    <small>Send character description and personality to the AI</small>
+                </label>
+                
+                <label class="checkbox_label" for="sp_include_sys_prompt">
+                    <input type="checkbox" id="sp_include_sys_prompt">
+                    <span>Include System Prompt</span>
+                    <small>Send the main system prompt to the AI</small>
+                </label>
+                
+                <hr>
+                
+                <h4>OOC System Prompt</h4>
+                <label for="sp_ooc_prompt">
+                    <span>Default instruction for out-of-character responses:</span>
+                </label>
+                <textarea id="sp_ooc_prompt" class="text_pole textarea_compact" rows="8" placeholder="Enter the OOC system prompt..."></textarea>
+                <div class="flex-container">
+                    <input type="button" id="sp_reset_ooc_prompt" class="menu_button" value="Reset to Default">
+                </div>
+                
+                <hr>
+                
+                <h4>API Settings</h4>
+                
+                <label class="checkbox_label" for="sp_use_alt_api">
+                    <input type="checkbox" id="sp_use_alt_api">
+                    <span>Use Alternative API</span>
+                    <small>Use a different connection profile for scratch pad generations</small>
+                </label>
+                
+                <div id="sp_profile_container" style="display: none;">
+                    <label for="sp_connection_profile">
+                        <span>Connection Profile:</span>
+                    </label>
+                    <select id="sp_connection_profile" class="text_pole">
+                        <option value="">-- Select Profile --</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

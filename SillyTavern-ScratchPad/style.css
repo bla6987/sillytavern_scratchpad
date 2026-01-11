@@ -1,0 +1,809 @@
+/**
+ * Scratch Pad Extension Styles
+ * Full-screen drawer UI with mobile support
+ */
+
+/* ========================================
+   CSS Variables
+   ======================================== */
+:root {
+    --sp-bg-primary: #1a1a2e;
+    --sp-bg-secondary: #16213e;
+    --sp-bg-tertiary: #0f0f1a;
+    --sp-text-primary: #e4e4e7;
+    --sp-text-secondary: #a1a1aa;
+    --sp-text-muted: #71717a;
+    --sp-accent: #6366f1;
+    --sp-accent-hover: #4f46e5;
+    --sp-border: #27273a;
+    --sp-user-msg-bg: #3730a3;
+    --sp-assistant-msg-bg: #1e1e2e;
+    --sp-error: #ef4444;
+    --sp-success: #22c55e;
+    --sp-warning: #f59e0b;
+    --sp-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    --sp-radius: 8px;
+    --sp-radius-lg: 12px;
+    --sp-transition: 0.2s ease;
+    --sp-drawer-width: 400px;
+    --sp-min-touch-target: 44px;
+}
+
+/* ========================================
+   Body Lock when drawer open
+   ======================================== */
+body.sp-drawer-open {
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+}
+
+/* ========================================
+   Drawer
+   ======================================== */
+.sp-drawer {
+    position: fixed;
+    top: 0;
+    right: -100%;
+    width: 100%;
+    max-width: var(--sp-drawer-width);
+    height: 100%;
+    background: var(--sp-bg-primary);
+    z-index: 9999;
+    transition: right 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.sp-drawer.open {
+    right: 0;
+}
+
+@media (max-width: 480px) {
+    .sp-drawer {
+        max-width: 100%;
+    }
+}
+
+.sp-drawer-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ========================================
+   Header
+   ======================================== */
+.sp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: var(--sp-bg-secondary);
+    border-bottom: 1px solid var(--sp-border);
+    flex-shrink: 0;
+}
+
+.sp-conversation-header {
+    gap: 12px;
+}
+
+.sp-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--sp-text-primary);
+    margin: 0;
+}
+
+.sp-subtitle {
+    font-size: 12px;
+    color: var(--sp-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sp-title-container {
+    flex: 1;
+    min-width: 0;
+}
+
+.sp-thread-title {
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sp-thread-title:hover {
+    color: var(--sp-accent);
+}
+
+/* ========================================
+   Buttons
+   ======================================== */
+.sp-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    min-height: var(--sp-min-touch-target);
+    min-width: var(--sp-min-touch-target);
+    background: var(--sp-accent);
+    color: white;
+    border: none;
+    border-radius: var(--sp-radius);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background var(--sp-transition);
+}
+
+.sp-button:hover:not(:disabled) {
+    background: var(--sp-accent-hover);
+}
+
+.sp-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sp-button-icon {
+    font-size: 16px;
+}
+
+.sp-close-btn,
+.sp-back-btn {
+    background: transparent;
+    color: var(--sp-text-secondary);
+    padding: 8px;
+}
+
+.sp-close-btn:hover,
+.sp-back-btn:hover {
+    background: var(--sp-bg-tertiary);
+    color: var(--sp-text-primary);
+}
+
+.sp-action-btn {
+    background: transparent;
+    color: var(--sp-text-muted);
+    padding: 8px;
+    min-width: 36px;
+    min-height: 36px;
+}
+
+.sp-action-btn:hover {
+    background: var(--sp-bg-tertiary);
+    color: var(--sp-text-primary);
+}
+
+.sp-delete-btn:hover {
+    color: var(--sp-error);
+}
+
+/* ========================================
+   Action Bar
+   ======================================== */
+.sp-action-bar {
+    display: flex;
+    padding: 12px 16px;
+    background: var(--sp-bg-secondary);
+    border-bottom: 1px solid var(--sp-border);
+}
+
+.sp-new-thread-btn {
+    flex: 1;
+}
+
+/* ========================================
+   Thread List
+   ======================================== */
+.sp-thread-list-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.sp-thread-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.sp-thread-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    margin-bottom: 8px;
+    background: var(--sp-bg-secondary);
+    border-radius: var(--sp-radius);
+    border: 1px solid var(--sp-border);
+    transition: all var(--sp-transition);
+    position: relative;
+    overflow: hidden;
+}
+
+.sp-thread-item:hover {
+    border-color: var(--sp-accent);
+}
+
+.sp-thread-item.sp-swipe-delete {
+    transform: translateX(-80px);
+}
+
+.sp-thread-item.sp-swipe-delete .sp-thread-actions {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.sp-thread-main {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.sp-thread-name {
+    font-weight: 500;
+    color: var(--sp-text-primary);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sp-thread-preview {
+    font-size: 13px;
+    color: var(--sp-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.sp-thread-time {
+    font-size: 11px;
+    color: var(--sp-text-muted);
+}
+
+.sp-thread-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+/* ========================================
+   Empty State
+   ======================================== */
+.sp-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--sp-text-secondary);
+}
+
+.sp-empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.sp-empty-state p {
+    margin: 4px 0;
+}
+
+/* ========================================
+   Quick Input (Thread List Bottom)
+   ======================================== */
+.sp-quick-input-container {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--sp-bg-secondary);
+    border-top: 1px solid var(--sp-border);
+    flex-shrink: 0;
+}
+
+.sp-quick-input {
+    flex: 1;
+    padding: 12px;
+    background: var(--sp-bg-tertiary);
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    color: var(--sp-text-primary);
+    font-size: 14px;
+    resize: none;
+    min-height: var(--sp-min-touch-target);
+}
+
+.sp-quick-input:focus {
+    outline: none;
+    border-color: var(--sp-accent);
+}
+
+.sp-quick-input::placeholder {
+    color: var(--sp-text-muted);
+}
+
+/* ========================================
+   Conversation View
+   ======================================== */
+.sp-conversation-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.sp-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* ========================================
+   Messages
+   ======================================== */
+.sp-message {
+    max-width: 90%;
+    padding: 12px 16px;
+    border-radius: var(--sp-radius-lg);
+    animation: sp-message-in 0.2s ease;
+}
+
+@keyframes sp-message-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.sp-message-user {
+    align-self: flex-end;
+    background: var(--sp-user-msg-bg);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.sp-message-assistant {
+    align-self: flex-start;
+    background: var(--sp-assistant-msg-bg);
+    color: var(--sp-text-primary);
+    border-bottom-left-radius: 4px;
+    border: 1px solid var(--sp-border);
+}
+
+.sp-message-role {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    opacity: 0.7;
+}
+
+.sp-message-content {
+    font-size: 14px;
+    line-height: 1.6;
+    word-wrap: break-word;
+}
+
+.sp-message-content p {
+    margin: 0 0 8px 0;
+}
+
+.sp-message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.sp-message-content code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.sp-message-content pre {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    border-radius: var(--sp-radius);
+    overflow-x: auto;
+    margin: 8px 0;
+}
+
+.sp-message-content pre code {
+    background: none;
+    padding: 0;
+}
+
+.sp-message-time {
+    font-size: 10px;
+    color: var(--sp-text-muted);
+    margin-top: 8px;
+    text-align: right;
+}
+
+.sp-message-user .sp-message-time {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Failed Message */
+.sp-message-failed {
+    border-color: var(--sp-error);
+}
+
+.sp-error-message {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sp-error);
+    margin-bottom: 8px;
+}
+
+.sp-error-icon {
+    font-size: 16px;
+}
+
+.sp-retry-btn {
+    background: transparent;
+    border: 1px solid var(--sp-error);
+    color: var(--sp-error);
+}
+
+.sp-retry-btn:hover {
+    background: var(--sp-error);
+    color: white;
+}
+
+/* ========================================
+   Input Container (Conversation)
+   ======================================== */
+.sp-input-container {
+    padding: 12px 16px;
+    background: var(--sp-bg-secondary);
+    border-top: 1px solid var(--sp-border);
+    flex-shrink: 0;
+    position: relative;
+}
+
+.sp-input-wrapper {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+}
+
+.sp-message-input {
+    flex: 1;
+    padding: 12px;
+    background: var(--sp-bg-tertiary);
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    color: var(--sp-text-primary);
+    font-size: 14px;
+    resize: none;
+    min-height: var(--sp-min-touch-target);
+    max-height: 150px;
+    line-height: 1.4;
+}
+
+.sp-message-input:focus {
+    outline: none;
+    border-color: var(--sp-accent);
+}
+
+.sp-message-input::placeholder {
+    color: var(--sp-text-muted);
+}
+
+.sp-send-btn {
+    flex-shrink: 0;
+}
+
+/* ========================================
+   Spinner
+   ======================================== */
+.sp-spinner {
+    display: flex;
+    gap: 4px;
+    padding: 8px 0;
+}
+
+.sp-spinner-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--sp-accent);
+    border-radius: 50%;
+    animation: sp-bounce 1.4s infinite ease-in-out both;
+}
+
+.sp-spinner-dot:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.sp-spinner-dot:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+@keyframes sp-bounce {
+    0%, 80%, 100% {
+        transform: scale(0);
+    }
+    40% {
+        transform: scale(1);
+    }
+}
+
+/* ========================================
+   Popup / Bottom Sheet
+   ======================================== */
+.sp-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.sp-popup.sp-popup-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sp-popup.sp-popup-hiding .sp-popup-sheet {
+    transform: translateY(100%);
+}
+
+.sp-popup-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.sp-popup-sheet {
+    position: relative;
+    background: var(--sp-bg-primary);
+    border-radius: var(--sp-radius-lg) var(--sp-radius-lg) 0 0;
+    max-height: 70vh;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.sp-popup.sp-popup-visible .sp-popup-sheet {
+    transform: translateY(0);
+}
+
+.sp-popup-drag-handle {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+    cursor: grab;
+}
+
+.sp-drag-indicator {
+    width: 40px;
+    height: 4px;
+    background: var(--sp-border);
+    border-radius: 2px;
+}
+
+.sp-popup-header {
+    padding: 0 16px 16px;
+    border-bottom: 1px solid var(--sp-border);
+}
+
+.sp-popup-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--sp-text-primary);
+}
+
+.sp-popup-subtitle {
+    font-size: 11px;
+    color: var(--sp-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sp-popup-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 100px;
+}
+
+.sp-popup-response {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--sp-text-primary);
+}
+
+.sp-popup-response p {
+    margin: 0 0 12px 0;
+}
+
+.sp-popup-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sp-error);
+}
+
+.sp-popup-actions {
+    display: flex;
+    gap: 12px;
+    padding: 16px;
+    border-top: 1px solid var(--sp-border);
+}
+
+.sp-popup-open-btn {
+    flex: 1;
+}
+
+.sp-popup-dismiss-btn {
+    flex: 1;
+    background: var(--sp-bg-tertiary);
+    border: 1px solid var(--sp-border);
+}
+
+.sp-popup-dismiss-btn:hover {
+    background: var(--sp-bg-secondary);
+}
+
+/* ========================================
+   Load More Button
+   ======================================== */
+.sp-load-more-btn {
+    width: 100%;
+    background: var(--sp-bg-secondary);
+    border: 1px dashed var(--sp-border);
+    color: var(--sp-text-secondary);
+    margin-bottom: 16px;
+}
+
+.sp-load-more-btn:hover {
+    background: var(--sp-bg-tertiary);
+    color: var(--sp-text-primary);
+}
+
+/* ========================================
+   Settings Panel
+   ======================================== */
+.scratch-pad-settings .inline-drawer-content {
+    padding: 10px;
+}
+
+.scratch_pad_settings_block {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.scratch_pad_settings_block h4 {
+    margin: 8px 0 4px 0;
+    color: var(--sp-accent);
+}
+
+.scratch_pad_settings_block label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.scratch_pad_settings_block label small {
+    color: var(--sp-text-muted);
+    font-size: 11px;
+}
+
+.scratch_pad_settings_block .checkbox_label {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.scratch_pad_settings_block .checkbox_label span {
+    display: block;
+}
+
+.scratch_pad_settings_block .range-block {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.scratch_pad_settings_block .range-block input[type="range"] {
+    flex: 1;
+}
+
+.scratch_pad_settings_block hr {
+    border: none;
+    border-top: 1px solid var(--sp-border);
+    margin: 8px 0;
+}
+
+/* ========================================
+   Scrollbar Styling
+   ======================================== */
+.sp-messages::-webkit-scrollbar,
+.sp-thread-list::-webkit-scrollbar,
+.sp-popup-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sp-messages::-webkit-scrollbar-track,
+.sp-thread-list::-webkit-scrollbar-track,
+.sp-popup-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sp-messages::-webkit-scrollbar-thumb,
+.sp-thread-list::-webkit-scrollbar-thumb,
+.sp-popup-content::-webkit-scrollbar-thumb {
+    background: var(--sp-border);
+    border-radius: 3px;
+}
+
+.sp-messages::-webkit-scrollbar-thumb:hover,
+.sp-thread-list::-webkit-scrollbar-thumb:hover,
+.sp-popup-content::-webkit-scrollbar-thumb:hover {
+    background: var(--sp-text-muted);
+}
+
+/* ========================================
+   Accessibility
+   ======================================== */
+.sp-button:focus-visible,
+.sp-quick-input:focus-visible,
+.sp-message-input:focus-visible,
+.sp-thread-item:focus-visible {
+    outline: 2px solid var(--sp-accent);
+    outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .sp-drawer,
+    .sp-popup,
+    .sp-popup-sheet,
+    .sp-message,
+    .sp-thread-item,
+    .sp-button {
+        transition: none;
+    }
+    
+    .sp-spinner-dot {
+        animation: none;
+    }
+    
+    @keyframes sp-message-in {
+        from, to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+}
