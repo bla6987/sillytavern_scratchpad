@@ -63,9 +63,14 @@ export function openScratchPad(threadId = null) {
     console.log('[ScratchPad UI] openScratchPad called with threadId:', threadId);
     console.log('[ScratchPad UI] Current drawerElement state:', drawerElement ? 'exists' : 'null');
 
-    // Reuse existing drawer if it exists, otherwise create new
-    if (!drawerElement) {
-        console.log('[ScratchPad UI] No existing drawer, creating new one');
+    // Check if drawer exists AND is still in the DOM
+    if (!drawerElement || !drawerElement.isConnected) {
+        if (drawerElement && !drawerElement.isConnected) {
+            console.log('[ScratchPad UI] Drawer exists but not in DOM, creating new one');
+            drawerElement = null; // Clear the stale reference
+        } else {
+            console.log('[ScratchPad UI] No existing drawer, creating new one');
+        }
         drawerElement = createDrawer();
     } else {
         console.log('[ScratchPad UI] Reusing existing drawer element');
@@ -75,6 +80,8 @@ export function openScratchPad(threadId = null) {
 
     if (!content) {
         console.error('[ScratchPad UI] ERROR: No content element found in drawer!');
+        console.error('[ScratchPad UI] Drawer element:', drawerElement);
+        console.error('[ScratchPad UI] Drawer is connected:', drawerElement.isConnected);
         return;
     }
 
