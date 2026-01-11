@@ -25,16 +25,25 @@ async function loadSettingsHTML() {
     }
 
     try {
-        const response = await fetch('/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html');
-        if (!response.ok) {
-            // Try alternative path
-            const altResponse = await fetch('/extensions/third-party/SillyTavern-ScratchPad/settings.html');
-            if (altResponse.ok) {
-                const html = await altResponse.text();
-                appendSettingsHTML(html);
-            }
-        } else {
+        const settingsUrl = new URL('./settings.html', import.meta.url);
+        const response = await fetch(settingsUrl);
+        if (response.ok) {
             const html = await response.text();
+            appendSettingsHTML(html);
+            return;
+        }
+
+        const legacyResponse = await fetch('/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html');
+        if (legacyResponse.ok) {
+            const html = await legacyResponse.text();
+            appendSettingsHTML(html);
+            return;
+        }
+
+        // Try alternative path
+        const altResponse = await fetch('/extensions/third-party/SillyTavern-ScratchPad/settings.html');
+        if (altResponse.ok) {
+            const html = await altResponse.text();
             appendSettingsHTML(html);
         }
     } catch (error) {
