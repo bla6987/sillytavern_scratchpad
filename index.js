@@ -12,11 +12,56 @@ import { initUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratch
 const MODULE_NAME = 'scratchPad';
 const EXTENSION_NAME = 'Scratch Pad';
 
+function getLocalUrl(relativePath) {
+    try {
+        return new URL(relativePath, import.meta.url).toString();
+    } catch (e) {
+        return relativePath;
+    }
+}
+
+async function fetchFirstOkText(urls) {
+    for (const url of urls) {
+        try {
+            const res = await fetch(url);
+            if (res.ok) return await res.text();
+        } catch (e) {
+            // ignore and try next
+        }
+    }
+    return null;
+}
+
+function ensureStylesLoaded() {
+    const styleId = 'scratch_pad_styles';
+    const existing = document.getElementById(styleId);
+    if (existing) return;
+
+    const hrefCandidates = [
+        getLocalUrl('./style.css'),
+        '/scripts/extensions/third-party/SillyTavern-ScratchPad/style.css',
+        '/extensions/third-party/SillyTavern-ScratchPad/style.css',
+    ];
+
+    const link = document.createElement('link');
+    link.id = styleId;
+    link.rel = 'stylesheet';
+
+    let idx = 0;
+    const tryNext = () => {
+        if (idx >= hrefCandidates.length) return;
+        link.href = hrefCandidates[idx++];
+    };
+
+    link.addEventListener('error', tryNext);
+    tryNext();
+    document.head.appendChild(link);
+}
+
 /**
  * Load the settings HTML template
  */
 async function loadSettingsHTML() {
-    const context = SillyTavern.getContext();
     const settingsContainer = document.getElementById('scratch_pad_settings');
 
     if (settingsContainer) {
@@ -25,26 +70,16 @@ async function loadSettingsHTML() {
     }
 
     try {
-        const settingsUrl = new URL('./settings.html', import.meta.url);
-        const response = await fetch(settingsUrl);
-        if (response.ok) {
-            const html = await response.text();
-            appendSettingsHTML(html);
-            return;
-        }
+        const html = await fetchFirstOkText([
+            getLocalUrl('./settings.html'),
+            '/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html',
+            '/extensions/third-party/SillyTavern-ScratchPad/settings.html',
+        ]);
 
-        const legacyResponse = await fetch('/scripts/extensions/third-party/SillyTavern-ScratchPad/settings.html');
-        if (legacyResponse.ok) {
-            const html = await legacyResponse.text();
+        if (html) {
             appendSettingsHTML(html);
-            return;
-        }
-
-        // Try alternative path
-        const altResponse = await fetch('/extensions/third-party/SillyTavern-ScratchPad/settings.html');
-        if (altResponse.ok) {
-            const html = await altResponse.text();
-            appendSettingsHTML(html);
+        } else {
+            console.warn('[ScratchPad] Failed to load settings HTML from any known path');
         }
     } catch (error) {
         console.error('[ScratchPad] Failed to load settings HTML:', error);
@@ -76,7 +111,7 @@ function appendSettingsHTML(html) {
 /**
  * Add the scratch pad button to the UI
  */
-function addScratchPadButton() {
+function addScratchPadButton(retries = 10) {
     // Check if button already exists and remove it (stale)
     const existingButton = document.getElementById('scratch_pad_button');
     if (existingButton) {
@@ -120,6 +155,10 @@ function addScratchPadButton() {
             openScratchPad();
         });
         wandMenu.appendChild(wandButton);
+    } else if (retries > 0) {
+        setTimeout(() => addScratchPadButton(retries - 1), 500);
+    } else {
+        console.warn('[ScratchPad] Could not find extensions menu to insert button');
     }
 }
 
@@ -145,6 +184,8 @@ async function init() {
     // Get context
     const context = SillyTavern.getContext();
     const { eventSource, event_types } = context;
+
+    ensureStylesLoaded();
 
     // Initialize settings
     getSettings();
