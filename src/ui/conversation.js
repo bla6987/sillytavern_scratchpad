@@ -22,11 +22,20 @@ export function openThread(threadId, initialMessage = null) {
     pendingMessage = initialMessage;
 
     const drawer = document.getElementById('scratch-pad-drawer');
-    if (!drawer) return;
+    console.log('[ScratchPad Conv] drawer element:', drawer);
+    if (!drawer) {
+        console.error('[ScratchPad Conv] drawer not found!');
+        return;
+    }
 
     const content = drawer.querySelector('.sp-drawer-content');
-    if (!content) return;
+    console.log('[ScratchPad Conv] content element:', content);
+    if (!content) {
+        console.error('[ScratchPad Conv] content not found!');
+        return;
+    }
 
+    console.log('[ScratchPad Conv] calling renderConversation...');
     renderConversation(content);
 }
 
@@ -34,15 +43,25 @@ export function openThread(threadId, initialMessage = null) {
  * Start a new thread (empty conversation view)
  */
 export function startNewThread() {
+    console.log('[ScratchPad Conv] startNewThread called');
     currentThreadId = null;
     pendingMessage = null;
 
     const drawer = document.getElementById('scratch-pad-drawer');
-    if (!drawer) return;
+    console.log('[ScratchPad Conv] drawer element:', drawer);
+    if (!drawer) {
+        console.error('[ScratchPad Conv] drawer not found!');
+        return;
+    }
 
     const content = drawer.querySelector('.sp-drawer-content');
-    if (!content) return;
+    console.log('[ScratchPad Conv] content element:', content);
+    if (!content) {
+        console.error('[ScratchPad Conv] content not found!');
+        return;
+    }
 
+    console.log('[ScratchPad Conv] calling renderConversation(true)...');
     renderConversation(content, true);
 }
 
