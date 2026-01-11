@@ -27,18 +27,22 @@ export function getTimestamp() {
  */
 export function ensureScratchPadExists() {
     const { chatMetadata } = SillyTavern.getContext();
-    
+
+    console.log('[ScratchPad Storage] ensureScratchPadExists - chatMetadata:', !!chatMetadata);
+
     if (!chatMetadata) {
+        console.warn('[ScratchPad Storage] No chatMetadata available - is a chat open?');
         return null;
     }
-    
+
     if (!chatMetadata[MODULE_NAME]) {
+        console.log('[ScratchPad Storage] Creating scratch pad data structure');
         chatMetadata[MODULE_NAME] = {
             settings: {},
             threads: []
         };
     }
-    
+
     return chatMetadata[MODULE_NAME];
 }
 
@@ -48,11 +52,11 @@ export function ensureScratchPadExists() {
  */
 export function getScratchPadData() {
     const { chatMetadata } = SillyTavern.getContext();
-    
+
     if (!chatMetadata) {
         return null;
     }
-    
+
     return chatMetadata[MODULE_NAME] || null;
 }
 
@@ -91,15 +95,15 @@ export function getThread(threadId) {
 export function findThreadByName(searchName) {
     const threads = getThreads();
     const searchLower = searchName.toLowerCase();
-    
+
     // Exact match first
     let match = threads.find(t => t.name.toLowerCase() === searchLower);
     if (match) return match;
-    
+
     // Partial match
     match = threads.find(t => t.name.toLowerCase().includes(searchLower));
     if (match) return match;
-    
+
     // Fuzzy match using Fuse if available
     const { Fuse } = SillyTavern.libs;
     if (Fuse && threads.length > 0) {
@@ -112,7 +116,7 @@ export function findThreadByName(searchName) {
             return results[0].item;
         }
     }
-    
+
     return null;
 }
 
@@ -122,9 +126,13 @@ export function findThreadByName(searchName) {
  * @returns {Object} The created thread
  */
 export function createThread(name = 'New Thread') {
+    console.log('[ScratchPad Storage] createThread called with name:', name);
     const data = ensureScratchPadExists();
-    if (!data) return null;
-    
+    if (!data) {
+        console.error('[ScratchPad Storage] createThread failed - no data structure');
+        return null;
+    }
+
     const timestamp = getTimestamp();
     const thread = {
         id: generateId(),
@@ -133,8 +141,9 @@ export function createThread(name = 'New Thread') {
         updatedAt: timestamp,
         messages: []
     };
-    
+
     data.threads.unshift(thread);
+    console.log('[ScratchPad Storage] Thread created:', thread.id, 'Total threads:', data.threads.length);
     return thread;
 }
 
@@ -147,7 +156,7 @@ export function createThread(name = 'New Thread') {
 export function updateThread(threadId, updates) {
     const thread = getThread(threadId);
     if (!thread) return null;
-    
+
     Object.assign(thread, updates, { updatedAt: getTimestamp() });
     return thread;
 }
@@ -160,10 +169,10 @@ export function updateThread(threadId, updates) {
 export function deleteThread(threadId) {
     const data = getScratchPadData();
     if (!data) return false;
-    
+
     const index = data.threads.findIndex(t => t.id === threadId);
     if (index === -1) return false;
-    
+
     data.threads.splice(index, 1);
     return true;
 }
@@ -175,7 +184,7 @@ export function deleteThread(threadId) {
 export function clearAllThreads() {
     const data = getScratchPadData();
     if (!data) return false;
-    
+
     data.threads = [];
     return true;
 }
@@ -191,7 +200,7 @@ export function clearAllThreads() {
 export function addMessage(threadId, role, content, status = 'complete') {
     const thread = getThread(threadId);
     if (!thread) return null;
-    
+
     const message = {
         id: generateId(),
         role: role,
@@ -199,10 +208,10 @@ export function addMessage(threadId, role, content, status = 'complete') {
         timestamp: getTimestamp(),
         status: status
     };
-    
+
     thread.messages.push(message);
     thread.updatedAt = getTimestamp();
-    
+
     return message;
 }
 
@@ -216,13 +225,13 @@ export function addMessage(threadId, role, content, status = 'complete') {
 export function updateMessage(threadId, messageId, updates) {
     const thread = getThread(threadId);
     if (!thread) return null;
-    
+
     const message = thread.messages.find(m => m.id === messageId);
     if (!message) return null;
-    
+
     Object.assign(message, updates);
     thread.updatedAt = getTimestamp();
-    
+
     return message;
 }
 
@@ -235,7 +244,7 @@ export function updateMessage(threadId, messageId, updates) {
 export function getMessage(threadId, messageId) {
     const thread = getThread(threadId);
     if (!thread) return null;
-    
+
     return thread.messages.find(m => m.id === messageId) || null;
 }
 
@@ -248,12 +257,12 @@ export function getMessage(threadId, messageId) {
 export function deleteMessage(threadId, messageId) {
     const thread = getThread(threadId);
     if (!thread) return false;
-    
+
     const index = thread.messages.findIndex(m => m.id === messageId);
     if (index === -1) return false;
-    
+
     thread.messages.splice(index, 1);
     thread.updatedAt = getTimestamp();
-    
+
     return true;
 }
