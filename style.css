@@ -41,16 +41,15 @@ body.sp-drawer-open {
    ======================================== */
 .sp-drawer {
     position: fixed;
-    top: 0;
-    right: 0;
-    left: auto;
-    /* Ensure right positioning works */
-    bottom: 0;
+    /* Use inset for positioning */
+    inset: 0 0 0 auto;
     width: 100%;
     max-width: var(--sp-drawer-width);
-    height: 100vh;
-    height: 100dvh;
-    /* Dynamic viewport height for mobile */
+    /* Explicit viewport height - !important to override any inherited issues */
+    height: 100vh !important;
+    height: 100dvh !important;
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
     background: var(--sp-bg-primary);
     z-index: 99999;
     /* Very high to overlay SillyTavern UI */
@@ -71,28 +70,27 @@ body.sp-drawer-open {
     .sp-drawer {
         max-width: 100% !important;
         width: 100% !important;
-        left: 0 !important;
-        right: 0 !important;
+        inset: 0 !important;
     }
 }
 
-/* Backdrop overlay when drawer is open on mobile */
+/* Backdrop overlay when drawer is open */
 .sp-drawer-backdrop {
-    display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
+    /* Explicit viewport dimensions */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
     background: rgba(0, 0, 0, 0.6);
     z-index: 99998;
     opacity: 0;
     transition: opacity 0.3s ease;
     pointer-events: none;
+    display: block;
 }
 
 .sp-drawer-backdrop.visible {
-    display: block;
     opacity: 1;
     pointer-events: auto;
 }

@@ -32,14 +32,15 @@ function createDrawer() {
     drawerElement.className = 'sp-drawer';
 
     // Apply critical inline styles as fallback in case CSS doesn't load
-    // Note: Avoid setting maxWidth here so CSS media queries can override for mobile
+    // Use viewport units (vh) instead of % because SillyTavern's transform on html breaks % for fixed elements
     Object.assign(drawerElement.style, {
         position: 'fixed',
         top: '0',
         right: '0',
         bottom: '0',
         left: 'auto', // Ensure right positioning works
-        height: '100%',
+        height: '100vh', // Use vh, not % - SillyTavern has transform on html which breaks %
+        minHeight: '100vh',
         width: '100%',
         zIndex: '99999', // Very high to overlay SillyTavern UI
         background: '#1a1a2e',
@@ -86,6 +87,21 @@ function createBackdrop() {
     backdropElement.id = 'scratch-pad-backdrop';
     backdropElement.className = 'sp-drawer-backdrop';
 
+    // Apply inline styles as fallback - use viewport units
+    Object.assign(backdropElement.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: '100vw',
+        height: '100vh',
+        minHeight: '100vh',
+        background: 'rgba(0, 0, 0, 0.6)',
+        zIndex: '99998',
+        opacity: '0',
+        transition: 'opacity 0.3s ease',
+        pointerEvents: 'none'
+    });
+
     // Click backdrop to close drawer
     backdropElement.addEventListener('click', () => {
         closeScratchPad();
@@ -104,6 +120,9 @@ function showBackdrop() {
     }
     requestAnimationFrame(() => {
         backdropElement.classList.add('visible');
+        // Also set inline styles as fallback
+        backdropElement.style.opacity = '1';
+        backdropElement.style.pointerEvents = 'auto';
     });
 }
 
@@ -113,6 +132,9 @@ function showBackdrop() {
 function hideBackdrop() {
     if (backdropElement) {
         backdropElement.classList.remove('visible');
+        // Also set inline styles as fallback
+        backdropElement.style.opacity = '0';
+        backdropElement.style.pointerEvents = 'none';
         // Remove after transition
         setTimeout(() => {
             if (backdropElement && !backdropElement.classList.contains('visible')) {
