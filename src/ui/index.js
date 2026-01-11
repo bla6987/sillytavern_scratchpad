@@ -12,6 +12,7 @@ export { openThread, startNewThread, getCurrentThreadId } from './conversation.j
 export { showQuickPopup, dismissPopup, isPopupVisible } from './popup.js';
 
 let drawerElement = null;
+let backdropElement = null;
 
 /**
  * Create the scratch pad drawer element
@@ -31,20 +32,23 @@ function createDrawer() {
     drawerElement.className = 'sp-drawer';
 
     // Apply critical inline styles as fallback in case CSS doesn't load
+    // Note: Avoid setting maxWidth here so CSS media queries can override for mobile
     Object.assign(drawerElement.style, {
         position: 'fixed',
         top: '0',
         right: '0',
+        bottom: '0',
+        left: 'auto', // Ensure right positioning works
         height: '100%',
         width: '100%',
-        maxWidth: '400px',
-        zIndex: '9999',
+        zIndex: '99999', // Very high to overlay SillyTavern UI
         background: '#1a1a2e',
         transform: 'translateX(100%)',
         transition: 'transform 0.3s ease',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.5)'
+        boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.5)',
+        overflow: 'hidden'
     });
 
     console.log('[ScratchPad UI] Drawer element created');
@@ -66,6 +70,57 @@ function createDrawer() {
     console.log('[ScratchPad UI] Drawer appended to body');
 
     return drawerElement;
+}
+
+/**
+ * Create the backdrop element for mobile overlay
+ */
+function createBackdrop() {
+    // Remove existing backdrop if any
+    const existingBackdrop = document.getElementById('scratch-pad-backdrop');
+    if (existingBackdrop) {
+        existingBackdrop.remove();
+    }
+
+    backdropElement = document.createElement('div');
+    backdropElement.id = 'scratch-pad-backdrop';
+    backdropElement.className = 'sp-drawer-backdrop';
+
+    // Click backdrop to close drawer
+    backdropElement.addEventListener('click', () => {
+        closeScratchPad();
+    });
+
+    document.body.appendChild(backdropElement);
+    return backdropElement;
+}
+
+/**
+ * Show the backdrop
+ */
+function showBackdrop() {
+    if (!backdropElement || !backdropElement.isConnected) {
+        createBackdrop();
+    }
+    requestAnimationFrame(() => {
+        backdropElement.classList.add('visible');
+    });
+}
+
+/**
+ * Hide the backdrop
+ */
+function hideBackdrop() {
+    if (backdropElement) {
+        backdropElement.classList.remove('visible');
+        // Remove after transition
+        setTimeout(() => {
+            if (backdropElement && !backdropElement.classList.contains('visible')) {
+                backdropElement.remove();
+                backdropElement = null;
+            }
+        }, 350);
+    }
 }
 
 /**
@@ -101,6 +156,9 @@ export function openScratchPad(threadId = null) {
     console.log('[ScratchPad UI] Adding sp-drawer-open class to body');
     // Prevent body scroll
     document.body.classList.add('sp-drawer-open');
+
+    // Show backdrop for overlay effect
+    showBackdrop();
 
     // Add open class to trigger CSS animation
     console.log('[ScratchPad UI] Adding open class to drawer');
@@ -144,6 +202,9 @@ export function closeScratchPad() {
     // Reset inline transform to allow CSS default (translateX(100%)) for close animation
     drawerElement.style.transform = '';
     document.body.classList.remove('sp-drawer-open');
+
+    // Hide backdrop
+    hideBackdrop();
 
     // Remove drawer element after transition completes (300ms as per CSS)
     setTimeout(() => {
@@ -203,7 +264,12 @@ export function initUI() {
     if (existingDrawer) {
         existingDrawer.remove();
     }
+    const existingBackdrop = document.getElementById('scratch-pad-backdrop');
+    if (existingBackdrop) {
+        existingBackdrop.remove();
+    }
     drawerElement = null;
+    backdropElement = null;
     document.body.classList.remove('sp-drawer-open');
 
     // Handle escape key to close
