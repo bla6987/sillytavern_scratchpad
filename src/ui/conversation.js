@@ -454,13 +454,10 @@ function scrollToBottom() {
 /**
  * Close the scratch pad drawer
  */
-function closeScratchPadDrawer() {
-    const drawer = document.getElementById('scratch-pad-drawer');
-    if (drawer) {
-        drawer.classList.remove('open');
-        document.body.classList.remove('sp-drawer-open');
-    }
+async function closeScratchPadDrawer() {
     currentThreadId = null;
+    const { closeScratchPad } = await import('./index.js');
+    closeScratchPad();
 }
 
 /**

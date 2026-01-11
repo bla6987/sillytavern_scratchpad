@@ -29,10 +29,21 @@ export function renderThreadList(container) {
     // Header
     const header = document.createElement('div');
     header.className = 'sp-header';
-    header.innerHTML = `
-        <h2 class="sp-title">Scratch Pad</h2>
-        <span class="sp-subtitle">Out of Character</span>
-    `;
+
+    const titleContainer = document.createElement('div');
+    titleContainer.className = 'sp-title-container';
+    
+    const titleEl = document.createElement('h2');
+    titleEl.className = 'sp-title';
+    titleEl.textContent = 'Scratch Pad';
+    titleContainer.appendChild(titleEl);
+    
+    const subtitleEl = document.createElement('span');
+    subtitleEl.className = 'sp-subtitle';
+    subtitleEl.textContent = 'Out of Character';
+    titleContainer.appendChild(subtitleEl);
+    
+    header.appendChild(titleContainer);
 
     const closeBtn = createButton({
         icon: Icons.close,
@@ -283,10 +294,7 @@ export function refreshThreadList() {
 /**
  * Close the scratch pad drawer
  */
-function closeScratchPadDrawer() {
-    const drawer = document.getElementById('scratch-pad-drawer');
-    if (drawer) {
-        drawer.classList.remove('open');
-        document.body.classList.remove('sp-drawer-open');
-    }
+async function closeScratchPadDrawer() {
+    const { closeScratchPad } = await import('./index.js');
+    closeScratchPad();
 }
