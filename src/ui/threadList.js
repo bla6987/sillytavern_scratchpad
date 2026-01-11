@@ -8,8 +8,15 @@ import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPro
 // Dynamic import to avoid circular dependency
 let conversationModule = null;
 async function getConversationModule() {
+    console.log('[ScratchPad] getConversationModule called, cached:', !!conversationModule);
     if (!conversationModule) {
-        conversationModule = await import('./conversation.js');
+        try {
+            conversationModule = await import('./conversation.js');
+            console.log('[ScratchPad] Loaded conversation module:', Object.keys(conversationModule));
+        } catch (err) {
+            console.error('[ScratchPad] Failed to load conversation module:', err);
+            throw err;
+        }
     }
     return conversationModule;
 }
