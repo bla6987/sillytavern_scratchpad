@@ -32,17 +32,17 @@ export function renderThreadList(container) {
 
     const titleContainer = document.createElement('div');
     titleContainer.className = 'sp-title-container';
-    
+
     const titleEl = document.createElement('h2');
     titleEl.className = 'sp-title';
     titleEl.textContent = 'Scratch Pad';
     titleContainer.appendChild(titleEl);
-    
+
     const subtitleEl = document.createElement('span');
     subtitleEl.className = 'sp-subtitle';
     subtitleEl.textContent = 'Out of Character';
     titleContainer.appendChild(subtitleEl);
-    
+
     header.appendChild(titleContainer);
 
     const closeBtn = createButton({
@@ -136,8 +136,15 @@ function createThreadItem(thread) {
     const mainContent = document.createElement('div');
     mainContent.className = 'sp-thread-main';
     mainContent.addEventListener('click', async () => {
-        const { openThread } = await getConversationModule();
-        openThread(thread.id);
+        console.log('[ScratchPad] Thread clicked:', thread.id, thread.name);
+        try {
+            const { openThread } = await getConversationModule();
+            console.log('[ScratchPad] Got openThread function, calling...');
+            openThread(thread.id);
+            console.log('[ScratchPad] openThread called successfully');
+        } catch (err) {
+            console.error('[ScratchPad] Error opening thread:', err);
+        }
     });
 
     // Thread name
@@ -217,8 +224,15 @@ function createThreadItem(thread) {
  * Handle creating a new thread
  */
 async function handleNewThread() {
-    const { startNewThread } = await getConversationModule();
-    startNewThread();
+    console.log('[ScratchPad] New Thread button clicked');
+    try {
+        const { startNewThread } = await getConversationModule();
+        console.log('[ScratchPad] Got startNewThread function, calling...');
+        startNewThread();
+        console.log('[ScratchPad] startNewThread called successfully');
+    } catch (err) {
+        console.error('[ScratchPad] Error starting new thread:', err);
+    }
 }
 
 /**
@@ -226,6 +240,7 @@ async function handleNewThread() {
  * @param {string} message Message to send
  */
 async function handleQuickSend(message) {
+    console.log('[ScratchPad] Quick send:', message);
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
@@ -237,6 +252,7 @@ async function handleQuickSend(message) {
 
     // Create new thread and open it
     const thread = createThread('New Thread');
+    console.log('[ScratchPad] Created thread:', thread);
     if (!thread) {
         showToast('Failed to create thread', 'error');
         return;
@@ -245,8 +261,14 @@ async function handleQuickSend(message) {
     await saveMetadata();
 
     // Open the thread and send the message
-    const { openThread } = await getConversationModule();
-    openThread(thread.id, trimmedMessage);
+    try {
+        const { openThread } = await getConversationModule();
+        console.log('[ScratchPad] Opening thread with message...');
+        openThread(thread.id, trimmedMessage);
+        console.log('[ScratchPad] Thread opened with message');
+    } catch (err) {
+        console.error('[ScratchPad] Error opening thread:', err);
+    }
 }
 
 /**

@@ -17,6 +17,7 @@ let pendingMessage = null;
  * @param {string} [initialMessage] Optional message to send immediately
  */
 export function openThread(threadId, initialMessage = null) {
+    console.log('[ScratchPad Conv] openThread called:', threadId, initialMessage);
     currentThreadId = threadId;
     pendingMessage = initialMessage;
 
@@ -51,6 +52,7 @@ export function startNewThread() {
  * @param {boolean} isNewThread Whether this is a new thread
  */
 export function renderConversation(container, isNewThread = false) {
+    console.log('[ScratchPad Conv] renderConversation called, isNewThread:', isNewThread, 'currentThreadId:', currentThreadId);
     conversationContainer = container;
 
     const thread = currentThreadId ? getThread(currentThreadId) : null;
