@@ -2,13 +2,29 @@
  * Shared UI components for Scratch Pad extension
  */
 
-const { DOMPurify, showdown } = SillyTavern.libs;
-const converter = new showdown.Converter({
-    tables: true,
-    strikethrough: true,
-    simpleLineBreaks: true,
-    openLinksInNewWindow: true
-});
+// Lazy-initialized to avoid errors if SillyTavern isn't ready at module load time
+let _converter = null;
+let _DOMPurify = null;
+
+function getConverter() {
+    if (!_converter) {
+        const { showdown } = SillyTavern.libs;
+        _converter = new showdown.Converter({
+            tables: true,
+            strikethrough: true,
+            simpleLineBreaks: true,
+            openLinksInNewWindow: true
+        });
+    }
+    return _converter;
+}
+
+function getDOMPurify() {
+    if (!_DOMPurify) {
+        _DOMPurify = SillyTavern.libs.DOMPurify;
+    }
+    return _DOMPurify;
+}
 
 /**
  * Sanitize and render markdown to HTML
@@ -17,8 +33,8 @@ const converter = new showdown.Converter({
  */
 export function renderMarkdown(text) {
     if (!text) return '';
-    const html = converter.makeHtml(text);
-    return DOMPurify.sanitize(html);
+    const html = getConverter().makeHtml(text);
+    return getDOMPurify().sanitize(html);
 }
 
 /**
