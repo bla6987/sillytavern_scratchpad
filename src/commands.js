@@ -13,31 +13,40 @@ import { isChatActive } from './generation.js';
 export function registerCommands() {
     const context = SillyTavern.getContext();
     const { SlashCommandParser, SlashCommand, SlashCommandArgument, ARGUMENT_TYPE } = context;
-    
+
     if (!SlashCommandParser || !SlashCommand) {
         console.error('[ScratchPad] SlashCommandParser not available');
         return;
     }
-    
+
     // /scratchpad or /sp [message]
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad',
         callback: async (namedArgs, unnamedArgs) => {
+            console.log('[ScratchPad CMD] /scratchpad called');
+            console.log('[ScratchPad CMD] Named args:', namedArgs);
+            console.log('[ScratchPad CMD] Unnamed args:', unnamedArgs);
+
             if (!isChatActive()) {
+                console.log('[ScratchPad CMD] No active chat');
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
-            
+
             const message = unnamedArgs ? unnamedArgs.toString().trim() : '';
-            
+            console.log('[ScratchPad CMD] Parsed message:', message);
+
             if (message) {
                 // Create new thread and show popup with response
+                console.log('[ScratchPad CMD] Showing quick popup with message');
                 await showQuickPopup(message);
             } else {
                 // Open scratch pad UI
+                console.log('[ScratchPad CMD] Opening scratch pad UI');
                 openScratchPad();
             }
-            
+
+            console.log('[ScratchPad CMD] Command completed');
             return '';
         },
         aliases: ['sp'],
@@ -62,16 +71,20 @@ export function registerCommands() {
             </div>
         `
     }));
-    
+
     // /scratchpad-view or /sp-view
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad-view',
         callback: async () => {
+            console.log('[ScratchPad CMD] /scratchpad-view called');
+
             if (!isChatActive()) {
+                console.log('[ScratchPad CMD] No active chat');
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
-            
+
+            console.log('[ScratchPad CMD] Opening scratch pad UI');
             openScratchPad();
             return '';
         },
@@ -83,7 +96,7 @@ export function registerCommands() {
             </div>
         `
     }));
-    
+
     // /scratchpad-clear or /sp-clear
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad-clear',
@@ -92,19 +105,19 @@ export function registerCommands() {
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
-            
+
             const confirmed = await callGenericPopup(
                 'Are you sure you want to delete all scratch pad threads? This cannot be undone.',
                 POPUP_TYPE.CONFIRM,
                 null,
                 { okButton: 'Yes, Delete All', cancelButton: 'Cancel' }
             );
-            
+
             if (confirmed) {
                 clearAllThreads();
                 await saveMetadata();
                 toastr.success('All scratch pad threads have been deleted');
-                
+
                 // Refresh UI if open
                 const drawer = document.getElementById('scratch-pad-drawer');
                 if (drawer && drawer.classList.contains('open')) {
@@ -112,7 +125,7 @@ export function registerCommands() {
                     openScratchPad();
                 }
             }
-            
+
             return '';
         },
         aliases: ['sp-clear'],
@@ -123,7 +136,7 @@ export function registerCommands() {
             </div>
         `
     }));
-    
+
     // /scratchpad-thread or /sp-thread [thread_id or name]
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad-thread',
@@ -132,29 +145,29 @@ export function registerCommands() {
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
-            
+
             const searchTerm = unnamedArgs ? unnamedArgs.toString().trim() : '';
-            
+
             if (!searchTerm) {
                 toastr.warning('Please provide a thread ID or name');
                 return '';
             }
-            
+
             // Try to find thread by ID first, then by name
             const { getThread } = await import('./storage.js');
             let thread = getThread(searchTerm);
-            
+
             if (!thread) {
                 thread = findThreadByName(searchTerm);
             }
-            
+
             if (thread) {
                 openScratchPad();
                 setTimeout(() => openThread(thread.id), 100);
             } else {
                 toastr.warning(`Thread "${searchTerm}" not found`);
             }
-            
+
             return '';
         },
         aliases: ['sp-thread'],
