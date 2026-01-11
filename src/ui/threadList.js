@@ -28,10 +28,12 @@ let threadListContainer = null;
  * @param {HTMLElement} container Container element
  */
 export function renderThreadList(container) {
+    console.log('[ScratchPad UI] Rendering thread list');
     threadListContainer = container;
 
     container.innerHTML = '';
-    container.className = 'sp-thread-list-view';
+    // Preserve sp-drawer-content class while adding view-specific class
+    container.className = 'sp-drawer-content sp-thread-list-view';
 
     // Header
     const header = document.createElement('div');

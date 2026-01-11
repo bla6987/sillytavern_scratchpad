@@ -77,7 +77,8 @@ export function renderConversation(container, isNewThread = false) {
     const thread = currentThreadId ? getThread(currentThreadId) : null;
 
     container.innerHTML = '';
-    container.className = 'sp-conversation-view';
+    // Preserve sp-drawer-content class while adding view-specific class
+    container.className = 'sp-drawer-content sp-conversation-view';
 
     // Header
     const header = document.createElement('div');
