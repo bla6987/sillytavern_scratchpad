@@ -34,8 +34,6 @@
    ======================================== */
 body.sp-drawer-open {
     overflow: hidden;
-    position: fixed;
-    width: 100%;
 }
 
 /* ========================================
@@ -47,7 +45,9 @@ body.sp-drawer-open {
     right: 0;
     width: 100%;
     max-width: var(--sp-drawer-width);
-    height: 100%;
+    height: 100vh;
+    height: 100dvh;
+    /* Dynamic viewport height for mobile */
     background: var(--sp-bg-primary);
     z-index: 9999;
     transform: translateX(100%);
