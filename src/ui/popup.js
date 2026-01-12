@@ -4,7 +4,7 @@
  */
 
 import { createThread, saveMetadata } from '../storage.js';
-import { generateScratchPadResponse, parseThinking } from '../generation.js';
+import { generateScratchPadResponse, generateRawPromptResponse, parseThinking } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
 
 let popupElement = null;
@@ -37,6 +37,23 @@ export async function showQuickPopup(message) {
     // Generate response
     console.log('[ScratchPad Popup] Starting response generation');
     await generatePopupResponse(message);
+}
+
+export async function showQuickPopupRaw(message) {
+    console.log('[ScratchPad Popup] showQuickPopupRaw called with message:', message);
+
+    const thread = createThread('New Thread');
+    if (!thread) {
+        console.error('[ScratchPad Popup] Failed to create thread');
+        showToast('Failed to create thread', 'error');
+        return;
+    }
+
+    currentPopupThreadId = thread.id;
+    await saveMetadata();
+
+    createPopupElement();
+    await generatePopupRawResponse(message);
 }
 
 /**
@@ -228,6 +245,67 @@ async function generatePopupResponse(message) {
         }
 
         // Update title with thread name
+        const { getThread } = await import('../storage.js');
+        const thread = getThread(currentPopupThreadId);
+        if (thread && titleEl) {
+            titleEl.textContent = thread.name;
+        }
+
+    } catch (error) {
+        console.error('[ScratchPad] Popup generation error:', error);
+        contentEl.innerHTML = `
+            <div class="sp-popup-error">
+                <span class="sp-error-icon">${Icons.error}</span>
+                <span>Error: ${error.message}</span>
+            </div>
+        `;
+    }
+}
+
+async function generatePopupRawResponse(message) {
+    const contentEl = document.getElementById('sp-popup-content');
+    const titleEl = document.getElementById('sp-popup-title');
+
+    if (!contentEl || !currentPopupThreadId) return;
+
+    try {
+        const result = await generateRawPromptResponse(message, currentPopupThreadId, (partialResponse) => {
+            const { cleanedResponse } = parseThinking(partialResponse);
+
+            contentEl.innerHTML = `
+                <div class="sp-popup-response">
+                    ${renderMarkdown(cleanedResponse)}
+                </div>
+            `;
+
+            contentEl.scrollTop = contentEl.scrollHeight;
+        });
+
+        if (!result.success) {
+            contentEl.innerHTML = `
+                <div class="sp-popup-error">
+                    <span class="sp-error-icon">${Icons.error}</span>
+                    <span>Error: ${result.error}</span>
+                </div>
+            `;
+        } else {
+            let thinkingHtml = '';
+            if (result.thinking) {
+                thinkingHtml = `
+                    <details class="sp-thinking">
+                        <summary>💭 Model Thinking</summary>
+                        <div class="sp-thinking-content">${renderMarkdown(result.thinking)}</div>
+                    </details>
+                `;
+            }
+            contentEl.innerHTML = `
+                <div class="sp-popup-response">
+                    ${thinkingHtml}
+                    ${renderMarkdown(result.response)}
+                </div>
+            `;
+        }
+
         const { getThread } = await import('../storage.js');
         const thread = getThread(currentPopupThreadId);
         if (thread && titleEl) {

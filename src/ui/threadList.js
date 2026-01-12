@@ -141,6 +141,11 @@ function createThreadItem(thread) {
     item.className = 'sp-thread-item';
     item.dataset.threadId = thread.id;
 
+    const hasNoContextMessages = Array.isArray(thread.messages) && thread.messages.some(m => m && m.noContext);
+    if (hasNoContextMessages) {
+        item.classList.add('sp-thread-item-nocontext');
+    }
+
     // Main clickable area
     const mainContent = document.createElement('div');
     mainContent.className = 'sp-thread-main';
@@ -157,10 +162,22 @@ function createThreadItem(thread) {
     });
 
     // Thread name
+    const nameRowEl = document.createElement('div');
+    nameRowEl.className = 'sp-thread-name-row';
+
     const nameEl = document.createElement('div');
     nameEl.className = 'sp-thread-name';
     nameEl.textContent = thread.name;
-    mainContent.appendChild(nameEl);
+    nameRowEl.appendChild(nameEl);
+
+    if (hasNoContextMessages) {
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'sp-message-badge sp-message-badge-nocontext';
+        badgeEl.textContent = 'No Context';
+        nameRowEl.appendChild(badgeEl);
+    }
+
+    mainContent.appendChild(nameRowEl);
 
     // Preview of last message
     const lastMessage = thread.messages[thread.messages.length - 1];

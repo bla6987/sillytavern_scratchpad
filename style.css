@@ -299,6 +299,10 @@ body.sp-drawer-open {
     border-color: var(--sp-accent);
 }
 
+.sp-thread-item-nocontext {
+    border-color: color-mix(in srgb, var(--sp-warning) 40%, var(--sp-border));
+}
+
 .sp-thread-item.sp-swipe-delete {
     transform: translateX(-80px);
 }
@@ -313,6 +317,18 @@ body.sp-drawer-open {
     min-width: 0;
     cursor: pointer;
     padding: 0.25rem;
+}
+
+.sp-thread-name-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.sp-thread-name-row .sp-thread-name {
+    min-width: 0;
 }
 
 .sp-thread-name {
@@ -465,8 +481,34 @@ body.sp-drawer-open {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03rem;
-    margin-bottom: 0.375rem;
     opacity: 0.7;
+    color: var(--sp-text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.sp-message-role-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.sp-message-badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--sp-border);
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+.sp-message-badge-nocontext {
+    color: var(--sp-warning);
+    background: color-mix(in srgb, var(--sp-warning) 15%, transparent);
+    border-color: color-mix(in srgb, var(--sp-warning) 50%, var(--sp-border));
 }
 
 .sp-message-content {

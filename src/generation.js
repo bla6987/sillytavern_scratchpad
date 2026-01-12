@@ -169,6 +169,136 @@ async function generateWithProfile(profileName, generateFn) {
     }
 }
 
+export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
+    const context = SillyTavern.getContext();
+    const { generateRaw, eventSource, event_types } = context;
+    const settings = getSettings();
+
+    const thread = getThread(threadId);
+    if (!thread) {
+        return { success: false, error: 'Thread not found' };
+    }
+
+    const userMessage = addMessage(threadId, 'user', userPrompt, 'complete');
+    if (!userMessage) {
+        return { success: false, error: 'Failed to add user message' };
+    }
+    userMessage.noContext = true;
+
+    const assistantMessage = addMessage(threadId, 'assistant', '', 'pending');
+    if (!assistantMessage) {
+        return { success: false, error: 'Failed to add assistant message' };
+    }
+    assistantMessage.noContext = true;
+
+    await saveMetadata();
+
+    try {
+        const doGenerate = async () => {
+            let fullResponse = '';
+            let structuredReasoning = '';
+
+            if (onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED) {
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+
+                const streamHandler = (text) => {
+                    if (activeGenerationId === generationId) {
+                        fullResponse = text;
+                        onStream(fullResponse, false);
+                    }
+                };
+
+                const reasoningHandler = (reasoning) => {
+                    if (activeGenerationId === generationId && reasoning) {
+                        structuredReasoning = reasoning;
+                    }
+                };
+
+                eventSource.on(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                if (event_types?.STREAM_REASONING_DONE) {
+                    eventSource.on(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                }
+
+                try {
+                    const result = await generateRaw({
+                        systemPrompt: '',
+                        prompt: userPrompt,
+                    });
+
+                    fullResponse = result || fullResponse;
+                    onStream(fullResponse, true);
+                } finally {
+                    eventSource.removeListener(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                    if (event_types?.STREAM_REASONING_DONE) {
+                        eventSource.removeListener(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                    }
+                    if (activeGenerationId === generationId) {
+                        activeGenerationId = null;
+                    }
+                }
+            } else {
+                fullResponse = await generateRaw({
+                    systemPrompt: '',
+                    prompt: userPrompt,
+                });
+
+                if (onStream) {
+                    onStream(fullResponse, true);
+                }
+            }
+
+            return { text: fullResponse, reasoning: structuredReasoning };
+        };
+
+        let result;
+        if (settings.useAlternativeApi && settings.connectionProfile) {
+            result = await generateWithProfile(settings.connectionProfile, doGenerate);
+        } else {
+            result = await doGenerate();
+        }
+
+        const responseText = result.text || result;
+        const structuredReasoning = result.reasoning || '';
+
+        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
+
+        let combinedThinking = structuredReasoning || tagParsedThinking || null;
+        if (structuredReasoning && tagParsedThinking) {
+            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
+        }
+
+        updateMessage(threadId, assistantMessage.id, {
+            content: responseWithoutThinking,
+            thinking: combinedThinking,
+            noContext: true,
+            status: 'complete'
+        });
+
+        if (thread.messages.length <= 2) {
+            updateThread(threadId, { name: generateFallbackTitle(userPrompt) });
+        }
+
+        await saveMetadata();
+
+        return { success: true, response: responseWithoutThinking, thinking: combinedThinking };
+
+    } catch (error) {
+        console.error('[ScratchPad] Generation error:', error);
+
+        updateMessage(threadId, assistantMessage.id, {
+            content: '',
+            noContext: true,
+            status: 'failed',
+            error: error.message
+        });
+
+        await saveMetadata();
+
+        return { success: false, error: error.message };
+    }
+}
+
 /**
  * Build the complete prompt for scratch pad generation
  * @param {string} userQuestion User's question

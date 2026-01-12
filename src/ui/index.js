@@ -5,11 +5,11 @@
 
 import { renderThreadList, refreshThreadList } from './threadList.js';
 import { openThread, startNewThread, getCurrentThreadId, renderConversation } from './conversation.js';
-import { showQuickPopup, dismissPopup, isPopupVisible } from './popup.js';
+import { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
 
 export { renderThreadList, refreshThreadList } from './threadList.js';
 export { openThread, startNewThread, getCurrentThreadId } from './conversation.js';
-export { showQuickPopup, dismissPopup, isPopupVisible } from './popup.js';
+export { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
 
 let drawerElement = null;
 let backdropElement = null;

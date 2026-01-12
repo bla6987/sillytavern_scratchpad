@@ -4,7 +4,7 @@
  */
 
 import { clearAllThreads, findThreadByName, saveMetadata } from './storage.js';
-import { openScratchPad, openThread, showQuickPopup, closeScratchPad } from './ui/index.js';
+import { openScratchPad, openThread, showQuickPopup, showQuickPopupRaw, closeScratchPad } from './ui/index.js';
 import { isChatActive } from './generation.js';
 
 /**
@@ -67,6 +67,49 @@ export function registerCommands() {
                 <ul>
                     <li><code>/sp</code> - Open the scratch pad interface</li>
                     <li><code>/sp What is the character's motivation?</code> - Quick question with popup response</li>
+                </ul>
+            </div>
+        `
+    }));
+
+    // /rawprompt or /rp [message]
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'rawprompt',
+        callback: async (namedArgs, unnamedArgs) => {
+            console.log('[ScratchPad CMD] /rawprompt called');
+
+            if (!isChatActive()) {
+                toastr.warning('Open a chat to use Scratch Pad');
+                return '';
+            }
+
+            const message = unnamedArgs ? unnamedArgs.toString().trim() : '';
+            if (!message) {
+                toastr.warning('Please provide a prompt');
+                return '';
+            }
+
+            await showQuickPopupRaw(message);
+            return '';
+        },
+        aliases: ['rp'],
+        returns: 'nothing',
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Prompt to send directly to the model (no system prompt, no chat context)',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true
+            })
+        ],
+        helpString: `
+            <div>
+                Sends a raw prompt directly to the model with <strong>no system prompt</strong> and <strong>no injected chat/character/thread context</strong>.
+            </div>
+            <div>
+                <strong>Usage:</strong>
+                <ul>
+                    <li><code>/rawprompt Explain the P vs NP problem</code></li>
+                    <li><code>/rp Give me 10 creative writing prompts</code></li>
                 </ul>
             </div>
         `

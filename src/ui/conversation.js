@@ -250,10 +250,22 @@ function createMessageElement(message) {
     }
 
     // Role label
+    const roleRowEl = document.createElement('div');
+    roleRowEl.className = 'sp-message-role-row';
+
     const roleEl = document.createElement('div');
     roleEl.className = 'sp-message-role';
     roleEl.textContent = message.role === 'user' ? 'You' : 'Assistant';
-    msgEl.appendChild(roleEl);
+    roleRowEl.appendChild(roleEl);
+
+    if (message.noContext) {
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'sp-message-badge sp-message-badge-nocontext';
+        badgeEl.textContent = 'No Context';
+        roleRowEl.appendChild(badgeEl);
+    }
+
+    msgEl.appendChild(roleRowEl);
 
     // Content
     const contentEl = document.createElement('div');
