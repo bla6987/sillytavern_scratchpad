@@ -391,6 +391,8 @@ async function handleSendMessage() {
 
         // Refresh conversation to show final state
         refreshConversation();
+        // Ensure we scroll to show the new messages after refresh
+        scrollToBottom();
 
         // Update thread name in header if changed
         const thread = getThread(currentThreadId);
@@ -438,6 +440,7 @@ async function handleRetry(messageId) {
         }
 
         refreshConversation();
+        scrollToBottom();
 
     } finally {
         isGenerating = false;
@@ -555,12 +558,25 @@ function loadAllMessages(thread) {
 
 /**
  * Scroll messages to bottom
+ * Uses multiple techniques for reliable mobile scrolling
  */
 function scrollToBottom() {
-    const messagesContainer = document.getElementById('sp-messages');
-    if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
+    // Use requestAnimationFrame + setTimeout to ensure DOM has fully laid out
+    requestAnimationFrame(() => {
+        setTimeout(() => {
+            const messagesContainer = document.getElementById('sp-messages');
+            if (messagesContainer) {
+                // Try scrollIntoView on last message for better mobile support
+                const lastMessage = messagesContainer.querySelector('.sp-message:last-child');
+                if (lastMessage) {
+                    lastMessage.scrollIntoView({ behavior: 'auto', block: 'end' });
+                } else {
+                    // Fallback to scrollTop
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                }
+            }
+        }, 50); // Small delay to ensure layout is complete
+    });
 }
 
 /**
