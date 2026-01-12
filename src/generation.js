@@ -272,6 +272,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         // Generation function
         const doGenerate = async () => {
             let fullResponse = '';
+            let structuredReasoning = ''; // Capture reasoning from STREAM_REASONING_DONE
 
             if (onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED) {
                 // Use event-based streaming (SillyTavern v1.12.6+)
@@ -287,8 +288,18 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                     }
                 };
 
-                // Register event listener
+                // Handler for structured reasoning (Anthropic extended thinking, DeepSeek, Gemini, etc.)
+                const reasoningHandler = (reasoning) => {
+                    if (activeGenerationId === generationId && reasoning) {
+                        structuredReasoning = reasoning;
+                    }
+                };
+
+                // Register event listeners
                 eventSource.on(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                if (event_types?.STREAM_REASONING_DONE) {
+                    eventSource.on(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                }
 
                 try {
                     // Generate - the response will come via events AND as final return
@@ -301,8 +312,11 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                     fullResponse = result || fullResponse;
                     onStream(fullResponse, true);
                 } finally {
-                    // Clean up: remove listener and clear active generation
+                    // Clean up: remove listeners and clear active generation
                     eventSource.removeListener(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                    if (event_types?.STREAM_REASONING_DONE) {
+                        eventSource.removeListener(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                    }
                     if (activeGenerationId === generationId) {
                         activeGenerationId = null;
                     }
@@ -320,19 +334,31 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 }
             }
 
-            return fullResponse;
+            return { text: fullResponse, reasoning: structuredReasoning };
         };
 
         // Execute with profile switching if enabled
-        let response;
+        let result;
         if (settings.useAlternativeApi && settings.connectionProfile) {
-            response = await generateWithProfile(settings.connectionProfile, doGenerate);
+            result = await generateWithProfile(settings.connectionProfile, doGenerate);
         } else {
-            response = await doGenerate();
+            result = await doGenerate();
         }
 
-        // Parse thinking from response
-        const { thinking, cleanedResponse: responseWithoutThinking } = parseThinking(response);
+        // Extract text and structured reasoning from result
+        const responseText = result.text || result; // Handle both new format and legacy string return
+        const structuredReasoning = result.reasoning || '';
+
+        // Parse thinking from response text (for models using XML tags like <think>)
+        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
+
+        // Merge structured reasoning (Anthropic, Gemini, DeepSeek) with tag-parsed reasoning
+        // Prefer structured reasoning if available, as it's the native format
+        let combinedThinking = structuredReasoning || tagParsedThinking || null;
+        if (structuredReasoning && tagParsedThinking) {
+            // If we have both, combine them (unlikely but possible)
+            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
+        }
 
         // Parse title if first message
         let finalResponse = responseWithoutThinking;
@@ -350,13 +376,13 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         // Update assistant message with content and thinking
         updateMessage(threadId, assistantMessage.id, {
             content: finalResponse,
-            thinking: thinking,
+            thinking: combinedThinking,
             status: 'complete'
         });
 
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: thinking };
+        return { success: true, response: finalResponse, thinking: combinedThinking };
 
     } catch (error) {
         console.error('[ScratchPad] Generation error:', error);
