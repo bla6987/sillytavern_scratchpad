@@ -4,7 +4,7 @@
  */
 
 import { createThread, saveMetadata } from '../storage.js';
-import { generateScratchPadResponse } from '../generation.js';
+import { generateScratchPadResponse, parseThinking } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
 
 let popupElement = null;
@@ -187,10 +187,13 @@ async function generatePopupResponse(message) {
 
     try {
         const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
+            // Parse out thinking tags during streaming so they don't appear as raw markdown
+            const { cleanedResponse } = parseThinking(partialResponse);
+
             // Update content with streaming response
             contentEl.innerHTML = `
                 <div class="sp-popup-response">
-                    ${renderMarkdown(partialResponse)}
+                    ${renderMarkdown(cleanedResponse)}
                 </div>
             `;
 
@@ -203,6 +206,23 @@ async function generatePopupResponse(message) {
                 <div class="sp-popup-error">
                     <span class="sp-error-icon">${Icons.error}</span>
                     <span>Error: ${result.error}</span>
+                </div>
+            `;
+        } else {
+            // Render final response with thinking if present
+            let thinkingHtml = '';
+            if (result.thinking) {
+                thinkingHtml = `
+                    <details class="sp-thinking">
+                        <summary>💭 Model Thinking</summary>
+                        <div class="sp-thinking-content">${renderMarkdown(result.thinking)}</div>
+                    </details>
+                `;
+            }
+            contentEl.innerHTML = `
+                <div class="sp-popup-response">
+                    ${thinkingHtml}
+                    ${renderMarkdown(result.response)}
                 </div>
             `;
         }

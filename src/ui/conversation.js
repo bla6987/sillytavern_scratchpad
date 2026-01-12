@@ -3,7 +3,7 @@
  */
 
 import { getThread, updateThread, saveMetadata } from '../storage.js';
-import { generateScratchPadResponse, retryMessage } from '../generation.js';
+import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 
 let conversationContainer = null;
@@ -111,6 +111,17 @@ export function renderConversation(container, isNewThread = false) {
     titleContainer.appendChild(subtitleEl);
 
     header.appendChild(titleContainer);
+
+    // AI Rename button (only show for existing threads with messages)
+    if (thread && thread.messages.length > 0) {
+        const aiRenameBtn = createButton({
+            icon: Icons.aiRename,
+            className: 'sp-ai-rename-btn',
+            ariaLabel: 'Rename with AI',
+            onClick: () => handleAiRename(thread)
+        });
+        header.appendChild(aiRenameBtn);
+    }
 
     const closeBtn = createButton({
         icon: Icons.close,
@@ -266,7 +277,21 @@ function createMessageElement(message) {
         });
         contentEl.appendChild(retryBtn);
     } else {
-        contentEl.innerHTML = renderMarkdown(message.content);
+        // Render thinking section if present (collapsible)
+        if (message.thinking && message.role === 'assistant') {
+            const thinkingEl = document.createElement('details');
+            thinkingEl.className = 'sp-thinking';
+            thinkingEl.innerHTML = `
+                <summary>💭 Model Thinking</summary>
+                <div class="sp-thinking-content">${renderMarkdown(message.thinking)}</div>
+            `;
+            contentEl.appendChild(thinkingEl);
+        }
+
+        // Render main content
+        const mainContent = document.createElement('div');
+        mainContent.innerHTML = renderMarkdown(message.content);
+        contentEl.appendChild(mainContent);
     }
 
     msgEl.appendChild(contentEl);
@@ -340,7 +365,9 @@ async function handleSendMessage() {
 
             if (streamingMsgEl) {
                 if (!isComplete) {
-                    streamingMsgEl.innerHTML = renderMarkdown(partialResponse);
+                    // Parse out thinking tags during streaming so they don't appear as raw markdown
+                    const { cleanedResponse } = parseThinking(partialResponse);
+                    streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
                 }
                 scrollToBottom();
             }
@@ -387,7 +414,9 @@ async function handleRetry(messageId) {
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
             const msgEl = document.querySelector(`[data-message-id="${messageId}"] .sp-message-content`);
             if (msgEl && !isComplete) {
-                msgEl.innerHTML = renderMarkdown(partialResponse);
+                // Parse out thinking tags during streaming so they don't appear as raw markdown
+                const { cleanedResponse } = parseThinking(partialResponse);
+                msgEl.innerHTML = renderMarkdown(cleanedResponse);
             }
             scrollToBottom();
         });
@@ -423,6 +452,49 @@ async function handleRenameThread(thread) {
         showToast('Thread renamed', 'success');
     }
 }
+
+/**
+ * Handle AI-assisted thread renaming
+ * @param {Object} thread Thread object
+ */
+async function handleAiRename(thread) {
+    if (!thread || !currentThreadId) return;
+
+    try {
+        // Show loading toast
+        showToast('Generating title suggestion...', 'info');
+
+        // Generate title
+        const result = await generateThreadTitle(thread);
+
+        if (!result.success) {
+            showToast(`Error: ${result.error}`, 'error');
+            return;
+        }
+
+        // Show suggested title in a dialog for user to accept/edit
+        const acceptedTitle = await showPromptDialog(
+            'AI suggested title (you can edit it):',
+            result.title
+        );
+
+        if (acceptedTitle && acceptedTitle.trim() && acceptedTitle.trim() !== thread.name) {
+            updateThread(thread.id, { name: acceptedTitle.trim() });
+            await saveMetadata();
+
+            const titleEl = document.querySelector('.sp-thread-title');
+            if (titleEl) {
+                titleEl.textContent = acceptedTitle.trim();
+            }
+
+            showToast('Thread renamed', 'success');
+        }
+    } catch (error) {
+        console.error('[ScratchPad] AI rename error:', error);
+        showToast(`Error: ${error.message}`, 'error');
+    }
+}
+
 
 /**
  * Go back to thread list

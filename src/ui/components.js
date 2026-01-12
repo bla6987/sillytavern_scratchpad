@@ -259,5 +259,6 @@ export const Icons = {
     expand: '⤢',
     collapse: '⤡',
     thread: '💬',
-    error: '⚠'
+    error: '⚠',
+    aiRename: '✨'
 };

@@ -49,7 +49,7 @@ export function registerCommands() {
             console.log('[ScratchPad CMD] Command completed');
             return '';
         },
-        aliases: ['sp'],
+        aliases: ['sp', 'ooc'],
         returns: 'nothing',
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
