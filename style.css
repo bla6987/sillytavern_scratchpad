@@ -7,28 +7,45 @@
    CSS Variables
    ======================================== */
 :root {
-    --sp-bg-primary: #1a1a2e;
-    --sp-bg-secondary: #16213e;
-    --sp-bg-tertiary: #0f0f1a;
-    --sp-text-primary: #e4e4e7;
-    --sp-text-secondary: #a1a1aa;
-    --sp-text-muted: #71717a;
-    --sp-accent: #6366f1;
-    --sp-accent-hover: #4f46e5;
-    --sp-border: #27273a;
-    --sp-user-msg-bg: #3730a3;
-    --sp-assistant-msg-bg: #1e1e2e;
+    /* ===== SillyTavern Theme Integration ===== */
+    /* Background colors derived from ST's blur tint */
+    --sp-bg-primary: var(--SmartThemeBlurTintColor, #1a1a2e);
+    --sp-bg-secondary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #16213e) 90%, var(--SmartThemeBodyColor, #e4e4e7) 10%);
+    --sp-bg-tertiary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #0f0f1a) 80%, var(--SmartThemeBodyColor, #e4e4e7) 20%);
+
+    /* Text colors from ST theme */
+    --sp-text-primary: var(--SmartThemeBodyColor, #e4e4e7);
+    --sp-text-secondary: var(--SmartThemeEmColor, #a1a1aa);
+    --sp-text-muted: color-mix(in srgb, var(--SmartThemeEmColor, #71717a) 60%, var(--SmartThemeBlurTintColor, #1a1a2e) 40%);
+
+    /* Accent colors from ST theme */
+    --sp-accent: var(--SmartThemeQuoteColor, #6366f1);
+    --sp-accent-hover: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f46e5) 80%, var(--SmartThemeBodyColor, #e4e4e7) 20%);
+
+    /* Border using ST border color */
+    --sp-border: var(--SmartThemeBorderColor, rgba(39, 39, 58, 1));
+
+    /* Message backgrounds from ST's user/bot tints */
+    --sp-user-msg-bg: var(--SmartThemeUserMesBlurTintColor, rgba(55, 48, 163, 1));
+    --sp-assistant-msg-bg: var(--SmartThemeBotMesBlurTintColor, rgba(30, 30, 46, 1));
+
+    /* Semantic colors (kept for clarity, with fallbacks) */
     --sp-error: #ef4444;
     --sp-success: #22c55e;
     --sp-warning: #f59e0b;
-    --sp-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+
+    /* Shadow using ST shadow color */
+    --sp-shadow: 0 4px 6px -1px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.5));
+
+    /* Layout variables (unchanged) */
     --sp-radius: 0.5rem;
     --sp-radius-lg: 0.75rem;
     --sp-transition: 0.2s ease;
     --sp-drawer-width: min(400px, 100vw);
     --sp-min-touch-target: 2.75rem;
-    --sp-text-size: 14px;
-    /* Default text size, can be controlled from settings */
+
+    /* Typography - inherit from ST if available */
+    --sp-text-size: var(--mainFontSize, 14px);
 }
 
 /* ========================================
@@ -59,8 +76,9 @@ body.sp-drawer-open {
     transition: transform 0.3s ease;
     display: flex;
     flex-direction: column;
-    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+    box-shadow: -4px 0 20px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.5));
     overflow: hidden;
+    font-family: var(--mainFontFamily, 'Noto Sans', sans-serif);
 }
 
 .sp-drawer.open {
