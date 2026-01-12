@@ -7,23 +7,29 @@
    CSS Variables
    ======================================== */
 :root {
-    /* ===== SillyTavern Theme Integration ===== */
-    /* Background colors derived from ST's blur tint */
-    --sp-bg-primary: var(--SmartThemeBlurTintColor, #1a1a2e);
-    --sp-bg-secondary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #16213e) 90%, var(--SmartThemeBodyColor, #e4e4e7) 10%);
-    --sp-bg-tertiary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #0f0f1a) 80%, var(--SmartThemeBodyColor, #e4e4e7) 20%);
+    /* ===== SillyTavern Theme Integration with Purple Accent ===== */
+    /* Original purple palette colors */
+    --sp-purple-primary: #1a1a2e;
+    --sp-purple-secondary: #16213e;
+    --sp-purple-tertiary: #0f0f1a;
+    --sp-purple-accent: #6366f1;
+
+    /* Background colors - blend original purple with ST theme for distinctive look */
+    --sp-bg-primary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1a1a2e) 60%, var(--sp-purple-primary) 40%);
+    --sp-bg-secondary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #16213e) 50%, var(--sp-purple-secondary) 50%);
+    --sp-bg-tertiary: color-mix(in srgb, var(--SmartThemeBlurTintColor, #0f0f1a) 50%, var(--sp-purple-tertiary) 50%);
 
     /* Text colors from ST theme */
     --sp-text-primary: var(--SmartThemeBodyColor, #e4e4e7);
     --sp-text-secondary: var(--SmartThemeEmColor, #a1a1aa);
     --sp-text-muted: color-mix(in srgb, var(--SmartThemeEmColor, #71717a) 60%, var(--SmartThemeBlurTintColor, #1a1a2e) 40%);
 
-    /* Accent colors from ST theme */
-    --sp-accent: var(--SmartThemeQuoteColor, #6366f1);
-    --sp-accent-hover: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f46e5) 80%, var(--SmartThemeBodyColor, #e4e4e7) 20%);
+    /* Accent colors - blend ST accent with purple for unique branded look */
+    --sp-accent: color-mix(in srgb, var(--SmartThemeQuoteColor, #6366f1) 70%, var(--sp-purple-accent) 30%);
+    --sp-accent-hover: color-mix(in srgb, var(--sp-accent) 80%, var(--SmartThemeBodyColor, #e4e4e7) 20%);
 
-    /* Border using ST border color */
-    --sp-border: var(--SmartThemeBorderColor, rgba(39, 39, 58, 1));
+    /* Border - subtle purple tint added */
+    --sp-border: color-mix(in srgb, var(--SmartThemeBorderColor, rgba(39, 39, 58, 1)) 80%, var(--sp-purple-accent) 20%);
 
     /* Message backgrounds from ST's user/bot tints */
     --sp-user-msg-bg: var(--SmartThemeUserMesBlurTintColor, rgba(55, 48, 163, 1));
