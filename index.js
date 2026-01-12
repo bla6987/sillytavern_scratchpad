@@ -4,7 +4,7 @@
  */
 
 import { ensureScratchPadExists } from './src/storage.js';
-import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles } from './src/settings.js';
+import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
 import { isChatActive } from './src/generation.js';
 import { initUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen } from './src/ui/index.js';
@@ -188,7 +188,10 @@ async function init() {
     ensureStylesLoaded();
 
     // Initialize settings
-    getSettings();
+    const settings = getSettings();
+
+    // Apply text size from settings
+    applyTextSize(settings.textSize);
 
     // Initialize popup functions for commands
     initPopupFunctions();

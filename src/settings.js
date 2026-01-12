@@ -5,11 +5,7 @@
 
 const MODULE_NAME = 'scratchPad';
 
-const DEFAULT_OOC_PROMPT = `You are a neutral observer and writing assistant helping the user understand and analyze their ongoing roleplay. Answer out-of-character questions about the story, characters, plot, or setting. Be direct, insightful, and helpful. Do not roleplay as any character — respond as an objective assistant.
-
-At the very beginning of your first response in a new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**
-
-Then provide your response.`;
+const DEFAULT_OOC_PROMPT = `You are a neutral observer and writing assistant helping the user understand and analyze their ongoing roleplay. Answer out-of-character questions about the story, characters, plot, or setting. Be direct, insightful, and helpful. Do not roleplay as any character — respond as an objective assistant.`;
 
 const DEFAULT_SETTINGS = Object.freeze({
     chatHistoryLimit: 0, // 0 means use all available
@@ -17,7 +13,8 @@ const DEFAULT_SETTINGS = Object.freeze({
     includeSystemPrompt: false,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
-    connectionProfile: ''
+    connectionProfile: '',
+    textSize: 14 // Default text size in pixels
 });
 
 /**
@@ -26,18 +23,18 @@ const DEFAULT_SETTINGS = Object.freeze({
  */
 export function getSettings() {
     const { extensionSettings } = SillyTavern.getContext();
-    
+
     if (!extensionSettings[MODULE_NAME]) {
         extensionSettings[MODULE_NAME] = structuredClone(DEFAULT_SETTINGS);
     }
-    
+
     // Ensure all default keys exist
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
             extensionSettings[MODULE_NAME][key] = DEFAULT_SETTINGS[key];
         }
     }
-    
+
     return extensionSettings[MODULE_NAME];
 }
 
@@ -48,7 +45,7 @@ export function getSettings() {
 export function updateSettings(updates) {
     const settings = getSettings();
     Object.assign(settings, updates);
-    
+
     const { saveSettingsDebounced } = SillyTavern.getContext();
     saveSettingsDebounced();
 }
@@ -73,7 +70,7 @@ export function getDefaultOocPrompt() {
  */
 export function loadSettingsUI() {
     const settings = getSettings();
-    
+
     // Chat history limit slider
     const historySlider = document.getElementById('sp_chat_history_limit');
     const historyValue = document.getElementById('sp_chat_history_limit_value');
@@ -81,42 +78,53 @@ export function loadSettingsUI() {
         historySlider.value = settings.chatHistoryLimit;
         historyValue.textContent = settings.chatHistoryLimit === 0 ? 'All' : settings.chatHistoryLimit;
     }
-    
+
     // Include character card toggle
     const charCardToggle = document.getElementById('sp_include_char_card');
     if (charCardToggle) {
         charCardToggle.checked = settings.includeCharacterCard;
     }
-    
+
     // Include system prompt toggle
     const sysPromptToggle = document.getElementById('sp_include_sys_prompt');
     if (sysPromptToggle) {
         sysPromptToggle.checked = settings.includeSystemPrompt;
     }
-    
+
     // OOC system prompt textarea
     const oocPromptTextarea = document.getElementById('sp_ooc_prompt');
     if (oocPromptTextarea) {
         oocPromptTextarea.value = settings.oocSystemPrompt;
     }
-    
+
     // Use alternative API toggle
     const altApiToggle = document.getElementById('sp_use_alt_api');
     if (altApiToggle) {
         altApiToggle.checked = settings.useAlternativeApi;
     }
-    
+
     // Connection profile dropdown visibility
     const profileContainer = document.getElementById('sp_profile_container');
     if (profileContainer) {
         profileContainer.style.display = settings.useAlternativeApi ? 'block' : 'none';
     }
-    
+
     // Connection profile dropdown
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
         profileSelect.value = settings.connectionProfile;
     }
+
+    // Text size slider
+    const textSizeSlider = document.getElementById('sp_text_size');
+    const textSizeValue = document.getElementById('sp_text_size_value');
+    if (textSizeSlider && textSizeValue) {
+        textSizeSlider.value = settings.textSize;
+        textSizeValue.textContent = `${settings.textSize}px`;
+    }
+
+    // Apply text size to the UI
+    applyTextSize(settings.textSize);
 }
 
 /**
@@ -135,7 +143,7 @@ export function initSettingsListeners() {
             updateSettings({ chatHistoryLimit: value });
         });
     }
-    
+
     // Include character card toggle
     const charCardToggle = document.getElementById('sp_include_char_card');
     if (charCardToggle) {
@@ -143,7 +151,7 @@ export function initSettingsListeners() {
             updateSettings({ includeCharacterCard: e.target.checked });
         });
     }
-    
+
     // Include system prompt toggle
     const sysPromptToggle = document.getElementById('sp_include_sys_prompt');
     if (sysPromptToggle) {
@@ -151,7 +159,7 @@ export function initSettingsListeners() {
             updateSettings({ includeSystemPrompt: e.target.checked });
         });
     }
-    
+
     // OOC system prompt textarea
     const oocPromptTextarea = document.getElementById('sp_ooc_prompt');
     if (oocPromptTextarea) {
@@ -159,7 +167,7 @@ export function initSettingsListeners() {
             updateSettings({ oocSystemPrompt: e.target.value });
         });
     }
-    
+
     // Reset OOC prompt button
     const resetButton = document.getElementById('sp_reset_ooc_prompt');
     if (resetButton) {
@@ -170,7 +178,7 @@ export function initSettingsListeners() {
             }
         });
     }
-    
+
     // Use alternative API toggle
     const altApiToggle = document.getElementById('sp_use_alt_api');
     const profileContainer = document.getElementById('sp_profile_container');
@@ -182,7 +190,7 @@ export function initSettingsListeners() {
             }
         });
     }
-    
+
     // Connection profile dropdown
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
@@ -190,6 +198,28 @@ export function initSettingsListeners() {
             updateSettings({ connectionProfile: e.target.value });
         });
     }
+
+    // Text size slider
+    const textSizeSlider = document.getElementById('sp_text_size');
+    const textSizeValue = document.getElementById('sp_text_size_value');
+    if (textSizeSlider) {
+        textSizeSlider.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value, 10);
+            if (textSizeValue) {
+                textSizeValue.textContent = `${value}px`;
+            }
+            updateSettings({ textSize: value });
+            applyTextSize(value);
+        });
+    }
+}
+
+/**
+ * Apply text size to the Scratch Pad UI
+ * @param {number} size Text size in pixels
+ */
+export function applyTextSize(size) {
+    document.documentElement.style.setProperty('--sp-text-size', `${size}px`);
 }
 
 /**
@@ -198,7 +228,7 @@ export function initSettingsListeners() {
 export async function populateConnectionProfiles() {
     const profileSelect = document.getElementById('sp_connection_profile');
     if (!profileSelect) return;
-    
+
     try {
         // Try to get profiles via slash command
         const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
@@ -206,7 +236,7 @@ export async function populateConnectionProfiles() {
             const result = await executeSlashCommandsWithOptions('/profile-list', { handleParserErrors: false, handleExecutionErrors: false });
             if (result && result.pipe) {
                 const profiles = result.pipe.split(',').map(p => p.trim()).filter(p => p);
-                
+
                 profileSelect.innerHTML = '<option value="">-- Select Profile --</option>';
                 profiles.forEach(profile => {
                     const option = document.createElement('option');
@@ -214,7 +244,7 @@ export async function populateConnectionProfiles() {
                     option.textContent = profile;
                     profileSelect.appendChild(option);
                 });
-                
+
                 // Restore selected value
                 const settings = getSettings();
                 if (settings.connectionProfile) {
