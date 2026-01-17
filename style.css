@@ -890,6 +890,42 @@ body.sp-drawer-open {
     margin: 0.5rem 0;
 }
 
+.sp-drawer-settings {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--sp-border);
+    background: var(--sp-bg-secondary);
+}
+
+.sp-settings-details {
+    color: var(--sp-text-primary);
+}
+
+.sp-settings-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--sp-accent);
+    list-style: none;
+}
+
+.sp-settings-details summary::-webkit-details-marker {
+    display: none;
+}
+
+.sp-settings-details summary::after {
+    content: '▾';
+    float: right;
+    color: var(--sp-text-muted);
+    transition: transform var(--sp-transition);
+}
+
+.sp-settings-details[open] summary::after {
+    transform: rotate(180deg);
+}
+
+.sp-drawer-settings-block {
+    margin-top: 0.75rem;
+}
+
 /* ========================================
    Generating Indicator
    ======================================== */

@@ -9,7 +9,11 @@ const DEFAULT_OOC_PROMPT = `You are a neutral observer and writing assistant hel
 
 const DEFAULT_SETTINGS = Object.freeze({
     chatHistoryLimit: 0, // 0 means use all available
+    chatHistoryRangeMode: 'all',
+    chatHistoryRangeStart: null,
+    chatHistoryRangeEnd: null,
     includeCharacterCard: true,
+    characterCardOnly: false,
     includeSystemPrompt: false,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
@@ -79,10 +83,30 @@ export function loadSettingsUI() {
         historyValue.textContent = settings.chatHistoryLimit === 0 ? 'All' : settings.chatHistoryLimit;
     }
 
+    // Chat history range controls
+    const rangeModeSelect = document.getElementById('sp_chat_history_range_mode');
+    const rangeStartInput = document.getElementById('sp_chat_history_range_start');
+    const rangeEndInput = document.getElementById('sp_chat_history_range_end');
+    if (rangeModeSelect) {
+        rangeModeSelect.value = settings.chatHistoryRangeMode || 'all';
+    }
+    if (rangeStartInput) {
+        rangeStartInput.value = settings.chatHistoryRangeStart ?? '';
+    }
+    if (rangeEndInput) {
+        rangeEndInput.value = settings.chatHistoryRangeEnd ?? '';
+    }
+    updateRangeInputsVisibility();
+
     // Include character card toggle
     const charCardToggle = document.getElementById('sp_include_char_card');
     if (charCardToggle) {
         charCardToggle.checked = settings.includeCharacterCard;
+    }
+
+    const charCardOnlyToggle = document.getElementById('sp_char_card_only');
+    if (charCardOnlyToggle) {
+        charCardOnlyToggle.checked = settings.characterCardOnly;
     }
 
     // Include system prompt toggle
@@ -135,7 +159,7 @@ export function initSettingsListeners() {
     const historySlider = document.getElementById('sp_chat_history_limit');
     const historyValue = document.getElementById('sp_chat_history_limit_value');
     if (historySlider) {
-        historySlider.addEventListener('input', (e) => {
+        bindOnce(historySlider, 'input', (e) => {
             const value = parseInt(e.target.value, 10);
             if (historyValue) {
                 historyValue.textContent = value === 0 ? 'All' : value;
@@ -144,18 +168,52 @@ export function initSettingsListeners() {
         });
     }
 
+    // Chat history range mode
+    const rangeModeSelect = document.getElementById('sp_chat_history_range_mode');
+    const rangeStartInput = document.getElementById('sp_chat_history_range_start');
+    const rangeEndInput = document.getElementById('sp_chat_history_range_end');
+    if (rangeModeSelect) {
+        bindOnce(rangeModeSelect, 'change', (e) => {
+            updateSettings({ chatHistoryRangeMode: e.target.value });
+            updateRangeInputsVisibility();
+        });
+    }
+
+    if (rangeStartInput) {
+        bindOnce(rangeStartInput, 'input', (e) => {
+            updateSettings({ chatHistoryRangeStart: parseRangeNumber(e.target.value) });
+        });
+    }
+
+    if (rangeEndInput) {
+        bindOnce(rangeEndInput, 'input', (e) => {
+            updateSettings({ chatHistoryRangeEnd: parseRangeNumber(e.target.value) });
+        });
+    }
+
     // Include character card toggle
     const charCardToggle = document.getElementById('sp_include_char_card');
     if (charCardToggle) {
-        charCardToggle.addEventListener('change', (e) => {
+        bindOnce(charCardToggle, 'change', (e) => {
             updateSettings({ includeCharacterCard: e.target.checked });
+        });
+    }
+
+    const charCardOnlyToggle = document.getElementById('sp_char_card_only');
+    if (charCardOnlyToggle) {
+        bindOnce(charCardOnlyToggle, 'change', (e) => {
+            const enabled = e.target.checked;
+            updateSettings({ characterCardOnly: enabled, includeCharacterCard: enabled ? true : getSettings().includeCharacterCard });
+            if (enabled && charCardToggle) {
+                charCardToggle.checked = true;
+            }
         });
     }
 
     // Include system prompt toggle
     const sysPromptToggle = document.getElementById('sp_include_sys_prompt');
     if (sysPromptToggle) {
-        sysPromptToggle.addEventListener('change', (e) => {
+        bindOnce(sysPromptToggle, 'change', (e) => {
             updateSettings({ includeSystemPrompt: e.target.checked });
         });
     }
@@ -163,7 +221,7 @@ export function initSettingsListeners() {
     // OOC system prompt textarea
     const oocPromptTextarea = document.getElementById('sp_ooc_prompt');
     if (oocPromptTextarea) {
-        oocPromptTextarea.addEventListener('input', (e) => {
+        bindOnce(oocPromptTextarea, 'input', (e) => {
             updateSettings({ oocSystemPrompt: e.target.value });
         });
     }
@@ -171,7 +229,7 @@ export function initSettingsListeners() {
     // Reset OOC prompt button
     const resetButton = document.getElementById('sp_reset_ooc_prompt');
     if (resetButton) {
-        resetButton.addEventListener('click', () => {
+        bindOnce(resetButton, 'click', () => {
             resetOocPrompt();
             if (oocPromptTextarea) {
                 oocPromptTextarea.value = DEFAULT_OOC_PROMPT;
@@ -183,7 +241,7 @@ export function initSettingsListeners() {
     const altApiToggle = document.getElementById('sp_use_alt_api');
     const profileContainer = document.getElementById('sp_profile_container');
     if (altApiToggle) {
-        altApiToggle.addEventListener('change', (e) => {
+        bindOnce(altApiToggle, 'change', (e) => {
             updateSettings({ useAlternativeApi: e.target.checked });
             if (profileContainer) {
                 profileContainer.style.display = e.target.checked ? 'block' : 'none';
@@ -194,7 +252,7 @@ export function initSettingsListeners() {
     // Connection profile dropdown
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
-        profileSelect.addEventListener('change', (e) => {
+        bindOnce(profileSelect, 'change', (e) => {
             updateSettings({ connectionProfile: e.target.value });
         });
     }
@@ -203,7 +261,7 @@ export function initSettingsListeners() {
     const textSizeSlider = document.getElementById('sp_text_size');
     const textSizeValue = document.getElementById('sp_text_size_value');
     if (textSizeSlider) {
-        textSizeSlider.addEventListener('input', (e) => {
+        bindOnce(textSizeSlider, 'input', (e) => {
             const value = parseInt(e.target.value, 10);
             if (textSizeValue) {
                 textSizeValue.textContent = `${value}px`;
@@ -212,6 +270,28 @@ export function initSettingsListeners() {
             applyTextSize(value);
         });
     }
+}
+
+function bindOnce(element, eventName, handler) {
+    if (!element) return;
+    const key = `spBound${eventName.charAt(0).toUpperCase()}${eventName.slice(1)}`;
+    if (element.dataset[key]) return;
+    element.addEventListener(eventName, handler);
+    element.dataset[key] = 'true';
+}
+
+function updateRangeInputsVisibility() {
+    const rangeModeSelect = document.getElementById('sp_chat_history_range_mode');
+    const rangeInputs = document.getElementById('sp_chat_history_range_inputs');
+    if (!rangeModeSelect || !rangeInputs) return;
+
+    rangeInputs.style.display = rangeModeSelect.value === 'all' ? 'none' : 'flex';
+}
+
+function parseRangeNumber(value) {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) return null;
+    return parsed;
 }
 
 /**

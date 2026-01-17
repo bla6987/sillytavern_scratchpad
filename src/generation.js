@@ -40,18 +40,53 @@ function buildCharacterContext(char) {
 /**
  * Format chat history for context
  * @param {Array} chat Chat messages array
- * @param {number} limit Maximum messages to include
  * @returns {string} Formatted chat history
  */
-function formatChatHistory(chat, limit) {
+function formatChatHistory(chat) {
     if (!chat || chat.length === 0) return '';
 
-    const messages = limit > 0 ? chat.slice(-limit) : chat;
-
-    return messages.map(msg => {
+    return chat.map(msg => {
         const role = msg.is_user ? 'User' : (msg.name || 'Character');
         return `${role}: ${msg.mes}`;
     }).join('\n\n');
+}
+
+function selectChatHistory(chat, settings) {
+    if (!chat || chat.length === 0) return [];
+
+    const rangeMode = settings.chatHistoryRangeMode || 'all';
+    const rangeStart = settings.chatHistoryRangeStart;
+    const rangeEnd = settings.chatHistoryRangeEnd;
+
+    if (rangeMode !== 'all') {
+        const total = chat.length;
+        let startIndex = 0;
+        let endIndex = total - 1;
+
+        if (rangeMode === 'start_to') {
+            if (!rangeEnd) return applyLimitFallback(chat, settings);
+            endIndex = Math.min(total - 1, Math.max(0, rangeEnd - 1));
+        } else if (rangeMode === 'from_to_end') {
+            if (!rangeStart) return applyLimitFallback(chat, settings);
+            startIndex = Math.min(total - 1, Math.max(0, rangeStart - 1));
+        } else if (rangeMode === 'between') {
+            if (!rangeStart || !rangeEnd) return applyLimitFallback(chat, settings);
+            startIndex = Math.min(total - 1, Math.max(0, rangeStart - 1));
+            endIndex = Math.min(total - 1, Math.max(0, rangeEnd - 1));
+            if (startIndex > endIndex) {
+                [startIndex, endIndex] = [endIndex, startIndex];
+            }
+        }
+
+        return chat.slice(startIndex, endIndex + 1);
+    }
+
+    return applyLimitFallback(chat, settings);
+}
+
+function applyLimitFallback(chat, settings) {
+    const historyLimit = settings.chatHistoryLimit || 0;
+    return historyLimit > 0 ? chat.slice(-historyLimit) : chat;
 }
 
 /**
@@ -525,7 +560,7 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     parts.push(systemPrompt);
 
     // Character card (if enabled)
-    if (settings.includeCharacterCard && characterId !== undefined && characters[characterId]) {
+    if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
         const charContext = buildCharacterContext(characters[characterId]);
         if (charContext) {
             parts.push('--- CHARACTER INFORMATION ---');
@@ -534,9 +569,9 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     }
 
     // Chat history
-    if (chat && chat.length > 0) {
-        const historyLimit = settings.chatHistoryLimit || 0;
-        const chatHistory = formatChatHistory(chat, historyLimit);
+    if (!settings.characterCardOnly && chat && chat.length > 0) {
+        const selectedChat = selectChatHistory(chat, settings);
+        const chatHistory = formatChatHistory(selectedChat);
         if (chatHistory) {
             parts.push('--- ROLEPLAY CHAT HISTORY ---');
             parts.push(chatHistory);
@@ -544,7 +579,7 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     }
 
     // Thread history (for continuity)
-    if (thread && thread.messages && thread.messages.length > 0) {
+    if (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0) {
         const threadHistory = formatThreadHistory(thread.messages);
         if (threadHistory) {
             parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
