@@ -5,6 +5,8 @@
 import { getThread, updateThread, saveMetadata } from '../storage.js';
 import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
+import { speakText, isTTSAvailable } from '../tts.js';
+import { getSettings } from '../settings.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
@@ -308,11 +310,50 @@ function createMessageElement(message) {
 
     msgEl.appendChild(contentEl);
 
+    // Message footer with timestamp and actions
+    const footerEl = document.createElement('div');
+    footerEl.className = 'sp-message-footer';
+
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-message-time';
     timeEl.textContent = formatTimestamp(message.timestamp);
-    msgEl.appendChild(timeEl);
+    footerEl.appendChild(timeEl);
+
+    // Actions for assistant messages
+    if (message.role === 'assistant' && message.status === 'complete' && message.content) {
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'sp-message-actions';
+
+        // TTS speak button (only if TTS is enabled)
+        if (isTTSAvailable()) {
+            const speakBtn = createButton({
+                icon: Icons.speak,
+                className: 'sp-speak-btn',
+                ariaLabel: 'Speak this message',
+                onClick: async () => {
+                    speakBtn.disabled = true;
+                    speakBtn.classList.add('sp-speaking');
+                    try {
+                        const success = await speakText(message.content);
+                        if (!success) {
+                            showToast('TTS failed. Check your TTS settings.', 'warning');
+                        }
+                    } finally {
+                        speakBtn.disabled = false;
+                        speakBtn.classList.remove('sp-speaking');
+                    }
+                }
+            });
+            actionsEl.appendChild(speakBtn);
+        }
+
+        if (actionsEl.children.length > 0) {
+            footerEl.appendChild(actionsEl);
+        }
+    }
+
+    msgEl.appendChild(footerEl);
 
     return msgEl;
 }

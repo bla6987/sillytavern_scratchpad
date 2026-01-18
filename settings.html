@@ -58,7 +58,25 @@
                 </div>
                 
                 <hr>
-                
+
+                <h4>Text-to-Speech</h4>
+
+                <label class="checkbox_label" for="sp_tts_enabled">
+                    <input type="checkbox" id="sp_tts_enabled">
+                    <span>Enable TTS</span>
+                    <small>Add speak button to assistant messages (uses SillyTavern's TTS)</small>
+                </label>
+
+                <div id="sp_tts_voice_container" style="display: none;">
+                    <label for="sp_tts_voice">
+                        <span>Voice Name:</span>
+                        <small>Character name from your TTS voice map (leave empty for default)</small>
+                    </label>
+                    <input type="text" id="sp_tts_voice" class="text_pole" placeholder="e.g., Narrator">
+                </div>
+
+                <hr>
+
                 <h4>API Settings</h4>
                 
                 <label class="checkbox_label" for="sp_use_alt_api">

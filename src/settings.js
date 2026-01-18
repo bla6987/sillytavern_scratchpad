@@ -18,7 +18,9 @@ const DEFAULT_SETTINGS = Object.freeze({
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
     connectionProfile: '',
-    textSize: 14 // Default text size in pixels
+    textSize: 14, // Default text size in pixels
+    ttsEnabled: false, // Enable TTS for assistant messages
+    ttsVoice: '' // Voice name for TTS (from SillyTavern voice map)
 });
 
 /**
@@ -149,6 +151,24 @@ export function loadSettingsUI() {
 
     // Apply text size to the UI
     applyTextSize(settings.textSize);
+
+    // TTS enabled toggle
+    const ttsEnabledToggle = document.getElementById('sp_tts_enabled');
+    if (ttsEnabledToggle) {
+        ttsEnabledToggle.checked = settings.ttsEnabled;
+    }
+
+    // TTS voice input
+    const ttsVoiceInput = document.getElementById('sp_tts_voice');
+    if (ttsVoiceInput) {
+        ttsVoiceInput.value = settings.ttsVoice || '';
+    }
+
+    // TTS voice container visibility
+    const ttsVoiceContainer = document.getElementById('sp_tts_voice_container');
+    if (ttsVoiceContainer) {
+        ttsVoiceContainer.style.display = settings.ttsEnabled ? 'block' : 'none';
+    }
 }
 
 /**
@@ -268,6 +288,26 @@ export function initSettingsListeners() {
             }
             updateSettings({ textSize: value });
             applyTextSize(value);
+        });
+    }
+
+    // TTS enabled toggle
+    const ttsEnabledToggle = document.getElementById('sp_tts_enabled');
+    const ttsVoiceContainer = document.getElementById('sp_tts_voice_container');
+    if (ttsEnabledToggle) {
+        bindOnce(ttsEnabledToggle, 'change', (e) => {
+            updateSettings({ ttsEnabled: e.target.checked });
+            if (ttsVoiceContainer) {
+                ttsVoiceContainer.style.display = e.target.checked ? 'block' : 'none';
+            }
+        });
+    }
+
+    // TTS voice input
+    const ttsVoiceInput = document.getElementById('sp_tts_voice');
+    if (ttsVoiceInput) {
+        bindOnce(ttsVoiceInput, 'input', (e) => {
+            updateSettings({ ttsVoice: e.target.value.trim() });
         });
     }
 }

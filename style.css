@@ -556,6 +556,55 @@ body.sp-drawer-open {
     color: rgba(255, 255, 255, 0.6);
 }
 
+/* Message Footer */
+.sp-message-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.5rem;
+    gap: 0.5rem;
+}
+
+.sp-message-actions {
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity var(--sp-transition);
+}
+
+.sp-message:hover .sp-message-actions {
+    opacity: 1;
+}
+
+/* TTS Speak Button */
+.sp-speak-btn {
+    background: transparent;
+    border: 1px solid var(--sp-border);
+    color: var(--sp-text-secondary);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    min-width: auto;
+    min-height: auto;
+}
+
+.sp-speak-btn:hover:not(:disabled) {
+    background: var(--sp-accent);
+    border-color: var(--sp-accent);
+    color: white;
+}
+
+.sp-speak-btn.sp-speaking {
+    background: var(--sp-accent);
+    border-color: var(--sp-accent);
+    color: white;
+    animation: sp-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 /* Failed Message */
 .sp-message-failed {
     border-color: var(--sp-error);
@@ -1101,5 +1150,12 @@ body.sp-drawer-open {
             opacity: 1;
             transform: none;
         }
+    }
+}
+
+/* Touch devices - always show message actions */
+@media (hover: none) and (pointer: coarse) {
+    .sp-message-actions {
+        opacity: 1;
     }
 }
