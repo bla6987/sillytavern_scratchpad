@@ -677,6 +677,12 @@ body.sp-drawer-open {
     bottom: 0;
     height: 100vh !important;
     height: 100dvh !important;
+    height: 100svh !important;
+    min-height: 100vh;
+    min-height: 100dvh;
+    min-height: 100svh;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-sizing: border-box;
     z-index: 10000;
     display: flex;
     flex-direction: column;
