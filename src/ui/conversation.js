@@ -3,7 +3,7 @@
  */
 
 import { getThread, updateThread, saveMetadata } from '../storage.js';
-import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle } from '../generation.js';
+import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings } from '../settings.js';
@@ -375,12 +375,15 @@ async function handleSendMessage() {
     textarea.value = '';
     textarea.style.height = 'auto';
 
-    // Disable send and show generating indicator
+    // Disable send and show generating indicator with cancel button
     isGenerating = true;
     if (sendBtn) sendBtn.disabled = true;
     textarea.disabled = true;
     textarea.placeholder = 'Generating...';
-    showGeneratingIndicator(true);
+    showGeneratingIndicator(true, () => {
+        cancelGeneration();
+        showToast('Generation cancelled', 'info');
+    });
 
     try {
         // Create thread if needed
@@ -426,7 +429,7 @@ async function handleSendMessage() {
             }
         });
 
-        if (!result.success) {
+        if (!result.success && !result.cancelled) {
             showToast(`Error: ${result.error}`, 'error');
         }
 
@@ -462,21 +465,40 @@ async function handleRetry(messageId) {
     if (isGenerating || !currentThreadId) return;
 
     const sendBtn = document.getElementById('sp-send-btn');
+    const textarea = document.getElementById('sp-message-input');
+
+    // Show generating state in UI with cancel button
     isGenerating = true;
     if (sendBtn) sendBtn.disabled = true;
+    if (textarea) {
+        textarea.disabled = true;
+        textarea.placeholder = 'Generating...';
+    }
+    showGeneratingIndicator(true, () => {
+        cancelGeneration();
+        showToast('Generation cancelled', 'info');
+    });
+
+    // Track the new assistant message ID for streaming updates
+    let streamingMsgEl = null;
 
     try {
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
-            const msgEl = document.querySelector(`[data-message-id="${messageId}"] .sp-message-content`);
-            if (msgEl && !isComplete) {
+            // On first callback, refresh to show new pending message
+            if (!streamingMsgEl) {
+                refreshConversation();
+                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+            }
+
+            if (streamingMsgEl && !isComplete) {
                 // Parse out thinking tags during streaming so they don't appear as raw markdown
                 const { cleanedResponse } = parseThinking(partialResponse);
-                msgEl.innerHTML = renderMarkdown(cleanedResponse);
+                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
             }
             scrollToBottom();
         });
 
-        if (!result.success) {
+        if (!result.success && !result.cancelled) {
             showToast(`Retry failed: ${result.error}`, 'error');
         }
 
@@ -486,6 +508,11 @@ async function handleRetry(messageId) {
     } finally {
         isGenerating = false;
         if (sendBtn) sendBtn.disabled = false;
+        if (textarea) {
+            textarea.disabled = false;
+            textarea.placeholder = 'Ask a question...';
+        }
+        showGeneratingIndicator(false);
     }
 }
 
@@ -657,8 +684,9 @@ function setupViewportHandlers() {
 /**
  * Show or hide the generating indicator
  * @param {boolean} show Whether to show the indicator
+ * @param {Function} onCancel Optional callback when cancel is clicked
  */
-function showGeneratingIndicator(show) {
+function showGeneratingIndicator(show, onCancel = null) {
     const inputContainer = document.querySelector('.sp-input-container');
     if (!inputContainer) return;
 
@@ -669,10 +697,25 @@ function showGeneratingIndicator(show) {
     if (show) {
         const indicator = document.createElement('div');
         indicator.className = 'sp-generating-indicator';
-        indicator.innerHTML = `
-            <div class="sp-generating-spinner"></div>
-            <span>Generating response...</span>
-        `;
+
+        const spinnerSpan = document.createElement('div');
+        spinnerSpan.className = 'sp-generating-spinner';
+        indicator.appendChild(spinnerSpan);
+
+        const textSpan = document.createElement('span');
+        textSpan.textContent = 'Generating response...';
+        indicator.appendChild(textSpan);
+
+        if (onCancel) {
+            const cancelBtn = createButton({
+                icon: Icons.cancel,
+                text: 'Cancel',
+                className: 'sp-cancel-btn',
+                onClick: onCancel
+            });
+            indicator.appendChild(cancelBtn);
+        }
+
         inputContainer.insertBefore(indicator, inputContainer.firstChild);
         inputContainer.classList.add('sp-generating');
     } else {

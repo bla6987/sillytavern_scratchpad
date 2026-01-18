@@ -502,6 +502,19 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             thinkingLength: combinedThinking ? combinedThinking.length : 0
         });
 
+        // Check if generation was cancelled
+        if (checkAndResetCancellation()) {
+            console.log('[ScratchPad] Raw prompt generation was cancelled');
+            updateMessage(threadId, assistantMessage.id, {
+                content: responseText || '',
+                thinking: combinedThinking,
+                noContext: true,
+                status: responseText ? 'complete' : 'cancelled'
+            });
+            await saveMetadata();
+            return { success: false, cancelled: true, response: responseText || '' };
+        }
+
         updateMessage(threadId, assistantMessage.id, {
             content: responseWithoutThinking,
             thinking: combinedThinking,
@@ -520,6 +533,20 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         return { success: true, response: responseWithoutThinking, thinking: combinedThinking };
 
     } catch (error) {
+        // Check if this was a cancellation
+        if (checkAndResetCancellation()) {
+            console.log('[ScratchPad] Raw prompt generation was cancelled (caught)');
+            const thread = getThread(threadId);
+            if (thread) {
+                const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
+                if (msgIndex !== -1) {
+                    thread.messages.splice(msgIndex, 1);
+                }
+            }
+            await saveMetadata();
+            return { success: false, cancelled: true };
+        }
+
         console.error('[ScratchPad] Generation error:', error);
 
         updateMessage(threadId, assistantMessage.id, {
@@ -599,6 +626,52 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
 
 // Track active generation for streaming token identification
 let activeGenerationId = null;
+let isCancellationRequested = false;
+
+/**
+ * Cancel any active generation
+ * @returns {boolean} True if there was an active generation to cancel
+ */
+export function cancelGeneration() {
+    if (activeGenerationId) {
+        console.log('[ScratchPad] Cancelling generation:', activeGenerationId);
+        isCancellationRequested = true;
+        activeGenerationId = null;
+
+        // Try to stop SillyTavern's generation if possible
+        try {
+            const context = SillyTavern.getContext();
+            if (context.stopGeneration) {
+                context.stopGeneration();
+            } else if (context.abortController) {
+                context.abortController.abort();
+            }
+        } catch (e) {
+            console.warn('[ScratchPad] Could not stop ST generation:', e);
+        }
+
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Check if generation is currently active
+ * @returns {boolean} True if generation is active
+ */
+export function isGenerationActive() {
+    return activeGenerationId !== null;
+}
+
+/**
+ * Check and reset cancellation flag
+ * @returns {boolean} True if cancellation was requested
+ */
+function checkAndResetCancellation() {
+    const wasCancelled = isCancellationRequested;
+    isCancellationRequested = false;
+    return wasCancelled;
+}
 
 /**
  * Generate a scratch pad response
@@ -784,6 +857,19 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             }
         }
 
+        // Check if generation was cancelled
+        if (checkAndResetCancellation()) {
+            console.log('[ScratchPad] Generation was cancelled');
+            // Keep partial response if any, mark as cancelled
+            updateMessage(threadId, assistantMessage.id, {
+                content: responseText || '',
+                thinking: combinedThinking,
+                status: responseText ? 'complete' : 'cancelled'
+            });
+            await saveMetadata();
+            return { success: false, cancelled: true, response: responseText || '' };
+        }
+
         // Update assistant message with content and thinking
         updateMessage(threadId, assistantMessage.id, {
             content: finalResponse,
@@ -798,6 +884,21 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         return { success: true, response: finalResponse, thinking: combinedThinking };
 
     } catch (error) {
+        // Check if this was a cancellation
+        if (checkAndResetCancellation()) {
+            console.log('[ScratchPad] Generation was cancelled (caught)');
+            // Remove the pending message on cancel
+            const thread = getThread(threadId);
+            if (thread) {
+                const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
+                if (msgIndex !== -1) {
+                    thread.messages.splice(msgIndex, 1);
+                }
+            }
+            await saveMetadata();
+            return { success: false, cancelled: true };
+        }
+
         console.error('[ScratchPad] Generation error:', error);
 
         // Mark message as failed

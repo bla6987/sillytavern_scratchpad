@@ -4,8 +4,10 @@
  */
 
 import { createThread, saveMetadata } from '../storage.js';
-import { generateScratchPadResponse, generateRawPromptResponse, parseThinking } from '../generation.js';
+import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, cancelGeneration } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
+
+let isPopupGenerating = false;
 
 let popupElement = null;
 let currentPopupThreadId = null;
@@ -161,6 +163,18 @@ function createPopupElement() {
     // Actions
     const actions = document.createElement('div');
     actions.className = 'sp-popup-actions';
+    actions.id = 'sp-popup-actions';
+
+    const cancelBtn = createButton({
+        icon: Icons.cancel,
+        text: 'Cancel',
+        className: 'sp-popup-cancel-btn',
+        onClick: () => {
+            cancelGeneration();
+            showToast('Generation cancelled', 'info');
+        }
+    });
+    cancelBtn.id = 'sp-popup-cancel-btn';
 
     const openBtn = createButton({
         icon: Icons.expand,
@@ -168,6 +182,7 @@ function createPopupElement() {
         className: 'sp-popup-open-btn',
         onClick: () => handleOpenInScratchPad()
     });
+    openBtn.id = 'sp-popup-open-btn';
 
     const dismissBtn = createButton({
         icon: Icons.close,
@@ -175,9 +190,13 @@ function createPopupElement() {
         className: 'sp-popup-dismiss-btn',
         onClick: () => dismissPopup()
     });
+    dismissBtn.id = 'sp-popup-dismiss-btn';
 
+    // Initially show cancel, hide open (will swap when generation completes)
+    actions.appendChild(cancelBtn);
     actions.appendChild(openBtn);
     actions.appendChild(dismissBtn);
+    openBtn.style.display = 'none';
     sheet.appendChild(actions);
 
     popupElement.appendChild(sheet);
@@ -193,6 +212,18 @@ function createPopupElement() {
 }
 
 /**
+ * Swap popup action buttons between generating and complete states
+ * @param {boolean} isGenerating Whether currently generating
+ */
+function updatePopupActionButtons(isGenerating) {
+    const cancelBtn = document.getElementById('sp-popup-cancel-btn');
+    const openBtn = document.getElementById('sp-popup-open-btn');
+
+    if (cancelBtn) cancelBtn.style.display = isGenerating ? '' : 'none';
+    if (openBtn) openBtn.style.display = isGenerating ? 'none' : '';
+}
+
+/**
  * Generate response for popup
  * @param {string} message User's message
  */
@@ -201,6 +232,9 @@ async function generatePopupResponse(message) {
     const titleEl = document.getElementById('sp-popup-title');
 
     if (!contentEl || !currentPopupThreadId) return;
+
+    isPopupGenerating = true;
+    updatePopupActionButtons(true);
 
     try {
         const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
@@ -218,11 +252,17 @@ async function generatePopupResponse(message) {
             contentEl.scrollTop = contentEl.scrollHeight;
         });
 
-        if (!result.success) {
+        if (!result.success && !result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-error">
                     <span class="sp-error-icon">${Icons.error}</span>
                     <span>Error: ${result.error}</span>
+                </div>
+            `;
+        } else if (result.cancelled) {
+            contentEl.innerHTML = `
+                <div class="sp-popup-response sp-popup-cancelled">
+                    <span>Generation cancelled</span>
                 </div>
             `;
         } else {
@@ -259,6 +299,9 @@ async function generatePopupResponse(message) {
                 <span>Error: ${error.message}</span>
             </div>
         `;
+    } finally {
+        isPopupGenerating = false;
+        updatePopupActionButtons(false);
     }
 }
 
@@ -267,6 +310,9 @@ async function generatePopupRawResponse(message) {
     const titleEl = document.getElementById('sp-popup-title');
 
     if (!contentEl || !currentPopupThreadId) return;
+
+    isPopupGenerating = true;
+    updatePopupActionButtons(true);
 
     try {
         const result = await generateRawPromptResponse(message, currentPopupThreadId, (partialResponse) => {
@@ -281,11 +327,17 @@ async function generatePopupRawResponse(message) {
             contentEl.scrollTop = contentEl.scrollHeight;
         });
 
-        if (!result.success) {
+        if (!result.success && !result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-error">
                     <span class="sp-error-icon">${Icons.error}</span>
                     <span>Error: ${result.error}</span>
+                </div>
+            `;
+        } else if (result.cancelled) {
+            contentEl.innerHTML = `
+                <div class="sp-popup-response sp-popup-cancelled">
+                    <span>Generation cancelled</span>
                 </div>
             `;
         } else {
@@ -320,6 +372,9 @@ async function generatePopupRawResponse(message) {
                 <span>Error: ${error.message}</span>
             </div>
         `;
+    } finally {
+        isPopupGenerating = false;
+        updatePopupActionButtons(false);
     }
 }
 

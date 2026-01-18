@@ -262,5 +262,6 @@ export const Icons = {
     error: '⚠',
     aiRename: '✨',
     speak: '🔊',
-    stopSpeak: '⏹'
+    stopSpeak: '⏹',
+    cancel: '⏹'
 };

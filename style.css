@@ -874,6 +874,24 @@ body.sp-drawer-open {
     background: var(--sp-bg-secondary);
 }
 
+.sp-popup-cancel-btn {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--sp-text-muted);
+    color: var(--sp-text-muted);
+}
+
+.sp-popup-cancel-btn:hover {
+    background: var(--sp-error);
+    border-color: var(--sp-error);
+    color: white;
+}
+
+.sp-popup-cancelled {
+    color: var(--sp-text-muted);
+    font-style: italic;
+}
+
 /* ========================================
    Load More Button
    ======================================== */
@@ -1027,6 +1045,26 @@ body.sp-drawer-open {
 
 .sp-input-container.sp-generating .sp-message-input {
     cursor: not-allowed;
+}
+
+/* Cancel button in generating indicator */
+.sp-cancel-btn {
+    margin-left: auto;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    background: transparent;
+    border: 1px solid var(--sp-text-muted);
+    color: var(--sp-text-muted);
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    animation: none;
+}
+
+.sp-cancel-btn:hover {
+    background: var(--sp-error);
+    border-color: var(--sp-error);
+    color: white;
 }
 
 /* ========================================
