@@ -6,11 +6,13 @@
 import { createThread, saveMetadata } from '../storage.js';
 import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, cancelGeneration } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
+import { speakText, isTTSAvailable } from '../tts.js';
 
 let isPopupGenerating = false;
 
 let popupElement = null;
 let currentPopupThreadId = null;
+let currentPopupResponse = null;
 
 /**
  * Show the quick popup with a new thread and generate response
@@ -184,6 +186,27 @@ function createPopupElement() {
     });
     openBtn.id = 'sp-popup-open-btn';
 
+    const speakBtn = createButton({
+        icon: Icons.speak,
+        className: 'sp-speak-btn sp-popup-speak-btn',
+        ariaLabel: 'Speak response',
+        onClick: async () => {
+            speakBtn.disabled = true;
+            speakBtn.classList.add('sp-speaking');
+            try {
+                const success = await speakText(currentPopupResponse);
+                if (!success) {
+                    showToast('TTS failed. Check your TTS settings.', 'warning');
+                }
+            } finally {
+                speakBtn.disabled = false;
+                speakBtn.classList.remove('sp-speaking');
+            }
+        }
+    });
+    speakBtn.id = 'sp-popup-speak-btn';
+    speakBtn.style.display = 'none';
+
     const dismissBtn = createButton({
         icon: Icons.close,
         text: 'Dismiss',
@@ -192,9 +215,10 @@ function createPopupElement() {
     });
     dismissBtn.id = 'sp-popup-dismiss-btn';
 
-    // Initially show cancel, hide open (will swap when generation completes)
+    // Initially show cancel, hide open and speak (will swap when generation completes)
     actions.appendChild(cancelBtn);
     actions.appendChild(openBtn);
+    actions.appendChild(speakBtn);
     actions.appendChild(dismissBtn);
     openBtn.style.display = 'none';
     sheet.appendChild(actions);
@@ -214,13 +238,18 @@ function createPopupElement() {
 /**
  * Swap popup action buttons between generating and complete states
  * @param {boolean} isGenerating Whether currently generating
+ * @param {boolean} hasResponse Whether a successful response is available for TTS
  */
-function updatePopupActionButtons(isGenerating) {
+function updatePopupActionButtons(isGenerating, hasResponse = false) {
     const cancelBtn = document.getElementById('sp-popup-cancel-btn');
     const openBtn = document.getElementById('sp-popup-open-btn');
+    const speakBtn = document.getElementById('sp-popup-speak-btn');
 
     if (cancelBtn) cancelBtn.style.display = isGenerating ? '' : 'none';
     if (openBtn) openBtn.style.display = isGenerating ? 'none' : '';
+    if (speakBtn) {
+        speakBtn.style.display = (!isGenerating && hasResponse && isTTSAvailable()) ? '' : 'none';
+    }
 }
 
 /**
@@ -282,6 +311,8 @@ async function generatePopupResponse(message) {
                     ${renderMarkdown(result.response)}
                 </div>
             `;
+            // Store response for TTS
+            currentPopupResponse = result.response;
         }
 
         // Update title with thread name
@@ -299,9 +330,10 @@ async function generatePopupResponse(message) {
                 <span>Error: ${error.message}</span>
             </div>
         `;
+        currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
-        updatePopupActionButtons(false);
+        updatePopupActionButtons(false, currentPopupResponse !== null);
     }
 }
 
@@ -356,6 +388,8 @@ async function generatePopupRawResponse(message) {
                     ${renderMarkdown(result.response)}
                 </div>
             `;
+            // Store response for TTS
+            currentPopupResponse = result.response;
         }
 
         const { getThread } = await import('../storage.js');
@@ -372,9 +406,10 @@ async function generatePopupRawResponse(message) {
                 <span>Error: ${error.message}</span>
             </div>
         `;
+        currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
-        updatePopupActionButtons(false);
+        updatePopupActionButtons(false, currentPopupResponse !== null);
     }
 }
 
@@ -416,6 +451,7 @@ export function dismissPopup() {
             popupElement = null;
         }
         currentPopupThreadId = null;
+        currentPopupResponse = null;
     }, 300);
 }
 
