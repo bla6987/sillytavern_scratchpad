@@ -735,8 +735,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
     await saveMetadata();
 
     try {
-        const isFirstMessage = thread.messages.filter(m => m.role === 'assistant').length === 1;
-        const { systemPrompt, prompt } = buildPrompt(userQuestion, thread, isFirstMessage);
+        const currentThread = getThread(threadId);  // Re-fetch to get latest messages
+        const isFirstMessage = currentThread.messages.filter(m => m.role === 'assistant').length === 1;
+        const { systemPrompt, prompt } = buildPrompt(userQuestion, currentThread, isFirstMessage);
 
         // Generation function
         const doGenerate = async () => {
@@ -968,6 +969,53 @@ export async function retryMessage(threadId, messageId, onStream = null) {
 
     // Also remove the user message so generateScratchPadResponse can re-add it
     const userMsgIndex = thread.messages.findIndex(m => m.content === userQuestion && m.role === 'user');
+    if (userMsgIndex !== -1) {
+        thread.messages.splice(userMsgIndex, 1);
+    }
+
+    await saveMetadata();
+
+    // Re-generate
+    return await generateScratchPadResponse(userQuestion, threadId, onStream);
+}
+
+/**
+ * Regenerate an assistant message (removes all messages after it, creating a branch point)
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Message ID to regenerate
+ * @param {Function} onStream Callback for streaming updates
+ * @returns {Promise<Object>} { success, response, error }
+ */
+export async function regenerateMessage(threadId, messageId, onStream = null) {
+    const thread = getThread(threadId);
+    if (!thread) {
+        return { success: false, error: 'Thread not found' };
+    }
+
+    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
+    if (messageIndex === -1) {
+        return { success: false, error: 'Message not found' };
+    }
+
+    // Find the user message before this assistant message
+    let userQuestion = '';
+    let userMsgIndex = -1;
+    for (let i = messageIndex - 1; i >= 0; i--) {
+        if (thread.messages[i].role === 'user') {
+            userQuestion = thread.messages[i].content;
+            userMsgIndex = i;
+            break;
+        }
+    }
+
+    if (!userQuestion) {
+        return { success: false, error: 'Could not find original question' };
+    }
+
+    // Remove the assistant message and all messages after it (branch effect)
+    thread.messages.splice(messageIndex);
+
+    // Also remove the user message so generateScratchPadResponse can re-add it
     if (userMsgIndex !== -1) {
         thread.messages.splice(userMsgIndex, 1);
     }
