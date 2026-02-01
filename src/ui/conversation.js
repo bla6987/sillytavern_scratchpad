@@ -2,7 +2,7 @@
  * Conversation View component for Scratch Pad extension
  */
 
-import { getThread, updateThread, saveMetadata } from '../storage.js';
+import { getThread, getThreadForCurrentBranch, updateThread, saveMetadata } from '../storage.js';
 import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
@@ -77,7 +77,8 @@ export function renderConversation(container, isNewThread = false) {
     console.log('[ScratchPad Conv] renderConversation called, isNewThread:', isNewThread, 'currentThreadId:', currentThreadId);
     conversationContainer = container;
 
-    const thread = currentThreadId ? getThread(currentThreadId) : null;
+    // Use branch-filtered thread for display (hides messages from "future" branches)
+    const thread = currentThreadId ? getThreadForCurrentBranch(currentThreadId) : null;
 
     container.innerHTML = '';
     // Preserve sp-drawer-content class while adding view-specific class

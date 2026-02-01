@@ -369,13 +369,16 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         return { success: false, error: 'Thread not found' };
     }
 
-    const userMessage = addMessage(threadId, 'user', userPrompt, 'complete');
+    // Capture chat index at question time for branch filtering
+    const chatIndexAtQuestion = context.chat ? context.chat.length : null;
+
+    const userMessage = addMessage(threadId, 'user', userPrompt, 'complete', chatIndexAtQuestion);
     if (!userMessage) {
         return { success: false, error: 'Failed to add user message' };
     }
     userMessage.noContext = true;
 
-    const assistantMessage = addMessage(threadId, 'assistant', '', 'pending');
+    const assistantMessage = addMessage(threadId, 'assistant', '', 'pending', chatIndexAtQuestion);
     if (!assistantMessage) {
         return { success: false, error: 'Failed to add assistant message' };
     }
@@ -702,14 +705,17 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         return { success: false, error: 'Thread not found' };
     }
 
+    // Capture chat index at question time for branch filtering
+    const chatIndexAtQuestion = context.chat ? context.chat.length : null;
+
     // Add user message
-    const userMessage = addMessage(threadId, 'user', userQuestion, 'complete');
+    const userMessage = addMessage(threadId, 'user', userQuestion, 'complete', chatIndexAtQuestion);
     if (!userMessage) {
         return { success: false, error: 'Failed to add user message' };
     }
 
     // Add pending assistant message
-    const assistantMessage = addMessage(threadId, 'assistant', '', 'pending');
+    const assistantMessage = addMessage(threadId, 'assistant', '', 'pending', chatIndexAtQuestion);
     if (!assistantMessage) {
         return { success: false, error: 'Failed to add assistant message' };
     }

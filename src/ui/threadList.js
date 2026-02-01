@@ -2,7 +2,7 @@
  * Thread List View component for Scratch Pad extension
  */
 
-import { getThreads, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
+import { getThreads, getThreadsForCurrentBranch, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
 import { loadSettingsUI, initSettingsListeners } from '../settings.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
@@ -98,7 +98,7 @@ export function renderThreadList(container) {
     listContainer.className = 'sp-thread-list';
     listContainer.id = 'sp-thread-list';
 
-    const threads = getThreads();
+    const threads = getThreadsForCurrentBranch();
 
     if (threads.length === 0) {
         const emptyState = document.createElement('div');
@@ -241,6 +241,12 @@ function createThreadItem(thread) {
         const previewEl = document.createElement('div');
         previewEl.className = 'sp-thread-preview';
         previewEl.textContent = truncateText(lastMessage.content, 60);
+        mainContent.appendChild(previewEl);
+    } else {
+        // Thread has no messages in this branch
+        const previewEl = document.createElement('div');
+        previewEl.className = 'sp-thread-preview sp-thread-preview-empty';
+        previewEl.textContent = '(no messages in this branch)';
         mainContent.appendChild(previewEl);
     }
 

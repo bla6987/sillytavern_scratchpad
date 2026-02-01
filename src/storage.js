@@ -195,18 +195,27 @@ export function clearAllThreads() {
  * @param {string} role 'user' or 'assistant'
  * @param {string} content Message content
  * @param {string} [status='complete'] Message status
+ * @param {number|null} [chatMessageIndex=null] Chat message index when created (for branch filtering)
  * @returns {Object|null} Created message or null
  */
-export function addMessage(threadId, role, content, status = 'complete') {
+export function addMessage(threadId, role, content, status = 'complete', chatMessageIndex = null) {
     const thread = getThread(threadId);
     if (!thread) return null;
+
+    // Capture current chat length if not provided
+    let messageIndex = chatMessageIndex;
+    if (messageIndex === null) {
+        const { chat } = SillyTavern.getContext();
+        messageIndex = chat ? chat.length : null;
+    }
 
     const message = {
         id: generateId(),
         role: role,
         content: content,
         timestamp: getTimestamp(),
-        status: status
+        status: status,
+        chatMessageIndex: messageIndex
     };
 
     thread.messages.push(message);
@@ -265,4 +274,58 @@ export function deleteMessage(threadId, messageId) {
     thread.updatedAt = getTimestamp();
 
     return true;
+}
+
+/**
+ * Get the current chat length
+ * @returns {number|null} Current chat length or null if no chat
+ */
+export function getCurrentChatLength() {
+    const { chat } = SillyTavern.getContext();
+    return chat ? chat.length : null;
+}
+
+/**
+ * Get a thread filtered for the current branch
+ * Messages created after the current chat length are hidden
+ * @param {string} threadId Thread ID
+ * @returns {Object|null} Thread with filtered messages or null
+ */
+export function getThreadForCurrentBranch(threadId) {
+    const thread = getThread(threadId);
+    if (!thread) return null;
+
+    const currentLength = getCurrentChatLength();
+    if (currentLength === null) return thread;
+
+    // Filter messages - keep legacy (no index) or those within current chat
+    const filteredMessages = thread.messages.filter(msg => {
+        if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
+            return true;  // Legacy messages always shown
+        }
+        return msg.chatMessageIndex <= currentLength;
+    });
+
+    return { ...thread, messages: filteredMessages };
+}
+
+/**
+ * Get all threads filtered for the current branch
+ * @returns {Array} Array of threads with filtered messages
+ */
+export function getThreadsForCurrentBranch() {
+    const threads = getThreads();
+    const currentLength = getCurrentChatLength();
+
+    if (currentLength === null) return threads;
+
+    return threads.map(thread => {
+        const filteredMessages = thread.messages.filter(msg => {
+            if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
+                return true;
+            }
+            return msg.chatMessageIndex <= currentLength;
+        });
+        return { ...thread, messages: filteredMessages };
+    });
 }
