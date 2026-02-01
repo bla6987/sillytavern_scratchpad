@@ -3,7 +3,7 @@
  */
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from '../storage.js';
-import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration } from '../generation.js';
+import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings } from '../settings.js';
@@ -584,6 +584,28 @@ function createMessageElement(message) {
     if (message.role === 'assistant' && message.status === 'complete' && message.content) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
+
+        // Apply to Guided Swipe button (only if GG is installed)
+        if (isGuidedGenerationsInstalled()) {
+            const applySwipeBtn = createButton({
+                icon: Icons.swipe,
+                text: 'Apply Swipe',
+                className: 'sp-action-btn sp-apply-swipe',
+                ariaLabel: 'Use this response as guidance for a swipe',
+                onClick: async () => {
+                    applySwipeBtn.disabled = true;
+                    const result = await triggerGuidedSwipe(message.content);
+                    applySwipeBtn.disabled = false;
+
+                    if (result.success) {
+                        showToast('Guided swipe triggered', 'success');
+                    } else {
+                        showToast(result.error, 'error');
+                    }
+                }
+            });
+            actionsEl.appendChild(applySwipeBtn);
+        }
 
         // TTS speak button (only if TTS is enabled)
         if (isTTSAvailable()) {

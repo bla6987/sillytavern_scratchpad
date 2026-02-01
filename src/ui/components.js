@@ -264,5 +264,6 @@ export const Icons = {
     speak: '🔊',
     stopSpeak: '⏹',
     cancel: '⏹',
-    pin: '📌'
+    pin: '📌',
+    swipe: '👈'
 };

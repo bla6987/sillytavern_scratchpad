@@ -637,6 +637,32 @@ body.sp-drawer-pinned.sp-drawer-open {
     animation: sp-pulse 1s ease-in-out infinite;
 }
 
+/* Apply Swipe Button (Guided Generations integration) */
+.sp-apply-swipe {
+    background: transparent;
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity var(--sp-transition), background var(--sp-transition), border-color var(--sp-transition);
+    min-width: auto;
+    min-height: auto;
+}
+
+.sp-apply-swipe:hover:not(:disabled) {
+    opacity: 1;
+    background: var(--sp-accent);
+    border-color: var(--sp-accent);
+    color: white;
+}
+
+.sp-apply-swipe:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 @keyframes sp-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }

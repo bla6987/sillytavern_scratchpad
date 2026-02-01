@@ -988,6 +988,77 @@ export function isChatActive() {
 }
 
 /**
+ * Check if Guided Generations extension is installed
+ * @returns {boolean}
+ */
+export function isGuidedGenerationsInstalled() {
+    return !!document.querySelector('#gg_swipe_button');
+}
+
+/**
+ * Trigger Guided Generations swipe with given text
+ * @param {string} guidanceText - Text to use as guidance
+ * @returns {Promise<Object>} { success, error }
+ */
+export async function triggerGuidedSwipe(guidanceText) {
+    const swipeBtn = document.querySelector('#gg_swipe_button');
+    if (!swipeBtn) {
+        return { success: false, error: 'Guided Generations extension not found' };
+    }
+
+    const input = document.querySelector('#send_textarea');
+    if (!input) {
+        return { success: false, error: 'Input field not found' };
+    }
+
+    try {
+        // Fill the main ST input with guidance
+        input.value = guidanceText;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // Small delay to ensure input is registered
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Click the GG swipe button
+        swipeBtn.click();
+
+        return { success: true };
+    } catch (error) {
+        console.error('[ScratchPad] Failed to trigger guided swipe:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Trigger Guided Generations response with given text
+ * @param {string} guidanceText - Text to use as guidance
+ * @returns {Promise<Object>} { success, error }
+ */
+export async function triggerGuidedResponse(guidanceText) {
+    const responseBtn = document.querySelector('#gg_response_button');
+    if (!responseBtn) {
+        return { success: false, error: 'Guided Generations extension not found' };
+    }
+
+    const input = document.querySelector('#send_textarea');
+    if (!input) {
+        return { success: false, error: 'Input field not found' };
+    }
+
+    try {
+        input.value = guidanceText;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 50));
+        responseBtn.click();
+
+        return { success: true };
+    } catch (error) {
+        console.error('[ScratchPad] Failed to trigger guided response:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
  * Generate an AI-suggested title for a thread based on its content
  * @param {Object} thread Thread object
  * @returns {Promise<Object>} { success, title, error }
