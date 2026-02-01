@@ -122,11 +122,6 @@ body.sp-drawer-open {
 }
 
 /* Pinned Mode */
-body.sp-drawer-pinned #sheld {
-    margin-right: var(--sp-drawer-width);
-    transition: margin-right 0.3s ease;
-}
-
 body.sp-drawer-pinned .sp-drawer-backdrop {
     display: none !important;
 }
@@ -161,12 +156,6 @@ body.sp-drawer-pinned.sp-drawer-open {
 /* Hide pin on mobile */
 @media (max-width: 30rem) {
     .sp-pin-btn { display: none !important; }
-    body.sp-drawer-pinned #sheld { margin-right: 0 !important; }
-}
-
-/* Transition for main content */
-#sheld {
-    transition: margin-right 0.3s ease;
 }
 
 .sp-drawer-content {
