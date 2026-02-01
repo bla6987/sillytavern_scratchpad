@@ -135,7 +135,7 @@ body.sp-drawer-pinned.sp-drawer-open {
 }
 
 /* Pin button */
-.sp-pin-btn {
+.sp-button.sp-pin-btn {
     background: transparent;
     border: none;
     color: var(--sp-text-secondary);
@@ -144,18 +144,18 @@ body.sp-drawer-pinned.sp-drawer-open {
     border-radius: var(--sp-radius);
 }
 
-.sp-pin-btn:hover {
+.sp-button.sp-pin-btn:hover {
     background: var(--sp-bg-tertiary);
     color: var(--sp-text-primary);
 }
 
-.sp-pin-btn.sp-pinned-active {
+.sp-button.sp-pin-btn.sp-pinned-active {
     color: var(--sp-accent);
 }
 
 /* Hide pin on mobile */
 @media (max-width: 30rem) {
-    .sp-pin-btn { display: none !important; }
+    .sp-button.sp-pin-btn { display: none !important; }
 }
 
 .sp-drawer-content {
