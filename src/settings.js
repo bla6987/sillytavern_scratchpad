@@ -358,6 +358,23 @@ export function applyTextSize(size) {
 }
 
 /**
+ * Get current context settings from global settings
+ * Used when creating new threads to copy current global context settings
+ * @returns {Object} Context settings object
+ */
+export function getCurrentContextSettings() {
+    const settings = getSettings();
+    return {
+        chatHistoryRangeMode: settings.chatHistoryRangeMode,
+        chatHistoryRangeStart: settings.chatHistoryRangeStart,
+        chatHistoryRangeEnd: settings.chatHistoryRangeEnd,
+        characterCardOnly: settings.characterCardOnly,
+        includeCharacterCard: settings.includeCharacterCard,
+        includeSystemPrompt: settings.includeSystemPrompt
+    };
+}
+
+/**
  * Populate connection profiles dropdown
  */
 export async function populateConnectionProfiles() {

@@ -6,6 +6,19 @@
 const MODULE_NAME = 'scratchPad';
 
 /**
+ * Default context settings for threads
+ * These determine what context is sent to the AI
+ */
+export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
+    chatHistoryRangeMode: 'all',
+    chatHistoryRangeStart: null,
+    chatHistoryRangeEnd: null,
+    characterCardOnly: false,
+    includeCharacterCard: true,
+    includeSystemPrompt: false
+});
+
+/**
  * Generate a unique ID for threads and messages
  * @returns {string} Unique identifier
  */
@@ -123,9 +136,10 @@ export function findThreadByName(searchName) {
 /**
  * Create a new thread
  * @param {string} [name] Optional thread name
+ * @param {Object} [contextSettings] Optional initial context settings
  * @returns {Object} The created thread
  */
-export function createThread(name = 'New Thread') {
+export function createThread(name = 'New Thread', contextSettings = null) {
     console.log('[ScratchPad Storage] createThread called with name:', name);
     const data = ensureScratchPadExists();
     if (!data) {
@@ -139,7 +153,8 @@ export function createThread(name = 'New Thread') {
         name: name,
         createdAt: timestamp,
         updatedAt: timestamp,
-        messages: []
+        messages: [],
+        contextSettings: contextSettings ? { ...contextSettings } : null
     };
 
     data.threads.unshift(thread);
@@ -274,6 +289,40 @@ export function deleteMessage(threadId, messageId) {
     thread.updatedAt = getTimestamp();
 
     return true;
+}
+
+/**
+ * Get context settings for a thread
+ * Returns the thread's settings merged with defaults for any missing values
+ * @param {string} threadId Thread ID
+ * @returns {Object} Context settings
+ */
+export function getThreadContextSettings(threadId) {
+    const thread = getThread(threadId);
+    if (!thread || !thread.contextSettings) {
+        return { ...DEFAULT_CONTEXT_SETTINGS };
+    }
+    return { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings };
+}
+
+/**
+ * Update context settings for a thread
+ * @param {string} threadId Thread ID
+ * @param {Object} updates Settings to update
+ * @returns {Object|null} Updated settings or null if thread not found
+ */
+export function updateThreadContextSettings(threadId, updates) {
+    const thread = getThread(threadId);
+    if (!thread) return null;
+
+    if (!thread.contextSettings) {
+        thread.contextSettings = { ...DEFAULT_CONTEXT_SETTINGS };
+    }
+
+    Object.assign(thread.contextSettings, updates);
+    thread.updatedAt = getTimestamp();
+
+    return thread.contextSettings;
 }
 
 /**

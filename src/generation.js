@@ -4,7 +4,7 @@
  */
 
 import { getSettings } from './settings.js';
-import { getThread, updateThread, addMessage, updateMessage, saveMetadata } from './storage.js';
+import { getThread, updateThread, addMessage, updateMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from './storage.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -575,7 +575,19 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
 function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     const context = SillyTavern.getContext();
     const { chat, characters, characterId } = context;
-    const settings = getSettings();
+    const globalSettings = getSettings();
+
+    // Use thread's context settings, falling back to defaults for missing values
+    const contextSettings = thread?.contextSettings
+        ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
+        : DEFAULT_CONTEXT_SETTINGS;
+
+    // Merge: thread settings for context options, global for oocSystemPrompt and chatHistoryLimit
+    const settings = {
+        ...contextSettings,
+        oocSystemPrompt: globalSettings.oocSystemPrompt,
+        chatHistoryLimit: globalSettings.chatHistoryLimit
+    };
 
     const parts = [];
 

@@ -1037,6 +1037,126 @@ body.sp-drawer-pinned.sp-drawer-open {
 }
 
 /* ========================================
+   Context Options (Conversation View)
+   ======================================== */
+.sp-context-options {
+    padding: 0.5rem 1rem;
+    background: var(--sp-bg-secondary);
+    border-bottom: 1px solid var(--sp-border);
+    flex-shrink: 0;
+}
+
+.sp-context-summary {
+    font-size: 0.75rem;
+    color: var(--sp-text-secondary);
+    padding: 0.25rem 0.5rem;
+    background: var(--sp-bg-tertiary);
+    border-radius: var(--sp-radius);
+    display: inline-block;
+    margin-bottom: 0.5rem;
+}
+
+.sp-context-details {
+    color: var(--sp-text-primary);
+}
+
+.sp-context-details summary {
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--sp-accent);
+    list-style: none;
+    user-select: none;
+}
+
+.sp-context-details summary::-webkit-details-marker {
+    display: none;
+}
+
+.sp-context-details summary::before {
+    content: '▶';
+    font-size: 0.625rem;
+    margin-right: 0.5rem;
+    transition: transform var(--sp-transition);
+    display: inline-block;
+}
+
+.sp-context-details[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.sp-context-options-block {
+    margin-top: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+}
+
+.sp-context-options-block label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    font-size: 0.8125rem;
+    color: var(--sp-text-primary);
+}
+
+.sp-context-options-block label small {
+    color: var(--sp-text-muted);
+    font-size: 0.6875rem;
+}
+
+.sp-context-options-block .checkbox_label {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.sp-context-options-block .checkbox_label input[type="checkbox"] {
+    margin-top: 0.125rem;
+}
+
+.sp-context-options-block .checkbox_label span {
+    display: block;
+}
+
+.sp-context-options-block .range-block {
+    margin-top: 0.25rem;
+}
+
+.sp-context-options-block select.text_pole,
+.sp-context-options-block input.text_pole {
+    padding: 0.5rem;
+    font-size: 0.8125rem;
+    background: var(--sp-bg-tertiary);
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    color: var(--sp-text-primary);
+}
+
+.sp-context-options-block select.text_pole:focus,
+.sp-context-options-block input.text_pole:focus {
+    outline: none;
+    border-color: var(--sp-accent);
+}
+
+.sp-context-options-block .flex-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.sp-context-options-block .flex-container input[type="number"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.sp-context-options-block .flex-container span {
+    color: var(--sp-text-muted);
+    font-size: 0.75rem;
+}
+
+/* ========================================
    Generating Indicator
    ======================================== */
 .sp-generating-indicator {

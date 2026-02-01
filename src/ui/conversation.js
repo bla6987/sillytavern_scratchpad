@@ -2,11 +2,11 @@
  * Conversation View component for Scratch Pad extension
  */
 
-import { getThread, getThreadForCurrentBranch, updateThread, saveMetadata } from '../storage.js';
+import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from '../storage.js';
 import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
-import { getSettings } from '../settings.js';
+import { getSettings, getCurrentContextSettings } from '../settings.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 
 let conversationContainer = null;
@@ -150,6 +150,9 @@ export function renderConversation(container, isNewThread = false) {
 
     container.appendChild(header);
 
+    // Context options section
+    renderContextOptions(container, thread, isNewThread);
+
     // Messages area
     const messagesContainer = document.createElement('div');
     messagesContainer.className = 'sp-messages';
@@ -250,6 +253,248 @@ export function renderConversation(container, isNewThread = false) {
 
     // Handle keyboard/viewport
     setupViewportHandlers();
+}
+
+/**
+ * Render context options section for the conversation view
+ * @param {HTMLElement} container Container element
+ * @param {Object} thread Thread object (null for new threads)
+ * @param {boolean} isNewThread Whether this is a new thread
+ */
+function renderContextOptions(container, thread, isNewThread) {
+    const contextSection = document.createElement('div');
+    contextSection.className = 'sp-context-options';
+    contextSection.id = 'sp-context-options';
+
+    // Get context settings (thread's or defaults for new)
+    const contextSettings = thread?.contextSettings
+        ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
+        : getCurrentContextSettings();
+
+    // Summary badge showing current mode
+    const summaryBadge = document.createElement('div');
+    summaryBadge.className = 'sp-context-summary';
+    summaryBadge.id = 'sp-context-summary';
+    summaryBadge.textContent = getContextSummaryText(contextSettings);
+    contextSection.appendChild(summaryBadge);
+
+    // Collapsible details for full options
+    const details = document.createElement('details');
+    details.className = 'sp-context-details';
+
+    const summary = document.createElement('summary');
+    summary.textContent = 'Context Options';
+    details.appendChild(summary);
+
+    const optionsBlock = document.createElement('div');
+    optionsBlock.className = 'sp-context-options-block';
+
+    // Generate unique IDs for this instance to avoid conflicts
+    const idPrefix = 'sp_thread_';
+
+    optionsBlock.innerHTML = `
+        <label for="${idPrefix}range_mode">
+            <span>Chat history range:</span>
+            <small>Which messages to send (1-based).</small>
+        </label>
+        <div class="range-block">
+            <select id="${idPrefix}range_mode" class="text_pole">
+                <option value="all">All messages</option>
+                <option value="start_to">From start to message #</option>
+                <option value="from_to_end">From message # to end</option>
+                <option value="between">Between message # and #</option>
+            </select>
+        </div>
+        <div id="${idPrefix}range_inputs" class="flex-container" style="display: ${contextSettings.chatHistoryRangeMode === 'all' ? 'none' : 'flex'};">
+            <input type="number" id="${idPrefix}range_start" class="text_pole" min="1" step="1" placeholder="Start #" value="${contextSettings.chatHistoryRangeStart ?? ''}">
+            <span>to</span>
+            <input type="number" id="${idPrefix}range_end" class="text_pole" min="1" step="1" placeholder="End #" value="${contextSettings.chatHistoryRangeEnd ?? ''}">
+        </div>
+
+        <label class="checkbox_label" for="${idPrefix}char_card_only">
+            <input type="checkbox" id="${idPrefix}char_card_only" ${contextSettings.characterCardOnly ? 'checked' : ''}>
+            <span>Character Card Only</span>
+            <small>Skip chat history, send only character info</small>
+        </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_char_card">
+            <input type="checkbox" id="${idPrefix}include_char_card" ${contextSettings.includeCharacterCard ? 'checked' : ''}>
+            <span>Include Character Card</span>
+        </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_sys_prompt">
+            <input type="checkbox" id="${idPrefix}include_sys_prompt" ${contextSettings.includeSystemPrompt ? 'checked' : ''}>
+            <span>Include System Prompt</span>
+        </label>
+    `;
+
+    details.appendChild(optionsBlock);
+    contextSection.appendChild(details);
+    container.appendChild(contextSection);
+
+    // Load values and bind listeners
+    loadThreadContextUI(contextSettings, idPrefix);
+    bindThreadContextListeners(thread?.id, isNewThread, idPrefix);
+}
+
+/**
+ * Get summary text for context settings
+ * @param {Object} contextSettings Context settings object
+ * @returns {string} Summary text
+ */
+function getContextSummaryText(contextSettings) {
+    if (contextSettings.characterCardOnly) {
+        return 'Card Only';
+    }
+
+    const mode = contextSettings.chatHistoryRangeMode || 'all';
+    const start = contextSettings.chatHistoryRangeStart;
+    const end = contextSettings.chatHistoryRangeEnd;
+
+    switch (mode) {
+        case 'all':
+            return 'All messages';
+        case 'start_to':
+            return end ? `Messages 1-${end}` : 'All messages';
+        case 'from_to_end':
+            return start ? `Messages ${start}+` : 'All messages';
+        case 'between':
+            if (start && end) {
+                return `Messages ${start}-${end}`;
+            }
+            return 'All messages';
+        default:
+            return 'All messages';
+    }
+}
+
+/**
+ * Load thread context settings into UI
+ * @param {Object} contextSettings Context settings
+ * @param {string} idPrefix ID prefix for elements
+ */
+function loadThreadContextUI(contextSettings, idPrefix) {
+    const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
+    if (rangeModeSelect) {
+        rangeModeSelect.value = contextSettings.chatHistoryRangeMode || 'all';
+    }
+}
+
+/**
+ * Bind event listeners for thread context options
+ * @param {string|null} threadId Thread ID (null for new threads)
+ * @param {boolean} isNewThread Whether this is a new thread
+ * @param {string} idPrefix ID prefix for elements
+ */
+function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
+    const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
+    const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
+    const rangeEndInput = document.getElementById(`${idPrefix}range_end`);
+    const rangeInputsContainer = document.getElementById(`${idPrefix}range_inputs`);
+    const charCardOnlyToggle = document.getElementById(`${idPrefix}char_card_only`);
+    const includeCharCardToggle = document.getElementById(`${idPrefix}include_char_card`);
+    const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
+
+    const updateContextSetting = async (key, value) => {
+        if (threadId) {
+            updateThreadContextSettings(threadId, { [key]: value });
+            await saveMetadata();
+        }
+        updateContextSummary(idPrefix);
+    };
+
+    if (rangeModeSelect) {
+        rangeModeSelect.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            updateContextSetting('chatHistoryRangeMode', mode);
+            if (rangeInputsContainer) {
+                rangeInputsContainer.style.display = mode === 'all' ? 'none' : 'flex';
+            }
+        });
+    }
+
+    if (rangeStartInput) {
+        rangeStartInput.addEventListener('input', (e) => {
+            const value = parseRangeNumber(e.target.value);
+            updateContextSetting('chatHistoryRangeStart', value);
+        });
+    }
+
+    if (rangeEndInput) {
+        rangeEndInput.addEventListener('input', (e) => {
+            const value = parseRangeNumber(e.target.value);
+            updateContextSetting('chatHistoryRangeEnd', value);
+        });
+    }
+
+    if (charCardOnlyToggle) {
+        charCardOnlyToggle.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            updateContextSetting('characterCardOnly', enabled);
+            if (enabled && includeCharCardToggle) {
+                includeCharCardToggle.checked = true;
+                updateContextSetting('includeCharacterCard', true);
+            }
+        });
+    }
+
+    if (includeCharCardToggle) {
+        includeCharCardToggle.addEventListener('change', (e) => {
+            updateContextSetting('includeCharacterCard', e.target.checked);
+        });
+    }
+
+    if (includeSysPromptToggle) {
+        includeSysPromptToggle.addEventListener('change', (e) => {
+            updateContextSetting('includeSystemPrompt', e.target.checked);
+        });
+    }
+}
+
+/**
+ * Parse a range number input value
+ * @param {string} value Input value
+ * @returns {number|null} Parsed number or null
+ */
+function parseRangeNumber(value) {
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) return null;
+    return parsed;
+}
+
+/**
+ * Update the context summary badge
+ * @param {string} idPrefix ID prefix for elements
+ */
+function updateContextSummary(idPrefix) {
+    const summaryEl = document.getElementById('sp-context-summary');
+    if (!summaryEl) return;
+
+    const contextSettings = getContextSettingsFromUI();
+    summaryEl.textContent = getContextSummaryText(contextSettings);
+}
+
+/**
+ * Get context settings from the UI elements
+ * @returns {Object} Context settings from current UI state
+ */
+function getContextSettingsFromUI() {
+    const idPrefix = 'sp_thread_';
+    const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
+    const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
+    const rangeEndInput = document.getElementById(`${idPrefix}range_end`);
+    const charCardOnlyToggle = document.getElementById(`${idPrefix}char_card_only`);
+    const includeCharCardToggle = document.getElementById(`${idPrefix}include_char_card`);
+    const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
+
+    return {
+        chatHistoryRangeMode: rangeModeSelect?.value || 'all',
+        chatHistoryRangeStart: parseRangeNumber(rangeStartInput?.value),
+        chatHistoryRangeEnd: parseRangeNumber(rangeEndInput?.value),
+        characterCardOnly: charCardOnlyToggle?.checked || false,
+        includeCharacterCard: includeCharCardToggle?.checked ?? true,
+        includeSystemPrompt: includeSysPromptToggle?.checked || false
+    };
 }
 
 /**
@@ -403,8 +648,9 @@ async function handleSendMessage() {
     try {
         // Create thread if needed
         if (!currentThreadId) {
-            const { createThread } = await import('../storage.js');
-            const newThread = createThread('New Thread');
+            // Get context settings from the UI (which shows current global settings for new threads)
+            const contextSettings = getContextSettingsFromUI();
+            const newThread = createThread('New Thread', contextSettings);
             if (!newThread) {
                 showToast('Failed to create thread', 'error');
                 return;

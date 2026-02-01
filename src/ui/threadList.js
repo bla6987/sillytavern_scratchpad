@@ -3,7 +3,7 @@
  */
 
 import { getThreads, getThreadsForCurrentBranch, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
-import { loadSettingsUI, initSettingsListeners } from '../settings.js';
+import { getCurrentContextSettings } from '../settings.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 
@@ -91,8 +91,6 @@ export function renderThreadList(container) {
     actionBar.appendChild(newThreadBtn);
     container.appendChild(actionBar);
 
-    renderDrawerSettings(container);
-
     // Thread list
     const listContainer = document.createElement('div');
     listContainer.className = 'sp-thread-list';
@@ -146,45 +144,6 @@ export function renderThreadList(container) {
     inputContainer.appendChild(quickInput);
     inputContainer.appendChild(sendBtn);
     container.appendChild(inputContainer);
-}
-
-function renderDrawerSettings(container) {
-    const settingsSection = document.createElement('div');
-    settingsSection.className = 'sp-drawer-settings';
-    settingsSection.innerHTML = `
-        <details class="sp-settings-details" open>
-            <summary>Context Options</summary>
-            <div class="scratch_pad_settings_block sp-drawer-settings-block">
-                <label for="sp_chat_history_range_mode">
-                    <span>Chat history range:</span>
-                    <small>Choose which message numbers to send (1-based). Range overrides the limit.</small>
-                </label>
-                <div class="range-block">
-                    <select id="sp_chat_history_range_mode" class="text_pole">
-                        <option value="all">All messages</option>
-                        <option value="start_to">From start to message #</option>
-                        <option value="from_to_end">From message # to end</option>
-                        <option value="between">Between message # and #</option>
-                    </select>
-                </div>
-                <div id="sp_chat_history_range_inputs" class="flex-container">
-                    <input type="number" id="sp_chat_history_range_start" class="text_pole" min="1" step="1" placeholder="Start #">
-                    <span>to</span>
-                    <input type="number" id="sp_chat_history_range_end" class="text_pole" min="1" step="1" placeholder="End #">
-                </div>
-
-                <label class="checkbox_label" for="sp_char_card_only">
-                    <input type="checkbox" id="sp_char_card_only">
-                    <span>Character Card Only</span>
-                    <small>Skip chat history and send only character info plus your question</small>
-                </label>
-            </div>
-        </details>
-    `;
-
-    container.appendChild(settingsSection);
-    loadSettingsUI();
-    initSettingsListeners();
 }
 
 /**
@@ -338,8 +297,9 @@ async function handleQuickSend(message) {
         quickInput.value = '';
     }
 
-    // Create new thread and open it
-    const thread = createThread('New Thread');
+    // Create new thread with current global context settings
+    const contextSettings = getCurrentContextSettings();
+    const thread = createThread('New Thread', contextSettings);
     console.log('[ScratchPad] Created thread:', thread);
     if (!thread) {
         showToast('Failed to create thread', 'error');
