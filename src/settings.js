@@ -20,7 +20,8 @@ const DEFAULT_SETTINGS = Object.freeze({
     connectionProfile: '',
     textSize: 14, // Default text size in pixels
     ttsEnabled: false, // Enable TTS for assistant messages
-    ttsVoice: '' // Voice name for TTS (from SillyTavern voice map)
+    ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
+    pinnedMode: false // Pin drawer to side instead of overlay (desktop only)
 });
 
 /**
@@ -169,6 +170,12 @@ export function loadSettingsUI() {
     if (ttsVoiceContainer) {
         ttsVoiceContainer.style.display = settings.ttsEnabled ? 'block' : 'none';
     }
+
+    // Pinned mode toggle
+    const pinnedModeToggle = document.getElementById('sp_pinned_mode');
+    if (pinnedModeToggle) {
+        pinnedModeToggle.checked = settings.pinnedMode;
+    }
 }
 
 /**
@@ -308,6 +315,14 @@ export function initSettingsListeners() {
     if (ttsVoiceInput) {
         bindOnce(ttsVoiceInput, 'input', (e) => {
             updateSettings({ ttsVoice: e.target.value.trim() });
+        });
+    }
+
+    // Pinned mode toggle
+    const pinnedModeToggle = document.getElementById('sp_pinned_mode');
+    if (pinnedModeToggle) {
+        bindOnce(pinnedModeToggle, 'change', (e) => {
+            updateSettings({ pinnedMode: e.target.checked });
         });
     }
 }

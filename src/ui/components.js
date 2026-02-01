@@ -263,5 +263,6 @@ export const Icons = {
     aiRename: '✨',
     speak: '🔊',
     stopSpeak: '⏹',
-    cancel: '⏹'
+    cancel: '⏹',
+    pin: '📌'
 };

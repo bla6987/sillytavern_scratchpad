@@ -5,6 +5,7 @@
 import { getThreads, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
 import { loadSettingsUI, initSettingsListeners } from '../settings.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
+import { isPinnedMode, togglePinnedMode } from './index.js';
 
 // Dynamic import to avoid circular dependency
 let conversationModule = null;
@@ -54,6 +55,19 @@ export function renderThreadList(container) {
     titleContainer.appendChild(subtitleEl);
 
     header.appendChild(titleContainer);
+
+    // Pin button
+    const pinBtn = createButton({
+        icon: Icons.pin,
+        className: `sp-header-btn sp-pin-btn ${isPinnedMode() ? 'sp-pinned-active' : ''}`,
+        ariaLabel: isPinnedMode() ? 'Unpin drawer' : 'Pin drawer to side',
+        onClick: () => {
+            const newState = togglePinnedMode();
+            pinBtn.classList.toggle('sp-pinned-active', newState);
+            pinBtn.setAttribute('aria-label', newState ? 'Unpin drawer' : 'Pin drawer to side');
+        }
+    });
+    header.appendChild(pinBtn);
 
     const closeBtn = createButton({
         icon: Icons.close,

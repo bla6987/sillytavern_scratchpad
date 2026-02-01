@@ -216,6 +216,11 @@ async function init() {
         eventSource.on(event_types.CHAT_CHANGED, handleChatChanged);
     }
 
+    // Auto-open if pinned mode is enabled and a chat is active
+    if (settings.pinnedMode && isChatActive()) {
+        setTimeout(() => openScratchPad(), 500);
+    }
+
     console.log(`[${EXTENSION_NAME}] Initialized successfully`);
 }
 

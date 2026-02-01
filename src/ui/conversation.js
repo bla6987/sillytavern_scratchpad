@@ -7,6 +7,7 @@ import { generateScratchPadResponse, retryMessage, parseThinking, generateThread
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings } from '../settings.js';
+import { isPinnedMode, togglePinnedMode } from './index.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
@@ -124,6 +125,19 @@ export function renderConversation(container, isNewThread = false) {
         });
         header.appendChild(aiRenameBtn);
     }
+
+    // Pin button
+    const pinBtn = createButton({
+        icon: Icons.pin,
+        className: `sp-header-btn sp-pin-btn ${isPinnedMode() ? 'sp-pinned-active' : ''}`,
+        ariaLabel: isPinnedMode() ? 'Unpin drawer' : 'Pin drawer to side',
+        onClick: () => {
+            const newState = togglePinnedMode();
+            pinBtn.classList.toggle('sp-pinned-active', newState);
+            pinBtn.setAttribute('aria-label', newState ? 'Unpin drawer' : 'Pin drawer to side');
+        }
+    });
+    header.appendChild(pinBtn);
 
     const closeBtn = createButton({
         icon: Icons.close,

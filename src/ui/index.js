@@ -6,6 +6,7 @@
 import { renderThreadList, refreshThreadList } from './threadList.js';
 import { openThread, startNewThread, getCurrentThreadId, renderConversation } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
+import { getSettings, updateSettings } from '../settings.js';
 
 export { renderThreadList, refreshThreadList } from './threadList.js';
 export { openThread, startNewThread, getCurrentThreadId } from './conversation.js';
@@ -13,6 +14,15 @@ export { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from 
 
 let drawerElement = null;
 let backdropElement = null;
+let isPinned = false;
+
+/**
+ * Check if viewport is mobile width
+ * @returns {boolean} True if mobile viewport
+ */
+function isMobileViewport() {
+    return window.innerWidth <= 480;
+}
 
 /**
  * Create the scratch pad drawer element
@@ -176,11 +186,24 @@ export function openScratchPad(threadId = null) {
     }
 
     console.log('[ScratchPad UI] Adding sp-drawer-open class to body');
-    // Prevent body scroll
+    // Prevent body scroll (unless pinned)
     document.body.classList.add('sp-drawer-open');
 
-    // Show backdrop for overlay effect
-    showBackdrop();
+    // Check if we should use pinned mode
+    const settings = getSettings();
+    isPinned = settings.pinnedMode && !isMobileViewport();
+
+    if (isPinned) {
+        // Pinned mode: no backdrop, add pinned classes
+        document.body.classList.add('sp-drawer-pinned');
+        drawerElement.classList.add('sp-pinned');
+        hideBackdrop();
+    } else {
+        // Overlay mode: show backdrop
+        document.body.classList.remove('sp-drawer-pinned');
+        drawerElement.classList.remove('sp-pinned');
+        showBackdrop();
+    }
 
     // Add open class to trigger CSS animation
     console.log('[ScratchPad UI] Adding open class to drawer');
@@ -221,9 +244,12 @@ export function closeScratchPad() {
 
     console.log('[ScratchPad UI] Removing open class and body lock');
     drawerElement.classList.remove('open');
+    drawerElement.classList.remove('sp-pinned');
     // Reset inline transform to allow CSS default (translateX(100%)) for close animation
     drawerElement.style.transform = '';
     document.body.classList.remove('sp-drawer-open');
+    document.body.classList.remove('sp-drawer-pinned');
+    isPinned = false;
 
     // Hide backdrop
     hideBackdrop();
@@ -292,7 +318,9 @@ export function initUI() {
     }
     drawerElement = null;
     backdropElement = null;
+    isPinned = false;
     document.body.classList.remove('sp-drawer-open');
+    document.body.classList.remove('sp-drawer-pinned');
 
     // Handle escape key to close
     document.addEventListener('keydown', (e) => {
@@ -313,4 +341,64 @@ export function initUI() {
             closeScratchPad();
         }
     });
+
+    // Handle resize - force overlay mode on mobile even if pinned
+    window.addEventListener('resize', () => {
+        if (isPinned && isMobileViewport() && isScratchPadOpen()) {
+            // Force overlay mode on mobile
+            isPinned = false;
+            document.body.classList.remove('sp-drawer-pinned');
+            if (drawerElement) {
+                drawerElement.classList.remove('sp-pinned');
+            }
+            showBackdrop();
+        } else if (!isPinned && !isMobileViewport() && isScratchPadOpen()) {
+            // Check if we should switch to pinned mode
+            const settings = getSettings();
+            if (settings.pinnedMode) {
+                isPinned = true;
+                document.body.classList.add('sp-drawer-pinned');
+                if (drawerElement) {
+                    drawerElement.classList.add('sp-pinned');
+                }
+                hideBackdrop();
+            }
+        }
+    });
+}
+
+/**
+ * Toggle pinned mode
+ * @returns {boolean} New pinned state
+ */
+export function togglePinnedMode() {
+    const settings = getSettings();
+    const newState = !settings.pinnedMode;
+    updateSettings({ pinnedMode: newState });
+
+    if (isScratchPadOpen()) {
+        isPinned = newState && !isMobileViewport();
+        if (isPinned) {
+            document.body.classList.add('sp-drawer-pinned');
+            if (drawerElement) {
+                drawerElement.classList.add('sp-pinned');
+            }
+            hideBackdrop();
+        } else {
+            document.body.classList.remove('sp-drawer-pinned');
+            if (drawerElement) {
+                drawerElement.classList.remove('sp-pinned');
+            }
+            showBackdrop();
+        }
+    }
+    return newState;
+}
+
+/**
+ * Check if drawer is currently in pinned mode
+ * @returns {boolean} True if pinned
+ */
+export function isPinnedMode() {
+    return isPinned;
 }

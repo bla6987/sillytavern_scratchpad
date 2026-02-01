@@ -121,6 +121,54 @@ body.sp-drawer-open {
     pointer-events: auto;
 }
 
+/* Pinned Mode */
+body.sp-drawer-pinned #sheld {
+    margin-right: var(--sp-drawer-width);
+    transition: margin-right 0.3s ease;
+}
+
+body.sp-drawer-pinned .sp-drawer-backdrop {
+    display: none !important;
+}
+
+body.sp-drawer-pinned.sp-drawer-open {
+    overflow: auto;
+}
+
+.sp-drawer.sp-pinned {
+    transform: translateX(0) !important;
+}
+
+/* Pin button */
+.sp-pin-btn {
+    background: transparent;
+    border: none;
+    color: var(--sp-text-secondary);
+    padding: 0.5rem;
+    cursor: pointer;
+    border-radius: var(--sp-radius);
+}
+
+.sp-pin-btn:hover {
+    background: var(--sp-bg-tertiary);
+    color: var(--sp-text-primary);
+}
+
+.sp-pin-btn.sp-pinned-active {
+    color: var(--sp-accent);
+}
+
+/* Hide pin on mobile */
+@media (max-width: 30rem) {
+    .sp-pin-btn { display: none !important; }
+    body.sp-drawer-pinned #sheld { margin-right: 0 !important; }
+}
+
+/* Transition for main content */
+#sheld {
+    transition: margin-right 0.3s ease;
+}
+
 .sp-drawer-content {
     flex: 1 1 auto;
     display: flex;
