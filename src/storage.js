@@ -15,7 +15,8 @@ export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
     chatHistoryRangeEnd: null,
     characterCardOnly: false,
     includeCharacterCard: true,
-    includeSystemPrompt: false
+    includeSystemPrompt: false,
+    connectionProfile: null
 });
 
 /**

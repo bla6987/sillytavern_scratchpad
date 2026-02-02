@@ -185,6 +185,15 @@ function createThreadItem(thread) {
     nameEl.textContent = thread.name;
     nameRowEl.appendChild(nameEl);
 
+    // Profile override badge
+    const threadProfile = thread.contextSettings?.connectionProfile;
+    if (threadProfile) {
+        const profileBadgeEl = document.createElement('span');
+        profileBadgeEl.className = 'sp-thread-profile-badge';
+        profileBadgeEl.textContent = threadProfile;
+        nameRowEl.appendChild(profileBadgeEl);
+    }
+
     if (hasNoContextMessages) {
         const badgeEl = document.createElement('span');
         badgeEl.className = 'sp-message-badge sp-message-badge-nocontext';

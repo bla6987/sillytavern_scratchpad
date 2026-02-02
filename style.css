@@ -1182,6 +1182,40 @@ body.sp-drawer-pinned.sp-drawer-open {
     font-size: 0.75rem;
 }
 
+/* Context badges row */
+.sp-context-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Profile badge in conversation view */
+.sp-profile-badge {
+    font-size: 0.75rem;
+    color: var(--sp-accent);
+    padding: 0.25rem 0.5rem;
+    background: color-mix(in srgb, var(--sp-accent) 15%, var(--sp-bg-tertiary));
+    border: 1px solid color-mix(in srgb, var(--sp-accent) 40%, var(--sp-border));
+    border-radius: var(--sp-radius);
+    display: inline-block;
+}
+
+/* Profile badge in thread list */
+.sp-thread-profile-badge {
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 999px;
+    color: var(--sp-accent);
+    background: color-mix(in srgb, var(--sp-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--sp-accent) 35%, var(--sp-border));
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 /* ========================================
    Generating Indicator
    ======================================== */

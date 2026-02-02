@@ -4,7 +4,7 @@
  */
 
 import { getSettings } from './settings.js';
-import { getThread, updateThread, addMessage, updateMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from './storage.js';
+import { getThread, updateThread, addMessage, updateMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings } from './storage.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -319,6 +319,9 @@ export function generateFallbackTitle(question) {
     return question.substring(0, maxLength) + '...';
 }
 
+// Mutex lock for profile switching to prevent race conditions
+let profileSwitchLock = Promise.resolve();
+
 /**
  * Switch to a different connection profile temporarily
  * @param {string} profileName Profile name
@@ -331,6 +334,13 @@ async function generateWithProfile(profileName, generateFn) {
     if (!profileName || !executeSlashCommandsWithOptions) {
         return await generateFn();
     }
+
+    // Wait for any pending profile switches to complete
+    await profileSwitchLock;
+
+    // Create a new lock that will be released when we're done
+    let releaseLock;
+    profileSwitchLock = new Promise(resolve => { releaseLock = resolve; });
 
     let currentProfile = '';
 
@@ -356,13 +366,38 @@ async function generateWithProfile(profileName, generateFn) {
                 console.warn('[ScratchPad] Could not restore profile:', e);
             }
         }
+        // Release the lock
+        releaseLock();
     }
+}
+
+/**
+ * Get the effective connection profile for a thread
+ * Priority: Thread override -> Global setting -> null (default API)
+ * @param {string} threadId Thread ID
+ * @returns {string|null} Profile name to use, or null for default API
+ */
+export function getEffectiveProfileForThread(threadId) {
+    const thread = getThread(threadId);
+    const settings = getSettings();
+
+    // Check thread's connectionProfile override first
+    const threadSettings = getThreadContextSettings(threadId);
+    if (threadSettings.connectionProfile) {
+        return threadSettings.connectionProfile;
+    }
+
+    // Fall back to global settings
+    if (settings.useAlternativeApi && settings.connectionProfile) {
+        return settings.connectionProfile;
+    }
+
+    return null;
 }
 
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
     const context = SillyTavern.getContext();
     const { generateRaw, eventSource, event_types } = context;
-    const settings = getSettings();
 
     const thread = getThread(threadId);
     if (!thread) {
@@ -473,8 +508,9 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         };
 
         let result;
-        if (settings.useAlternativeApi && settings.connectionProfile) {
-            result = await generateWithProfile(settings.connectionProfile, doGenerate);
+        const effectiveProfile = getEffectiveProfileForThread(threadId);
+        if (effectiveProfile) {
+            result = await generateWithProfile(effectiveProfile, doGenerate);
         } else {
             result = await doGenerate();
         }
@@ -704,7 +740,6 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
     const context = SillyTavern.getContext();
     const { generateRaw, eventSource, event_types } = context;
-    const settings = getSettings();
 
     console.log('[ScratchPad] Context retrieved:', {
         hasGenerateRaw: !!generateRaw,
@@ -835,8 +870,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
         // Execute with profile switching if enabled
         let result;
-        if (settings.useAlternativeApi && settings.connectionProfile) {
-            result = await generateWithProfile(settings.connectionProfile, doGenerate);
+        const effectiveProfile = getEffectiveProfileForThread(threadId);
+        if (effectiveProfile) {
+            result = await generateWithProfile(effectiveProfile, doGenerate);
         } else {
             result = await doGenerate();
         }
@@ -953,9 +989,11 @@ export async function retryMessage(threadId, messageId, onStream = null) {
 
     // Find the user message before this assistant message
     let userQuestion = '';
+    let userMsgIndex = -1;
     for (let i = messageIndex - 1; i >= 0; i--) {
         if (thread.messages[i].role === 'user') {
             userQuestion = thread.messages[i].content;
+            userMsgIndex = i;
             break;
         }
     }
@@ -968,7 +1006,7 @@ export async function retryMessage(threadId, messageId, onStream = null) {
     thread.messages.splice(messageIndex, 1);
 
     // Also remove the user message so generateScratchPadResponse can re-add it
-    const userMsgIndex = thread.messages.findIndex(m => m.content === userQuestion && m.role === 'user');
+    // Note: after splicing messageIndex, userMsgIndex is still valid since it's before messageIndex
     if (userMsgIndex !== -1) {
         thread.messages.splice(userMsgIndex, 1);
     }
@@ -1118,7 +1156,6 @@ export async function generateThreadTitle(thread) {
 
     const context = SillyTavern.getContext();
     const { generateRaw } = context;
-    const settings = getSettings();
 
     try {
         // Build a concise summary of the thread for context
@@ -1143,8 +1180,9 @@ Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
 
         // Execute with profile switching if enabled
         let response;
-        if (settings.useAlternativeApi && settings.connectionProfile) {
-            response = await generateWithProfile(settings.connectionProfile, doGenerate);
+        const effectiveProfile = getEffectiveProfileForThread(thread.id);
+        if (effectiveProfile) {
+            response = await generateWithProfile(effectiveProfile, doGenerate);
         } else {
             response = await doGenerate();
         }

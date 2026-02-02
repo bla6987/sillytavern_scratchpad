@@ -408,3 +408,22 @@ export async function populateConnectionProfiles() {
         console.warn('[ScratchPad] Could not load connection profiles:', error);
     }
 }
+
+/**
+ * Get list of connection profiles from SillyTavern
+ * @returns {Promise<string[]>} Array of profile names
+ */
+export async function getConnectionProfiles() {
+    try {
+        const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
+        if (executeSlashCommandsWithOptions) {
+            const result = await executeSlashCommandsWithOptions('/profile-list', { handleParserErrors: false, handleExecutionErrors: false });
+            if (result && result.pipe) {
+                return result.pipe.split(',').map(p => p.trim()).filter(p => p);
+            }
+        }
+    } catch (error) {
+        console.warn('[ScratchPad] Could not load connection profiles:', error);
+    }
+    return [];
+}

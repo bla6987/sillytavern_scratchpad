@@ -3,16 +3,71 @@
  */
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from '../storage.js';
-import { generateScratchPadResponse, retryMessage, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { generateScratchPadResponse, retryMessage, regenerateMessage, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
-import { getSettings, getCurrentContextSettings } from '../settings.js';
+import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
-let isGenerating = false;
+let activeGenerationId = null;
 let pendingMessage = null;
+let cleanupFunctions = [];
+let currentViewportHandler = null;
+
+/**
+ * Start a new generation and return its ID
+ * @returns {string} Generation ID
+ */
+function startGeneration() {
+    const id = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    activeGenerationId = id;
+    return id;
+}
+
+/**
+ * Check if the given ID is the current active generation
+ * @param {string} id Generation ID
+ * @returns {boolean} True if this is the active generation
+ */
+function isOurGeneration(id) {
+    return activeGenerationId === id;
+}
+
+/**
+ * End the generation if it matches the given ID
+ * @param {string} id Generation ID
+ */
+function endGeneration(id) {
+    if (activeGenerationId === id) {
+        activeGenerationId = null;
+    }
+}
+
+/**
+ * Check if a generation is currently active
+ * @returns {boolean} True if generating
+ */
+function isGenerating() {
+    return activeGenerationId !== null;
+}
+
+/**
+ * Register a cleanup function to be called on view refresh
+ * @param {Function} fn Cleanup function
+ */
+function registerCleanup(fn) {
+    cleanupFunctions.push(fn);
+}
+
+/**
+ * Run all registered cleanup functions
+ */
+function runCleanups() {
+    cleanupFunctions.forEach(fn => fn());
+    cleanupFunctions = [];
+}
 
 /**
  * Open a thread in conversation view
@@ -76,6 +131,9 @@ export function startNewThread() {
 export function renderConversation(container, isNewThread = false) {
     console.log('[ScratchPad Conv] renderConversation called, isNewThread:', isNewThread, 'currentThreadId:', currentThreadId);
     conversationContainer = container;
+
+    // Run cleanup functions from previous render
+    runCleanups();
 
     // Use branch-filtered thread for display (hides messages from "future" branches)
     const thread = currentThreadId ? getThreadForCurrentBranch(currentThreadId) : null;
@@ -271,12 +329,26 @@ function renderContextOptions(container, thread, isNewThread) {
         ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
         : getCurrentContextSettings();
 
+    // Badges row for context summary and profile
+    const badgesRow = document.createElement('div');
+    badgesRow.className = 'sp-context-badges';
+
     // Summary badge showing current mode
     const summaryBadge = document.createElement('div');
     summaryBadge.className = 'sp-context-summary';
     summaryBadge.id = 'sp-context-summary';
     summaryBadge.textContent = getContextSummaryText(contextSettings);
-    contextSection.appendChild(summaryBadge);
+    badgesRow.appendChild(summaryBadge);
+
+    // Profile badge showing current profile override
+    const profileBadge = document.createElement('div');
+    profileBadge.className = 'sp-profile-badge';
+    profileBadge.id = 'sp-profile-badge';
+    profileBadge.textContent = getProfileBadgeText(contextSettings);
+    profileBadge.style.display = contextSettings.connectionProfile ? 'inline-block' : 'none';
+    badgesRow.appendChild(profileBadge);
+
+    contextSection.appendChild(badgesRow);
 
     // Collapsible details for full options
     const details = document.createElement('details');
@@ -293,6 +365,16 @@ function renderContextOptions(container, thread, isNewThread) {
     const idPrefix = 'sp_thread_';
 
     optionsBlock.innerHTML = `
+        <label for="${idPrefix}connection_profile">
+            <span>Connection Profile:</span>
+            <small>Override which API profile to use for this thread.</small>
+        </label>
+        <div class="range-block">
+            <select id="${idPrefix}connection_profile" class="text_pole">
+                <option value="">Use Global Setting</option>
+            </select>
+        </div>
+
         <label for="${idPrefix}range_mode">
             <span>Chat history range:</span>
             <small>Which messages to send (1-based).</small>
@@ -335,6 +417,65 @@ function renderContextOptions(container, thread, isNewThread) {
     // Load values and bind listeners
     loadThreadContextUI(contextSettings, idPrefix);
     bindThreadContextListeners(thread?.id, isNewThread, idPrefix);
+
+    // Populate profile dropdown asynchronously
+    populateThreadProfileDropdown(contextSettings.connectionProfile, idPrefix);
+}
+
+/**
+ * Get badge text for profile override
+ * @param {Object} contextSettings Context settings object
+ * @returns {string} Profile badge text
+ */
+function getProfileBadgeText(contextSettings) {
+    if (contextSettings.connectionProfile) {
+        return contextSettings.connectionProfile;
+    }
+    return 'Default';
+}
+
+/**
+ * Update the profile badge display
+ * @param {string} idPrefix ID prefix for elements
+ */
+function updateProfileBadge(idPrefix) {
+    const profileBadge = document.getElementById('sp-profile-badge');
+    const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
+    if (!profileBadge || !profileSelect) return;
+
+    const profile = profileSelect.value;
+    if (profile) {
+        profileBadge.textContent = profile;
+        profileBadge.style.display = 'inline-block';
+    } else {
+        profileBadge.style.display = 'none';
+    }
+}
+
+/**
+ * Populate the thread profile dropdown with available profiles
+ * @param {string|null} currentProfile Currently selected profile
+ * @param {string} idPrefix ID prefix for elements
+ */
+async function populateThreadProfileDropdown(currentProfile, idPrefix) {
+    const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
+    if (!profileSelect) return;
+
+    const profiles = await getConnectionProfiles();
+
+    // Keep the "Use Global Setting" option, add profiles
+    profileSelect.innerHTML = '<option value="">Use Global Setting</option>';
+    profiles.forEach(profile => {
+        const option = document.createElement('option');
+        option.value = profile;
+        option.textContent = profile;
+        profileSelect.appendChild(option);
+    });
+
+    // Restore selected value
+    if (currentProfile) {
+        profileSelect.value = currentProfile;
+    }
 }
 
 /**
@@ -387,6 +528,7 @@ function loadThreadContextUI(contextSettings, idPrefix) {
  * @param {string} idPrefix ID prefix for elements
  */
 function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
+    const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
     const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
     const rangeEndInput = document.getElementById(`${idPrefix}range_end`);
@@ -402,6 +544,14 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
         }
         updateContextSummary(idPrefix);
     };
+
+    if (profileSelect) {
+        profileSelect.addEventListener('change', (e) => {
+            const profile = e.target.value || null;
+            updateContextSetting('connectionProfile', profile);
+            updateProfileBadge(idPrefix);
+        });
+    }
 
     if (rangeModeSelect) {
         rangeModeSelect.addEventListener('change', (e) => {
@@ -480,6 +630,7 @@ function updateContextSummary(idPrefix) {
  */
 function getContextSettingsFromUI() {
     const idPrefix = 'sp_thread_';
+    const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
     const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
     const rangeEndInput = document.getElementById(`${idPrefix}range_end`);
@@ -488,6 +639,7 @@ function getContextSettingsFromUI() {
     const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
 
     return {
+        connectionProfile: profileSelect?.value || null,
         chatHistoryRangeMode: rangeModeSelect?.value || 'all',
         chatHistoryRangeStart: parseRangeNumber(rangeStartInput?.value),
         chatHistoryRangeEnd: parseRangeNumber(rangeEndInput?.value),
@@ -585,6 +737,15 @@ function createMessageElement(message) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
 
+        // Regenerate button
+        const regenerateBtn = createButton({
+            icon: Icons.retry,
+            className: 'sp-action-btn',
+            ariaLabel: 'Regenerate response',
+            onClick: () => handleRegenerate(message.id)
+        });
+        actionsEl.appendChild(regenerateBtn);
+
         // Apply to Guided Swipe button (only if GG is installed)
         if (isGuidedGenerationsInstalled()) {
             const applySwipeBtn = createButton({
@@ -644,7 +805,7 @@ function createMessageElement(message) {
  * Handle sending a message
  */
 async function handleSendMessage() {
-    if (isGenerating) return;
+    if (isGenerating()) return;
 
     const textarea = document.getElementById('sp-message-input');
     const sendBtn = document.getElementById('sp-send-btn');
@@ -657,8 +818,8 @@ async function handleSendMessage() {
     textarea.value = '';
     textarea.style.height = 'auto';
 
-    // Disable send and show generating indicator with cancel button
-    isGenerating = true;
+    // Start generation and track ID
+    const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
     textarea.disabled = true;
     textarea.placeholder = 'Generating...';
@@ -731,7 +892,7 @@ async function handleSendMessage() {
         }
 
     } finally {
-        isGenerating = false;
+        endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
         textarea.disabled = false;
         textarea.placeholder = 'Ask a question...';
@@ -745,13 +906,13 @@ async function handleSendMessage() {
  * @param {string} messageId Message ID
  */
 async function handleRetry(messageId) {
-    if (isGenerating || !currentThreadId) return;
+    if (isGenerating() || !currentThreadId) return;
 
     const sendBtn = document.getElementById('sp-send-btn');
     const textarea = document.getElementById('sp-message-input');
 
-    // Show generating state in UI with cancel button
-    isGenerating = true;
+    // Start generation and track ID
+    const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
     if (textarea) {
         textarea.disabled = true;
@@ -789,7 +950,66 @@ async function handleRetry(messageId) {
         scrollToBottom();
 
     } finally {
-        isGenerating = false;
+        endGeneration(generationId);
+        if (sendBtn) sendBtn.disabled = false;
+        if (textarea) {
+            textarea.disabled = false;
+            textarea.placeholder = 'Ask a question...';
+        }
+        showGeneratingIndicator(false);
+    }
+}
+
+/**
+ * Handle regenerating an assistant message
+ * @param {string} messageId Message ID
+ */
+async function handleRegenerate(messageId) {
+    if (isGenerating() || !currentThreadId) return;
+
+    const sendBtn = document.getElementById('sp-send-btn');
+    const textarea = document.getElementById('sp-message-input');
+
+    // Start generation and track ID
+    const generationId = startGeneration();
+    if (sendBtn) sendBtn.disabled = true;
+    if (textarea) {
+        textarea.disabled = true;
+        textarea.placeholder = 'Regenerating...';
+    }
+    showGeneratingIndicator(true, () => {
+        cancelGeneration();
+        showToast('Generation cancelled', 'info');
+    });
+
+    // Track the new assistant message ID for streaming updates
+    let streamingMsgEl = null;
+
+    try {
+        const result = await regenerateMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
+            // On first callback, refresh to show new pending message
+            if (!streamingMsgEl) {
+                refreshConversation();
+                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+            }
+
+            if (streamingMsgEl && !isComplete) {
+                // Parse out thinking tags during streaming so they don't appear as raw markdown
+                const { cleanedResponse } = parseThinking(partialResponse);
+                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+            }
+            scrollToBottom();
+        });
+
+        if (!result.success && !result.cancelled) {
+            showToast(`Regeneration failed: ${result.error}`, 'error');
+        }
+
+        refreshConversation();
+        scrollToBottom();
+
+    } finally {
+        endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
         if (textarea) {
             textarea.disabled = false;
@@ -944,7 +1164,13 @@ async function closeScratchPadDrawer() {
  */
 function setupViewportHandlers() {
     if (window.visualViewport) {
-        const handleResize = debounce(() => {
+        // Remove old handler if exists
+        if (currentViewportHandler) {
+            window.visualViewport.removeEventListener('resize', currentViewportHandler);
+        }
+
+        // Create and store new handler
+        currentViewportHandler = debounce(() => {
             const inputContainer = document.querySelector('.sp-input-container');
             if (inputContainer) {
                 const viewportHeight = window.visualViewport.height;
@@ -960,7 +1186,7 @@ function setupViewportHandlers() {
             scrollToBottom();
         }, 50);
 
-        window.visualViewport.addEventListener('resize', handleResize);
+        window.visualViewport.addEventListener('resize', currentViewportHandler);
     }
 }
 
