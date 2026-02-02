@@ -1201,19 +1201,14 @@ body.sp-drawer-pinned.sp-drawer-open {
     display: inline-block;
 }
 
-/* Profile badge in thread list */
-.sp-thread-profile-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.02rem;
-    padding: 0.125rem 0.375rem;
-    border-radius: 999px;
-    color: var(--sp-accent);
-    background: color-mix(in srgb, var(--sp-accent) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--sp-accent) 35%, var(--sp-border));
-    white-space: nowrap;
+/* Profile indicator in thread list */
+.sp-thread-profile-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--sp-accent);
     flex-shrink: 0;
+    margin-left: 0.25rem;
 }
 
 /* ========================================

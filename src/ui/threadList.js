@@ -185,12 +185,12 @@ function createThreadItem(thread) {
     nameEl.textContent = thread.name;
     nameRowEl.appendChild(nameEl);
 
-    // Profile override badge
+    // Profile override indicator
     const threadProfile = thread.contextSettings?.connectionProfile;
     if (threadProfile) {
         const profileBadgeEl = document.createElement('span');
-        profileBadgeEl.className = 'sp-thread-profile-badge';
-        profileBadgeEl.textContent = threadProfile;
+        profileBadgeEl.className = 'sp-thread-profile-indicator';
+        profileBadgeEl.title = threadProfile;  // Tooltip on hover
         nameRowEl.appendChild(profileBadgeEl);
     }
 
