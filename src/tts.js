@@ -36,15 +36,18 @@ export async function speakText(text) {
             return false;
         }
 
+        // Sanitize text to prevent command injection via pipe characters or leading slashes
+        const safeText = cleanedText.replace(/\|/g, '').replace(/^\//gm, '');
+
         // Build the /speak command
         // Format: /speak voice="name" text
         // If no voice specified, just use /speak text
         let command;
         if (settings.ttsVoice && settings.ttsVoice.trim()) {
             const safeName = settings.ttsVoice.trim().replace(/"/g, '').replace(/\|/g, '');
-            command = `/speak voice="${safeName}" ${cleanedText}`;
+            command = `/speak voice="${safeName}" ${safeText}`;
         } else {
-            command = `/speak ${cleanedText}`;
+            command = `/speak ${safeText}`;
         }
 
         const result = await executeSlashCommandsWithOptions(command, {

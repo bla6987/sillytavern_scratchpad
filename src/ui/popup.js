@@ -435,6 +435,11 @@ export function dismissPopup() {
         return;
     }
 
+    // Cancel any active generation when dismissing
+    if (isPopupGenerating) {
+        cancelGeneration();
+    }
+
     popupElement.classList.remove('sp-popup-visible');
     popupElement.classList.add('sp-popup-hiding');
 

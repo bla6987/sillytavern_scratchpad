@@ -352,7 +352,8 @@ async function generateWithProfile(profileName, generateFn) {
         }
 
         // Switch to alternative profile
-        await executeSlashCommandsWithOptions(`/profile ${profileName}`, { handleParserErrors: false, handleExecutionErrors: false });
+        const safeProfileName = profileName.replace(/\|/g, '').replace(/^\//gm, '');
+        await executeSlashCommandsWithOptions(`/profile ${safeProfileName}`, { handleParserErrors: false, handleExecutionErrors: false });
 
         // Execute generation
         const result = await generateFn();
@@ -361,7 +362,8 @@ async function generateWithProfile(profileName, generateFn) {
         // Restore original profile
         if (currentProfile) {
             try {
-                await executeSlashCommandsWithOptions(`/profile ${currentProfile}`, { handleParserErrors: false, handleExecutionErrors: false });
+                const safeCurrentProfile = currentProfile.replace(/\|/g, '').replace(/^\//gm, '');
+                await executeSlashCommandsWithOptions(`/profile ${safeCurrentProfile}`, { handleParserErrors: false, handleExecutionErrors: false });
             } catch (e) {
                 console.warn('[ScratchPad] Could not restore profile:', e);
             }
@@ -746,6 +748,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
     try {
         const currentThread = getThread(threadId);  // Re-fetch to get latest messages
+        if (!currentThread) {
+            return { success: false, error: 'Thread not found' };
+        }
         const isFirstMessage = !currentThread.titled;
         const { systemPrompt, prompt } = buildPrompt(userQuestion, currentThread, isFirstMessage);
 
@@ -843,8 +848,8 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         }
 
         // Extract text and structured reasoning from result
-        const responseText = result.text || result; // Handle both new format and legacy string return
-        const structuredReasoning = result.reasoning || '';
+        const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
+        const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
 
         // Parse thinking from response text (for models using XML tags like <think>)
         const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);

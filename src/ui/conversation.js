@@ -1093,6 +1093,7 @@ async function handleAiRename(thread) {
  */
 function goBackToThreadList() {
     currentThreadId = null;
+    removeViewportHandler();
 
     const drawer = document.getElementById('scratch-pad-drawer');
     if (!drawer) return;
@@ -1157,10 +1158,21 @@ function scrollToBottom() {
 }
 
 /**
+ * Remove viewport resize handler if one exists
+ */
+function removeViewportHandler() {
+    if (currentViewportHandler && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', currentViewportHandler);
+        currentViewportHandler = null;
+    }
+}
+
+/**
  * Close the scratch pad drawer
  */
 async function closeScratchPadDrawer() {
     currentThreadId = null;
+    removeViewportHandler();
     const { closeScratchPad } = await import('./index.js');
     closeScratchPad();
 }
@@ -1171,9 +1183,7 @@ async function closeScratchPadDrawer() {
 function setupViewportHandlers() {
     if (window.visualViewport) {
         // Remove old handler if exists
-        if (currentViewportHandler) {
-            window.visualViewport.removeEventListener('resize', currentViewportHandler);
-        }
+        removeViewportHandler();
 
         // Create and store new handler
         currentViewportHandler = debounce(() => {
