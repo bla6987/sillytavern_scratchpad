@@ -1367,6 +1367,60 @@ body.sp-drawer-pinned.sp-drawer-open {
 }
 
 /* ========================================
+   Branched Messages (Collapsible)
+   ======================================== */
+.sp-branched-messages {
+    background: color-mix(in srgb, var(--sp-accent) 5%, var(--sp-bg-secondary));
+    border-left: 3px solid var(--sp-text-muted);
+    border-radius: var(--sp-radius);
+    padding: 0.5rem 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.sp-branched-messages summary {
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.8125rem;
+    color: var(--sp-text-muted);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0;
+    list-style: none;
+}
+
+.sp-branched-messages summary:hover {
+    color: var(--sp-text-secondary);
+}
+
+.sp-branched-messages summary::-webkit-details-marker,
+.sp-branched-messages summary::marker {
+    display: none;
+    content: "";
+}
+
+.sp-branched-messages summary::before {
+    content: "▶";
+    font-size: 0.625rem;
+    transition: transform 0.2s ease;
+}
+
+.sp-branched-messages[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.sp-branched-messages-content {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--sp-border);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    opacity: 0.7;
+}
+
+/* ========================================
    Accessibility
    ======================================== */
 .sp-button:focus-visible,

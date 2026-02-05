@@ -343,14 +343,19 @@ export function getThreadForCurrentBranch(threadId) {
     if (currentLength === null) return thread;
 
     // Filter messages - keep legacy (no index) or those within current chat
-    const filteredMessages = thread.messages.filter(msg => {
+    const filteredMessages = [];
+    const branchedMessages = [];
+    for (const msg of thread.messages) {
         if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
-            return true;  // Legacy messages always shown
+            filteredMessages.push(msg);  // Legacy messages always shown
+        } else if (msg.chatMessageIndex <= currentLength) {
+            filteredMessages.push(msg);
+        } else {
+            branchedMessages.push(msg);
         }
-        return msg.chatMessageIndex <= currentLength;
-    });
+    }
 
-    return { ...thread, messages: filteredMessages };
+    return { ...thread, messages: filteredMessages, branchedMessages };
 }
 
 /**
@@ -364,12 +369,17 @@ export function getThreadsForCurrentBranch() {
     if (currentLength === null) return threads;
 
     return threads.map(thread => {
-        const filteredMessages = thread.messages.filter(msg => {
+        const filteredMessages = [];
+        const branchedMessages = [];
+        for (const msg of thread.messages) {
             if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
-                return true;
+                filteredMessages.push(msg);
+            } else if (msg.chatMessageIndex <= currentLength) {
+                filteredMessages.push(msg);
+            } else {
+                branchedMessages.push(msg);
             }
-            return msg.chatMessageIndex <= currentLength;
-        });
-        return { ...thread, messages: filteredMessages };
+        }
+        return { ...thread, messages: filteredMessages, branchedMessages };
     });
 }
