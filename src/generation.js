@@ -771,7 +771,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
     try {
         const currentThread = getThread(threadId);  // Re-fetch to get latest messages
-        const isFirstMessage = currentThread.messages.filter(m => m.role === 'assistant').length === 1;
+        const isFirstMessage = !currentThread.titled;
         const { systemPrompt, prompt } = buildPrompt(userQuestion, currentThread, isFirstMessage);
 
         // Generation function
@@ -899,16 +899,14 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             thinkingLength: combinedThinking ? combinedThinking.length : 0
         });
 
-        // Parse title if first message
-        let finalResponse = responseWithoutThinking;
+        // Always strip titles from responses; only update thread name on first message
+        const { title, cleanedResponse } = parseThreadTitle(responseWithoutThinking);
+        let finalResponse = cleanedResponse;
         if (isFirstMessage) {
-            const { title, cleanedResponse } = parseThreadTitle(responseWithoutThinking);
-            finalResponse = cleanedResponse;
-
             if (title) {
-                updateThread(threadId, { name: title });
+                updateThread(threadId, { name: title, titled: true });
             } else {
-                updateThread(threadId, { name: generateFallbackTitle(userQuestion) });
+                updateThread(threadId, { name: generateFallbackTitle(userQuestion), titled: true });
             }
         }
 
