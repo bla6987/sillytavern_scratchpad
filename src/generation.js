@@ -564,7 +564,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         console.log('[ScratchPad] Raw prompt - Updated message with thinking:', combinedThinking ? 'YES (' + combinedThinking.length + ' chars)' : 'NO');
 
         if (thread.messages.length <= 2) {
-            updateThread(threadId, { name: generateFallbackTitle(userPrompt) });
+            updateThread(threadId, { name: generateFallbackTitle(userPrompt), titled: true });
         }
 
         await saveMetadata();

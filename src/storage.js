@@ -155,7 +155,8 @@ export function createThread(name = 'New Thread', contextSettings = null) {
         createdAt: timestamp,
         updatedAt: timestamp,
         messages: [],
-        contextSettings: contextSettings ? { ...contextSettings } : null
+        contextSettings: contextSettings ? { ...contextSettings } : null,
+        titled: false
     };
 
     data.threads.unshift(thread);
