@@ -3,10 +3,11 @@
  * Shows quick responses when using /sp <message>
  */
 
-import { createThread, saveMetadata } from '../storage.js';
+import { createThread, saveMetadata, getThread } from '../storage.js';
 import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, cancelGeneration } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
+import { getCurrentContextSettings } from '../settings.js';
 
 let isPopupGenerating = false;
 
@@ -19,36 +20,23 @@ let currentPopupResponse = null;
  * @param {string} message User's question
  */
 export async function showQuickPopup(message) {
-    console.log('[ScratchPad Popup] showQuickPopup called with message:', message);
-
-    // Create new thread
-    console.log('[ScratchPad Popup] Creating new thread');
-    const thread = createThread('New Thread');
+    // Create new thread with current context settings
+    const thread = createThread('New Thread', getCurrentContextSettings());
     if (!thread) {
-        console.error('[ScratchPad Popup] Failed to create thread');
         showToast('Failed to create thread', 'error');
         return;
     }
 
-    console.log('[ScratchPad Popup] Thread created with ID:', thread.id);
     currentPopupThreadId = thread.id;
     await saveMetadata();
 
-    // Create and show popup
-    console.log('[ScratchPad Popup] Creating popup element');
     createPopupElement();
-
-    // Generate response
-    console.log('[ScratchPad Popup] Starting response generation');
     await generatePopupResponse(message);
 }
 
 export async function showQuickPopupRaw(message) {
-    console.log('[ScratchPad Popup] showQuickPopupRaw called with message:', message);
-
-    const thread = createThread('New Thread');
+    const thread = createThread('New Thread', getCurrentContextSettings());
     if (!thread) {
-        console.error('[ScratchPad Popup] Failed to create thread');
         showToast('Failed to create thread', 'error');
         return;
     }
@@ -64,19 +52,14 @@ export async function showQuickPopupRaw(message) {
  * Create the popup element
  */
 function createPopupElement() {
-    console.log('[ScratchPad Popup] createPopupElement called');
-
     // Remove existing popup
     if (popupElement) {
-        console.log('[ScratchPad Popup] Removing existing popup');
         popupElement.remove();
     }
 
     popupElement = document.createElement('div');
     popupElement.id = 'scratch-pad-popup';
     popupElement.className = 'sp-popup';
-
-    console.log('[ScratchPad Popup] Popup element created');
 
     // Backdrop
     const backdrop = document.createElement('div');
@@ -226,12 +209,9 @@ function createPopupElement() {
     popupElement.appendChild(sheet);
     document.body.appendChild(popupElement);
 
-    console.log('[ScratchPad Popup] Popup appended to body, animating in');
-
     // Animate in
     requestAnimationFrame(() => {
         popupElement.classList.add('sp-popup-visible');
-        console.log('[ScratchPad Popup] Popup visible');
     });
 }
 
@@ -282,12 +262,17 @@ async function generatePopupResponse(message) {
         });
 
         if (!result.success && !result.cancelled) {
-            contentEl.innerHTML = `
-                <div class="sp-popup-error">
-                    <span class="sp-error-icon">${Icons.error}</span>
-                    <span>Error: ${result.error}</span>
-                </div>
-            `;
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'sp-popup-error';
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'sp-error-icon';
+            iconSpan.innerHTML = Icons.error;
+            const textSpan = document.createElement('span');
+            textSpan.textContent = `Error: ${result.error}`;
+            errorDiv.appendChild(iconSpan);
+            errorDiv.appendChild(textSpan);
+            contentEl.innerHTML = '';
+            contentEl.appendChild(errorDiv);
         } else if (result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-response sp-popup-cancelled">
@@ -316,7 +301,6 @@ async function generatePopupResponse(message) {
         }
 
         // Update title with thread name
-        const { getThread } = await import('../storage.js');
         const thread = getThread(currentPopupThreadId);
         if (thread && titleEl) {
             titleEl.textContent = thread.name;
@@ -324,12 +308,17 @@ async function generatePopupResponse(message) {
 
     } catch (error) {
         console.error('[ScratchPad] Popup generation error:', error);
-        contentEl.innerHTML = `
-            <div class="sp-popup-error">
-                <span class="sp-error-icon">${Icons.error}</span>
-                <span>Error: ${error.message}</span>
-            </div>
-        `;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'sp-popup-error';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'sp-error-icon';
+        iconSpan.innerHTML = Icons.error;
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `Error: ${error.message}`;
+        errorDiv.appendChild(iconSpan);
+        errorDiv.appendChild(textSpan);
+        contentEl.innerHTML = '';
+        contentEl.appendChild(errorDiv);
         currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
@@ -360,12 +349,17 @@ async function generatePopupRawResponse(message) {
         });
 
         if (!result.success && !result.cancelled) {
-            contentEl.innerHTML = `
-                <div class="sp-popup-error">
-                    <span class="sp-error-icon">${Icons.error}</span>
-                    <span>Error: ${result.error}</span>
-                </div>
-            `;
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'sp-popup-error';
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'sp-error-icon';
+            iconSpan.innerHTML = Icons.error;
+            const textSpan = document.createElement('span');
+            textSpan.textContent = `Error: ${result.error}`;
+            errorDiv.appendChild(iconSpan);
+            errorDiv.appendChild(textSpan);
+            contentEl.innerHTML = '';
+            contentEl.appendChild(errorDiv);
         } else if (result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-response sp-popup-cancelled">
@@ -392,7 +386,6 @@ async function generatePopupRawResponse(message) {
             currentPopupResponse = result.response;
         }
 
-        const { getThread } = await import('../storage.js');
         const thread = getThread(currentPopupThreadId);
         if (thread && titleEl) {
             titleEl.textContent = thread.name;
@@ -400,12 +393,17 @@ async function generatePopupRawResponse(message) {
 
     } catch (error) {
         console.error('[ScratchPad] Popup generation error:', error);
-        contentEl.innerHTML = `
-            <div class="sp-popup-error">
-                <span class="sp-error-icon">${Icons.error}</span>
-                <span>Error: ${error.message}</span>
-            </div>
-        `;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'sp-popup-error';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'sp-error-icon';
+        iconSpan.innerHTML = Icons.error;
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `Error: ${error.message}`;
+        errorDiv.appendChild(iconSpan);
+        errorDiv.appendChild(textSpan);
+        contentEl.innerHTML = '';
+        contentEl.appendChild(errorDiv);
         currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
@@ -433,20 +431,15 @@ async function handleOpenInScratchPad() {
  * Dismiss the popup
  */
 export function dismissPopup() {
-    console.log('[ScratchPad Popup] dismissPopup called');
-
     if (!popupElement) {
-        console.log('[ScratchPad Popup] No popup to dismiss');
         return;
     }
 
-    console.log('[ScratchPad Popup] Hiding popup');
     popupElement.classList.remove('sp-popup-visible');
     popupElement.classList.add('sp-popup-hiding');
 
     setTimeout(() => {
         if (popupElement) {
-            console.log('[ScratchPad Popup] Removing popup from DOM');
             popupElement.remove();
             popupElement = null;
         }

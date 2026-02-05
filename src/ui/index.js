@@ -15,6 +15,9 @@ export { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from 
 let drawerElement = null;
 let backdropElement = null;
 let isPinned = false;
+let keydownHandler = null;
+let popstateHandler = null;
+let resizeHandler = null;
 
 /**
  * Check if viewport is mobile width
@@ -28,12 +31,9 @@ function isMobileViewport() {
  * Create the scratch pad drawer element
  */
 function createDrawer() {
-    console.log('[ScratchPad UI] Creating drawer element');
-
     // Check if drawer exists in DOM (stale from previous load)
     const existingDrawer = document.getElementById('scratch-pad-drawer');
     if (existingDrawer) {
-        console.log('[ScratchPad UI] Removing existing drawer element');
         existingDrawer.remove();
     }
 
@@ -62,8 +62,6 @@ function createDrawer() {
         overflow: 'hidden'
     });
 
-    console.log('[ScratchPad UI] Drawer element created');
-
     const content = document.createElement('div');
     content.className = 'sp-drawer-content';
     drawerElement.appendChild(content);
@@ -78,7 +76,6 @@ function createDrawer() {
     }, { passive: true });
 
     document.body.appendChild(drawerElement);
-    console.log('[ScratchPad UI] Drawer appended to body');
 
     return drawerElement;
 }
@@ -160,32 +157,20 @@ function hideBackdrop() {
  * @param {string} [threadId] Optional thread ID to open directly
  */
 export function openScratchPad(threadId = null) {
-    console.log('[ScratchPad UI] openScratchPad called with threadId:', threadId);
-    console.log('[ScratchPad UI] Current drawerElement state:', drawerElement ? 'exists' : 'null');
-
     // Check if drawer exists AND is still in the DOM
     if (!drawerElement || !drawerElement.isConnected) {
         if (drawerElement && !drawerElement.isConnected) {
-            console.log('[ScratchPad UI] Drawer exists but not in DOM, creating new one');
-            drawerElement = null; // Clear the stale reference
-        } else {
-            console.log('[ScratchPad UI] No existing drawer, creating new one');
+            drawerElement = null;
         }
         drawerElement = createDrawer();
-    } else {
-        console.log('[ScratchPad UI] Reusing existing drawer element');
     }
 
     const content = drawerElement.querySelector('.sp-drawer-content');
 
     if (!content) {
-        console.error('[ScratchPad UI] ERROR: No content element found in drawer!');
-        console.error('[ScratchPad UI] Drawer element:', drawerElement);
-        console.error('[ScratchPad UI] Drawer is connected:', drawerElement.isConnected);
+        console.error('[ScratchPad UI] No content element found in drawer');
         return;
     }
-
-    console.log('[ScratchPad UI] Adding sp-drawer-open class to body');
     // Prevent body scroll (unless pinned)
     document.body.classList.add('sp-drawer-open');
 
@@ -206,24 +191,16 @@ export function openScratchPad(threadId = null) {
     }
 
     // Add open class to trigger CSS animation
-    console.log('[ScratchPad UI] Adding open class to drawer');
-    // Use a small delay to ensure the element is fully rendered
     requestAnimationFrame(() => {
         drawerElement.classList.add('open');
-        // Force transform to ensure visibility (fallback if CSS isn't loaded)
         drawerElement.style.transform = 'translateX(0)';
-        console.log('[ScratchPad UI] Drawer classes:', drawerElement.className);
-        const computedStyle = window.getComputedStyle(drawerElement);
-        console.log('[ScratchPad UI] Computed transform:', computedStyle.transform);
     });
 
     // Render appropriate view
     try {
         if (threadId) {
-            console.log('[ScratchPad UI] Opening specific thread:', threadId);
             openThread(threadId);
         } else {
-            console.log('[ScratchPad UI] Rendering thread list');
             renderThreadList(content);
         }
     } catch (err) {
@@ -235,14 +212,10 @@ export function openScratchPad(threadId = null) {
  * Close the scratch pad drawer
  */
 export function closeScratchPad() {
-    console.log('[ScratchPad UI] closeScratchPad called');
-
     if (!drawerElement) {
-        console.log('[ScratchPad UI] No drawer to close');
         return;
     }
 
-    console.log('[ScratchPad UI] Removing open class and body lock');
     drawerElement.classList.remove('open');
     drawerElement.classList.remove('sp-pinned');
     // Reset inline transform to allow CSS default (translateX(100%)) for close animation
@@ -257,7 +230,6 @@ export function closeScratchPad() {
     // Remove drawer element after transition completes (300ms as per CSS)
     setTimeout(() => {
         if (drawerElement && !drawerElement.classList.contains('open')) {
-            console.log('[ScratchPad UI] Removing drawer from DOM');
             drawerElement.remove();
             drawerElement = null;
         }
@@ -322,8 +294,9 @@ export function initUI() {
     document.body.classList.remove('sp-drawer-open');
     document.body.classList.remove('sp-drawer-pinned');
 
-    // Handle escape key to close
-    document.addEventListener('keydown', (e) => {
+    // Handle escape key to close (remove old listener first to prevent duplicates)
+    if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
+    keydownHandler = (e) => {
         if (e.key === 'Escape') {
             if (isPopupVisible()) {
                 dismissPopup();
@@ -331,19 +304,23 @@ export function initUI() {
                 closeScratchPad();
             }
         }
-    });
+    };
+    document.addEventListener('keydown', keydownHandler);
 
     // Handle back button on mobile
-    window.addEventListener('popstate', () => {
+    if (popstateHandler) window.removeEventListener('popstate', popstateHandler);
+    popstateHandler = () => {
         if (isPopupVisible()) {
             dismissPopup();
         } else if (isScratchPadOpen()) {
             closeScratchPad();
         }
-    });
+    };
+    window.addEventListener('popstate', popstateHandler);
 
     // Handle resize - force overlay mode on mobile even if pinned
-    window.addEventListener('resize', () => {
+    if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+    resizeHandler = () => {
         if (isPinned && isMobileViewport() && isScratchPadOpen()) {
             // Force overlay mode on mobile
             isPinned = false;
@@ -364,7 +341,8 @@ export function initUI() {
                 hideBackdrop();
             }
         }
-    });
+    };
+    window.addEventListener('resize', resizeHandler);
 }
 
 /**

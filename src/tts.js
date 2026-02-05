@@ -41,12 +41,11 @@ export async function speakText(text) {
         // If no voice specified, just use /speak text
         let command;
         if (settings.ttsVoice && settings.ttsVoice.trim()) {
-            command = `/speak voice="${settings.ttsVoice.trim()}" ${cleanedText}`;
+            const safeName = settings.ttsVoice.trim().replace(/"/g, '').replace(/\|/g, '');
+            command = `/speak voice="${safeName}" ${cleanedText}`;
         } else {
             command = `/speak ${cleanedText}`;
         }
-
-        console.log('[ScratchPad TTS] Executing:', command.substring(0, 100) + '...');
 
         const result = await executeSlashCommandsWithOptions(command, {
             handleParserErrors: false,

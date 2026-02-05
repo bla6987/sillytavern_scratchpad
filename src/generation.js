@@ -438,25 +438,15 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                 };
 
                 const reasoningHandler = (reasoning) => {
-                    console.log('[ScratchPad] reasoningHandler fired! reasoning:', reasoning);
-                    console.log('[ScratchPad] reasoning type:', typeof reasoning);
-                    console.log('[ScratchPad] reasoning length:', reasoning ? reasoning.length : 0);
                     if (activeGenerationId === generationId && reasoning) {
                         structuredReasoning = reasoning;
-                        console.log('[ScratchPad] Captured reasoning from event, length:', structuredReasoning.length);
                     }
                 };
 
                 eventSource.on(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
 
-                // DEBUG: Log all available event types related to reasoning
-                console.log('[ScratchPad] Available event_types:', Object.keys(event_types).filter(k => k.includes('REASON') || k.includes('THINK')));
-
                 if (event_types?.STREAM_REASONING_DONE) {
-                    console.log('[ScratchPad] STREAM_REASONING_DONE event exists, registering handler');
                     eventSource.on(event_types.STREAM_REASONING_DONE, reasoningHandler);
-                } else {
-                    console.log('[ScratchPad] STREAM_REASONING_DONE event NOT available');
                 }
 
                 try {
@@ -519,14 +509,6 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
         const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
 
-        console.log('[ScratchPad] Raw prompt - Extracted from result:', {
-            resultType: typeof result,
-            responseTextLength: responseText.length,
-            structuredReasoningLength: structuredReasoning.length,
-            resultKeys: (result && typeof result === 'object') ? Object.keys(result) : 'N/A',
-            resultObject: (result && typeof result === 'object') ? result : 'N/A'
-        });
-
         const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
 
         let combinedThinking = structuredReasoning || tagParsedThinking || null;
@@ -534,16 +516,8 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
         }
 
-        console.log('[ScratchPad] Raw prompt - Final thinking status:', {
-            hasStructuredReasoning: !!structuredReasoning,
-            hasTagParsedThinking: !!tagParsedThinking,
-            hasCombinedThinking: !!combinedThinking,
-            thinkingLength: combinedThinking ? combinedThinking.length : 0
-        });
-
         // Check if generation was cancelled
         if (checkAndResetCancellation()) {
-            console.log('[ScratchPad] Raw prompt generation was cancelled');
             updateMessage(threadId, assistantMessage.id, {
                 content: responseText || '',
                 thinking: combinedThinking,
@@ -561,8 +535,6 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             status: 'complete'
         });
 
-        console.log('[ScratchPad] Raw prompt - Updated message with thinking:', combinedThinking ? 'YES (' + combinedThinking.length + ' chars)' : 'NO');
-
         if (thread.messages.length <= 2) {
             updateThread(threadId, { name: generateFallbackTitle(userPrompt), titled: true });
         }
@@ -574,7 +546,6 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
     } catch (error) {
         // Check if this was a cancellation
         if (checkAndResetCancellation()) {
-            console.log('[ScratchPad] Raw prompt generation was cancelled (caught)');
             const thread = getThread(threadId);
             if (thread) {
                 const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
@@ -635,7 +606,24 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         systemPrompt += '\n\nAt the very beginning of your first response in this new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**\n\nThen provide your response.';
     }
 
-    parts.push(systemPrompt);
+    // Include SillyTavern's main system prompt if enabled
+    if (settings.includeSystemPrompt) {
+        try {
+            const stContext = SillyTavern.getContext();
+            let stSystemPrompt = '';
+            if (typeof stContext.getSystemPrompt === 'function') {
+                stSystemPrompt = stContext.getSystemPrompt();
+            } else if (typeof stContext.systemPrompt === 'string') {
+                stSystemPrompt = stContext.systemPrompt;
+            }
+            if (stSystemPrompt && stSystemPrompt.trim()) {
+                parts.push('--- SYSTEM PROMPT ---');
+                parts.push(stSystemPrompt.trim());
+            }
+        } catch (e) {
+            console.warn('[ScratchPad] Could not retrieve system prompt:', e);
+        }
+    }
 
     // Character card (if enabled)
     if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
@@ -671,7 +659,7 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
 
     return {
         systemPrompt: systemPrompt,
-        prompt: parts.slice(1).join('\n\n') // Exclude system prompt from main prompt
+        prompt: parts.join('\n\n')
     };
 }
 
@@ -685,7 +673,6 @@ let isCancellationRequested = false;
  */
 export function cancelGeneration() {
     if (activeGenerationId) {
-        console.log('[ScratchPad] Cancelling generation:', activeGenerationId);
         isCancellationRequested = true;
         activeGenerationId = null;
 
@@ -732,20 +719,8 @@ function checkAndResetCancellation() {
  * @returns {Promise<Object>} { success, response, error }
  */
 export async function generateScratchPadResponse(userQuestion, threadId, onStream = null) {
-    console.log('[ScratchPad] generateScratchPadResponse called with:', {
-        threadId,
-        hasOnStream: !!onStream,
-        questionLength: userQuestion.length
-    });
-
     const context = SillyTavern.getContext();
     const { generateRaw, eventSource, event_types } = context;
-
-    console.log('[ScratchPad] Context retrieved:', {
-        hasGenerateRaw: !!generateRaw,
-        hasEventSource: !!eventSource,
-        hasEventTypes: !!event_types
-    });
 
     const thread = getThread(threadId);
     if (!thread) {
@@ -776,12 +751,10 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
         // Generation function
         const doGenerate = async () => {
-            console.log('[ScratchPad] doGenerate started for regular scratchpad');
             let fullResponse = '';
-            let structuredReasoning = ''; // Capture reasoning from STREAM_REASONING_DONE
+            let structuredReasoning = '';
 
             const useStreaming = onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED;
-            console.log('[ScratchPad] Using streaming:', useStreaming);
 
             if (useStreaming) {
                 // Use event-based streaming (SillyTavern v1.12.6+)
@@ -804,24 +777,16 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                     }
                 };
 
-                // Register event listeners
-                console.log('[ScratchPad] Registering event listeners for scratchpad');
                 eventSource.on(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
                 if (event_types?.STREAM_REASONING_DONE) {
-                    console.log('[ScratchPad] Registering STREAM_REASONING_DONE handler for scratchpad');
                     eventSource.on(event_types.STREAM_REASONING_DONE, reasoningHandler);
-                } else {
-                    console.log('[ScratchPad] STREAM_REASONING_DONE not available for scratchpad');
                 }
 
                 try {
-                    // Generate - the response will come via events AND as final return
-                    console.log('[ScratchPad] Calling generateRaw for scratchpad with systemPrompt:', systemPrompt.substring(0, 100) + '...');
                     const result = await generateRaw({
                         systemPrompt,
                         prompt
                     });
-                    console.log('[ScratchPad] generateRaw completed for scratchpad');
 
                     // Handle result - can be string or object with thinking/reasoning
                     if (result && typeof result === 'object') {
@@ -892,13 +857,6 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
         }
 
-        console.log('[ScratchPad] Final thinking status:', {
-            hasStructuredReasoning: !!structuredReasoning,
-            hasTagParsedThinking: !!tagParsedThinking,
-            hasCombinedThinking: !!combinedThinking,
-            thinkingLength: combinedThinking ? combinedThinking.length : 0
-        });
-
         // Always strip titles from responses; only update thread name on first message
         const { title, cleanedResponse } = parseThreadTitle(responseWithoutThinking);
         let finalResponse = cleanedResponse;
@@ -912,8 +870,6 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
         // Check if generation was cancelled
         if (checkAndResetCancellation()) {
-            console.log('[ScratchPad] Generation was cancelled');
-            // Keep partial response if any, mark as cancelled
             updateMessage(threadId, assistantMessage.id, {
                 content: responseText || '',
                 thinking: combinedThinking,
@@ -930,17 +886,12 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             status: 'complete'
         });
 
-        console.log('[ScratchPad] Updated message with thinking:', combinedThinking ? 'YES (' + combinedThinking.length + ' chars)' : 'NO');
-
         await saveMetadata();
 
         return { success: true, response: finalResponse, thinking: combinedThinking };
 
     } catch (error) {
-        // Check if this was a cancellation
         if (checkAndResetCancellation()) {
-            console.log('[ScratchPad] Generation was cancelled (caught)');
-            // Remove the pending message on cancel
             const thread = getThread(threadId);
             if (thread) {
                 const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1068,7 +1019,7 @@ export async function regenerateMessage(threadId, messageId, onStream = null) {
  */
 export function isChatActive() {
     const { chat, characterId, groupId } = SillyTavern.getContext();
-    return (chat && chat.length >= 0) && (characterId !== undefined || groupId !== undefined);
+    return (chat && chat.length > 0) && (characterId !== undefined || groupId !== undefined);
 }
 
 /**
@@ -1186,7 +1137,7 @@ Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
         }
 
         // Clean up the response (remove quotes, extra whitespace, etc.)
-        let title = response.trim();
+        let title = extractAssistantText(response, '').trim();
         title = title.replace(/^["']|["']$/g, ''); // Remove surrounding quotes
         title = title.replace(/^\*\*Title:\s*/i, ''); // Remove "Title:" prefix if present
         title = title.replace(/^\*\*(.*?)\*\*$/, '$1'); // Remove markdown bold

@@ -10,15 +10,8 @@ import { isPinnedMode, togglePinnedMode } from './index.js';
 // Dynamic import to avoid circular dependency
 let conversationModule = null;
 async function getConversationModule() {
-    console.log('[ScratchPad] getConversationModule called, cached:', !!conversationModule);
     if (!conversationModule) {
-        try {
-            conversationModule = await import('./conversation.js');
-            console.log('[ScratchPad] Loaded conversation module:', Object.keys(conversationModule));
-        } catch (err) {
-            console.error('[ScratchPad] Failed to load conversation module:', err);
-            throw err;
-        }
+        conversationModule = await import('./conversation.js');
     }
     return conversationModule;
 }
@@ -30,7 +23,6 @@ let threadListContainer = null;
  * @param {HTMLElement} container Container element
  */
 export function renderThreadList(container) {
-    console.log('[ScratchPad UI] Rendering thread list');
     threadListContainer = container;
 
     container.innerHTML = '';
@@ -165,12 +157,9 @@ function createThreadItem(thread) {
     const mainContent = document.createElement('div');
     mainContent.className = 'sp-thread-main';
     mainContent.addEventListener('click', async () => {
-        console.log('[ScratchPad] Thread clicked:', thread.id, thread.name);
         try {
             const { openThread } = await getConversationModule();
-            console.log('[ScratchPad] Got openThread function, calling...');
             openThread(thread.id);
-            console.log('[ScratchPad] openThread called successfully');
         } catch (err) {
             console.error('[ScratchPad] Error opening thread:', err);
         }
@@ -280,12 +269,9 @@ function createThreadItem(thread) {
  * Handle creating a new thread
  */
 async function handleNewThread() {
-    console.log('[ScratchPad] New Thread button clicked');
     try {
         const { startNewThread } = await getConversationModule();
-        console.log('[ScratchPad] Got startNewThread function, calling...');
         startNewThread();
-        console.log('[ScratchPad] startNewThread called successfully');
     } catch (err) {
         console.error('[ScratchPad] Error starting new thread:', err);
     }
@@ -296,7 +282,6 @@ async function handleNewThread() {
  * @param {string} message Message to send
  */
 async function handleQuickSend(message) {
-    console.log('[ScratchPad] Quick send:', message);
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
@@ -309,7 +294,6 @@ async function handleQuickSend(message) {
     // Create new thread with current global context settings
     const contextSettings = getCurrentContextSettings();
     const thread = createThread('New Thread', contextSettings);
-    console.log('[ScratchPad] Created thread:', thread);
     if (!thread) {
         showToast('Failed to create thread', 'error');
         return;
@@ -320,9 +304,7 @@ async function handleQuickSend(message) {
     // Open the thread and send the message
     try {
         const { openThread } = await getConversationModule();
-        console.log('[ScratchPad] Opening thread with message...');
         openThread(thread.id, trimmedMessage);
-        console.log('[ScratchPad] Thread opened with message');
     } catch (err) {
         console.error('[ScratchPad] Error opening thread:', err);
     }

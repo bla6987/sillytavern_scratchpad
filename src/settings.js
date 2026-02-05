@@ -370,7 +370,8 @@ export function getCurrentContextSettings() {
         chatHistoryRangeEnd: settings.chatHistoryRangeEnd,
         characterCardOnly: settings.characterCardOnly,
         includeCharacterCard: settings.includeCharacterCard,
-        includeSystemPrompt: settings.includeSystemPrompt
+        includeSystemPrompt: settings.includeSystemPrompt,
+        connectionProfile: settings.useAlternativeApi ? settings.connectionProfile : null
     };
 }
 

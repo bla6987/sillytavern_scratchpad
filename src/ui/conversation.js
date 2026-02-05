@@ -75,25 +75,15 @@ function runCleanups() {
  * @param {string} [initialMessage] Optional message to send immediately
  */
 export function openThread(threadId, initialMessage = null) {
-    console.log('[ScratchPad Conv] openThread called:', threadId, initialMessage);
     currentThreadId = threadId;
     pendingMessage = initialMessage;
 
     const drawer = document.getElementById('scratch-pad-drawer');
-    console.log('[ScratchPad Conv] drawer element:', drawer);
-    if (!drawer) {
-        console.error('[ScratchPad Conv] drawer not found!');
-        return;
-    }
+    if (!drawer) return;
 
     const content = drawer.querySelector('.sp-drawer-content');
-    console.log('[ScratchPad Conv] content element:', content);
-    if (!content) {
-        console.error('[ScratchPad Conv] content not found!');
-        return;
-    }
+    if (!content) return;
 
-    console.log('[ScratchPad Conv] calling renderConversation...');
     renderConversation(content);
 }
 
@@ -101,25 +91,15 @@ export function openThread(threadId, initialMessage = null) {
  * Start a new thread (empty conversation view)
  */
 export function startNewThread() {
-    console.log('[ScratchPad Conv] startNewThread called');
     currentThreadId = null;
     pendingMessage = null;
 
     const drawer = document.getElementById('scratch-pad-drawer');
-    console.log('[ScratchPad Conv] drawer element:', drawer);
-    if (!drawer) {
-        console.error('[ScratchPad Conv] drawer not found!');
-        return;
-    }
+    if (!drawer) return;
 
     const content = drawer.querySelector('.sp-drawer-content');
-    console.log('[ScratchPad Conv] content element:', content);
-    if (!content) {
-        console.error('[ScratchPad Conv] content not found!');
-        return;
-    }
+    if (!content) return;
 
-    console.log('[ScratchPad Conv] calling renderConversation(true)...');
     renderConversation(content, true);
 }
 
@@ -129,7 +109,6 @@ export function startNewThread() {
  * @param {boolean} isNewThread Whether this is a new thread
  */
 export function renderConversation(container, isNewThread = false) {
-    console.log('[ScratchPad Conv] renderConversation called, isNewThread:', isNewThread, 'currentThreadId:', currentThreadId);
     conversationContainer = container;
 
     // Run cleanup functions from previous render
@@ -688,12 +667,16 @@ function createMessageElement(message) {
     if (message.status === 'pending') {
         contentEl.appendChild(createSpinner());
     } else if (message.status === 'failed') {
-        contentEl.innerHTML = `
-            <div class="sp-error-message">
-                <span class="sp-error-icon">${Icons.error}</span>
-                <span>Generation failed${message.error ? `: ${message.error}` : ''}</span>
-            </div>
-        `;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'sp-error-message';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'sp-error-icon';
+        iconSpan.innerHTML = Icons.error;
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `Generation failed${message.error ? `: ${message.error}` : ''}`;
+        errorDiv.appendChild(iconSpan);
+        errorDiv.appendChild(textSpan);
+        contentEl.appendChild(errorDiv);
 
         const retryBtn = createButton({
             icon: Icons.retry,
@@ -702,6 +685,8 @@ function createMessageElement(message) {
             onClick: () => handleRetry(message.id)
         });
         contentEl.appendChild(retryBtn);
+    } else if (message.status === 'cancelled') {
+        contentEl.innerHTML = '<div class="sp-cancelled-message"><span>Generation cancelled</span></div>';
     } else {
         // Render thinking section if present (collapsible)
         if (message.thinking && message.role === 'assistant') {
@@ -863,7 +848,7 @@ async function handleSendMessage() {
                 streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
             }
 
-            if (streamingMsgEl) {
+            if (streamingMsgEl && streamingMsgEl.isConnected) {
                 if (!isComplete) {
                     // Parse out thinking tags during streaming so they don't appear as raw markdown
                     const { cleanedResponse } = parseThinking(partialResponse);
@@ -934,7 +919,7 @@ async function handleRetry(messageId) {
                 streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
             }
 
-            if (streamingMsgEl && !isComplete) {
+            if (streamingMsgEl && streamingMsgEl.isConnected && !isComplete) {
                 // Parse out thinking tags during streaming so they don't appear as raw markdown
                 const { cleanedResponse } = parseThinking(partialResponse);
                 streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
@@ -993,7 +978,7 @@ async function handleRegenerate(messageId) {
                 streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
             }
 
-            if (streamingMsgEl && !isComplete) {
+            if (streamingMsgEl && streamingMsgEl.isConnected && !isComplete) {
                 // Parse out thinking tags during streaming so they don't appear as raw markdown
                 const { cleanedResponse } = parseThinking(partialResponse);
                 streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);

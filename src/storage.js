@@ -42,15 +42,11 @@ export function getTimestamp() {
 export function ensureScratchPadExists() {
     const { chatMetadata } = SillyTavern.getContext();
 
-    console.log('[ScratchPad Storage] ensureScratchPadExists - chatMetadata:', !!chatMetadata);
-
     if (!chatMetadata) {
-        console.warn('[ScratchPad Storage] No chatMetadata available - is a chat open?');
         return null;
     }
 
     if (!chatMetadata[MODULE_NAME]) {
-        console.log('[ScratchPad Storage] Creating scratch pad data structure');
         chatMetadata[MODULE_NAME] = {
             settings: {},
             threads: []
@@ -141,10 +137,8 @@ export function findThreadByName(searchName) {
  * @returns {Object} The created thread
  */
 export function createThread(name = 'New Thread', contextSettings = null) {
-    console.log('[ScratchPad Storage] createThread called with name:', name);
     const data = ensureScratchPadExists();
     if (!data) {
-        console.error('[ScratchPad Storage] createThread failed - no data structure');
         return null;
     }
 
@@ -160,7 +154,6 @@ export function createThread(name = 'New Thread', contextSettings = null) {
     };
 
     data.threads.unshift(thread);
-    console.log('[ScratchPad Storage] Thread created:', thread.id, 'Total threads:', data.threads.length);
     return thread;
 }
 

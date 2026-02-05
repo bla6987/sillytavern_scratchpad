@@ -1403,6 +1403,43 @@ body.sp-drawer-pinned.sp-drawer-open {
     }
 }
 
+/* Cancelled Message */
+.sp-cancelled-message {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--sp-text-muted);
+    font-style: italic;
+}
+
+/* Header button (pin, etc.) */
+.sp-header-btn {
+    background: transparent;
+    color: var(--sp-text-secondary);
+    padding: 0.5rem;
+}
+
+/* Button text span */
+.sp-button-text {
+    white-space: nowrap;
+}
+
+/* Empty branch indicator in thread list */
+.sp-thread-preview-empty {
+    font-style: italic;
+    color: var(--sp-text-muted);
+}
+
+/* Rename button in thread list */
+.sp-rename-btn {
+    background: transparent;
+    color: var(--sp-text-secondary);
+}
+
+.sp-rename-btn:hover {
+    color: var(--sp-text-primary);
+}
+
 /* Touch devices - always show message actions */
 @media (hover: none) and (pointer: coarse) {
     .sp-message-actions {
