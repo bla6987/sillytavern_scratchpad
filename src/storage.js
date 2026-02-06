@@ -359,6 +359,124 @@ export function getThreadForCurrentBranch(threadId) {
 }
 
 /**
+ * Ensure swipe fields exist on an assistant message (lazy migration)
+ * Creates swipes/swipeThinking/swipeTimestamps/swipeId from existing content if not present
+ * @param {Object} message Message object
+ * @returns {Object} The message (mutated in place)
+ */
+export function ensureSwipeFields(message) {
+    if (!message || message.role !== 'assistant') return message;
+    if (message.swipes) return message; // Already initialized
+
+    message.swipes = [message.content || ''];
+    message.swipeThinking = [message.thinking || null];
+    message.swipeTimestamps = [message.timestamp || getTimestamp()];
+    message.swipeId = 0;
+
+    return message;
+}
+
+/**
+ * Copy active swipe data to message top-level fields (backward compat)
+ * @param {Object} message Message object
+ */
+export function syncSwipeToMessage(message) {
+    if (!message || !message.swipes) return;
+
+    const idx = message.swipeId ?? 0;
+    message.content = message.swipes[idx] ?? '';
+    message.thinking = message.swipeThinking?.[idx] ?? null;
+    message.timestamp = message.swipeTimestamps?.[idx] ?? message.timestamp;
+}
+
+/**
+ * Add a new swipe to an assistant message
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Message ID
+ * @param {string} content Swipe content
+ * @param {string|null} thinking Thinking content
+ * @param {string} timestamp ISO timestamp
+ * @returns {Object|null} Updated message or null
+ */
+export function addSwipe(threadId, messageId, content, thinking = null, timestamp = null) {
+    const message = getMessage(threadId, messageId);
+    if (!message) return null;
+
+    ensureSwipeFields(message);
+
+    const ts = timestamp || getTimestamp();
+    message.swipes.push(content);
+    message.swipeThinking.push(thinking);
+    message.swipeTimestamps.push(ts);
+    message.swipeId = message.swipes.length - 1;
+
+    syncSwipeToMessage(message);
+
+    const thread = getThread(threadId);
+    if (thread) thread.updatedAt = getTimestamp();
+
+    return message;
+}
+
+/**
+ * Set the active swipe index and sync to top-level fields
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Message ID
+ * @param {number} index Swipe index
+ * @returns {Object|null} Updated message or null
+ */
+export function setActiveSwipe(threadId, messageId, index) {
+    const message = getMessage(threadId, messageId);
+    if (!message || !message.swipes) return null;
+
+    if (index < 0 || index >= message.swipes.length) return null;
+
+    message.swipeId = index;
+    syncSwipeToMessage(message);
+
+    return message;
+}
+
+/**
+ * Delete a swipe from an assistant message
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Message ID
+ * @param {number} index Swipe index to delete
+ * @returns {Object} { empty: true } if no swipes left, or updated message
+ */
+export function deleteSwipe(threadId, messageId, index) {
+    const message = getMessage(threadId, messageId);
+    if (!message || !message.swipes) return { empty: true };
+
+    if (index < 0 || index >= message.swipes.length) return message;
+
+    message.swipes.splice(index, 1);
+    message.swipeThinking.splice(index, 1);
+    message.swipeTimestamps.splice(index, 1);
+
+    if (message.swipes.length === 0) {
+        return { empty: true };
+    }
+
+    // Adjust swipeId if needed
+    if (message.swipeId >= message.swipes.length) {
+        message.swipeId = message.swipes.length - 1;
+    } else if (message.swipeId > index) {
+        message.swipeId--;
+    } else if (message.swipeId === index) {
+        // Deleted the active one; stay at same index or go to previous
+        message.swipeId = Math.min(message.swipeId, message.swipes.length - 1);
+    }
+
+    syncSwipeToMessage(message);
+
+    const thread = getThread(threadId);
+    if (thread) thread.updatedAt = getTimestamp();
+
+    return message;
+}
+
+/**
  * Get all threads filtered for the current branch
  * @returns {Array} Array of threads with filtered messages
  */

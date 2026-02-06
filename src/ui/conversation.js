@@ -2,9 +2,9 @@
  * Conversation View component for Scratch Pad extension
  */
 
-import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, saveMetadata, DEFAULT_CONTEXT_SETTINGS } from '../storage.js';
-import { generateScratchPadResponse, retryMessage, regenerateMessage, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
-import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showToast, createSpinner, debounce, Icons } from './components.js';
+import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
+import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
@@ -681,6 +681,10 @@ function createMessageElement(message) {
 
     msgEl.appendChild(roleRowEl);
 
+    // For assistant messages, wrap content with swipe controls
+    const isAssistant = message.role === 'assistant';
+    const hasSwipes = isAssistant && message.swipes && message.swipes.length > 1;
+
     // Content
     const contentEl = document.createElement('div');
     contentEl.className = 'sp-message-content';
@@ -710,7 +714,7 @@ function createMessageElement(message) {
         contentEl.innerHTML = '<div class="sp-cancelled-message"><span>Generation cancelled</span></div>';
     } else {
         // Render thinking section if present (collapsible)
-        if (message.thinking && message.role === 'assistant') {
+        if (message.thinking && isAssistant) {
             const thinkingEl = document.createElement('details');
             thinkingEl.className = 'sp-thinking';
             thinkingEl.innerHTML = `
@@ -726,7 +730,64 @@ function createMessageElement(message) {
         contentEl.appendChild(mainContent);
     }
 
-    msgEl.appendChild(contentEl);
+    // Swipe wrapper for assistant messages
+    if (isAssistant) {
+        const swipeWrapper = document.createElement('div');
+        swipeWrapper.className = 'sp-swipe-wrapper';
+
+        // Left arrow
+        const leftArrow = createButton({
+            icon: Icons.chevronLeft,
+            className: 'sp-swipe-arrow sp-swipe-left',
+            ariaLabel: 'Previous swipe',
+            onClick: () => handleSwipeNavigation(message.id, -1)
+        });
+        leftArrow.disabled = !hasSwipes || (message.swipeId ?? 0) === 0;
+
+        // Right arrow
+        const isAtEnd = hasSwipes && (message.swipeId ?? 0) === (message.swipes?.length ?? 1) - 1;
+        const rightArrow = createButton({
+            icon: Icons.chevronRight,
+            className: `sp-swipe-arrow sp-swipe-right${isAtEnd || !hasSwipes ? ' sp-swipe-generate' : ''}`,
+            ariaLabel: isAtEnd || !hasSwipes ? 'Generate new swipe' : 'Next swipe',
+            onClick: () => handleSwipeNavigation(message.id, 1)
+        });
+
+        swipeWrapper.appendChild(leftArrow);
+        swipeWrapper.appendChild(contentEl);
+        swipeWrapper.appendChild(rightArrow);
+
+        // Hide arrows when only 1 swipe and message is complete
+        if (!hasSwipes && message.status === 'complete' && message.content) {
+            leftArrow.classList.add('sp-swipe-hidden');
+            rightArrow.classList.add('sp-swipe-hidden');
+        }
+
+        msgEl.appendChild(swipeWrapper);
+
+        // Swipe info row (counter + delete)
+        if (hasSwipes) {
+            const swipeInfo = document.createElement('div');
+            swipeInfo.className = 'sp-swipe-info';
+
+            const counter = document.createElement('span');
+            counter.className = 'sp-swipe-counter';
+            counter.textContent = `${(message.swipeId ?? 0) + 1} / ${message.swipes.length}`;
+            swipeInfo.appendChild(counter);
+
+            const deleteBtn = createButton({
+                icon: Icons.delete,
+                className: 'sp-swipe-delete',
+                ariaLabel: 'Delete this swipe',
+                onClick: () => handleDeleteSwipe(message.id)
+            });
+            swipeInfo.appendChild(deleteBtn);
+
+            msgEl.appendChild(swipeInfo);
+        }
+    } else {
+        msgEl.appendChild(contentEl);
+    }
 
     // Message footer with timestamp and actions
     const footerEl = document.createElement('div');
@@ -739,7 +800,7 @@ function createMessageElement(message) {
     footerEl.appendChild(timeEl);
 
     // Actions for assistant messages
-    if (message.role === 'assistant' && message.status === 'complete' && message.content) {
+    if (isAssistant && message.status === 'complete' && message.content) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
 
@@ -753,6 +814,7 @@ function createMessageElement(message) {
         actionsEl.appendChild(regenerateBtn);
 
         // Apply to Guided Swipe button (only if GG is installed)
+        // Read content at click time (stays in sync via syncSwipeToMessage)
         if (isGuidedGenerationsInstalled()) {
             const applySwipeBtn = createButton({
                 icon: Icons.swipe,
@@ -760,8 +822,10 @@ function createMessageElement(message) {
                 className: 'sp-action-btn sp-apply-swipe',
                 ariaLabel: 'Use this response as guidance for a swipe',
                 onClick: async () => {
+                    const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
+                    const content = currentMsg?.content || message.content;
                     applySwipeBtn.disabled = true;
-                    const result = await triggerGuidedSwipe(message.content);
+                    const result = await triggerGuidedSwipe(content);
                     applySwipeBtn.disabled = false;
 
                     if (result.success) {
@@ -775,16 +839,19 @@ function createMessageElement(message) {
         }
 
         // TTS speak button (only if TTS is enabled)
+        // Read content at click time (stays in sync via syncSwipeToMessage)
         if (isTTSAvailable()) {
             const speakBtn = createButton({
                 icon: Icons.speak,
                 className: 'sp-speak-btn',
                 ariaLabel: 'Speak this message',
                 onClick: async () => {
+                    const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
+                    const content = currentMsg?.content || message.content;
                     speakBtn.disabled = true;
                     speakBtn.classList.add('sp-speaking');
                     try {
-                        const success = await speakText(message.content);
+                        const success = await speakText(content);
                         if (!success) {
                             showToast('TTS failed. Check your TTS settings.', 'warning');
                         }
@@ -805,6 +872,150 @@ function createMessageElement(message) {
     msgEl.appendChild(footerEl);
 
     return msgEl;
+}
+
+/**
+ * Update a single message's swipe display in-place without full refresh
+ * @param {string} messageId Message ID
+ */
+function updateSwipeDisplay(messageId) {
+    if (!currentThreadId) return;
+    const message = getMessage(currentThreadId, messageId);
+    if (!message) return;
+
+    const msgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+    if (!msgEl) return;
+
+    // Replace the entire message element to keep things simple and consistent
+    const newMsgEl = createMessageElement(message);
+    msgEl.replaceWith(newMsgEl);
+}
+
+/**
+ * Handle swipe navigation (left/right)
+ * @param {string} messageId Message ID
+ * @param {number} direction -1 for left, 1 for right
+ */
+async function handleSwipeNavigation(messageId, direction) {
+    if (!currentThreadId) return;
+
+    const message = getMessage(currentThreadId, messageId);
+    if (!message) return;
+
+    ensureSwipeFields(message);
+    const currentIdx = message.swipeId ?? 0;
+    const newIdx = currentIdx + direction;
+
+    // Left navigation
+    if (direction === -1) {
+        if (newIdx < 0) return;
+        setActiveSwipe(currentThreadId, messageId, newIdx);
+        await saveMetadata();
+        updateSwipeDisplay(messageId);
+        return;
+    }
+
+    // Right navigation
+    if (newIdx < message.swipes.length) {
+        // Navigate to existing swipe
+        setActiveSwipe(currentThreadId, messageId, newIdx);
+        await saveMetadata();
+        updateSwipeDisplay(messageId);
+        return;
+    }
+
+    // Past the end - generate new swipe
+    await handleGenerateSwipe(messageId);
+}
+
+/**
+ * Generate a new swipe with streaming
+ * @param {string} messageId Message ID
+ */
+async function handleGenerateSwipe(messageId) {
+    if (isGenerating() || !currentThreadId) return;
+
+    const sendBtn = document.getElementById('sp-send-btn');
+    const textarea = document.getElementById('sp-message-input');
+
+    const generationId = startGeneration();
+    if (sendBtn) sendBtn.disabled = true;
+    if (textarea) {
+        textarea.disabled = true;
+        textarea.placeholder = 'Generating swipe...';
+    }
+    showGeneratingIndicator(true, () => {
+        cancelGeneration();
+        showToast('Generation cancelled', 'info');
+    });
+
+    // Disable swipe arrows during generation
+    const msgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+    if (msgEl) {
+        msgEl.querySelectorAll('.sp-swipe-arrow').forEach(btn => btn.disabled = true);
+    }
+
+    let streamingContentEl = null;
+
+    try {
+        const result = await generateSwipe(currentThreadId, messageId, (partialResponse, isComplete) => {
+            if (!streamingContentEl) {
+                // Refresh to show the pending state
+                updateSwipeDisplay(messageId);
+                const updatedMsgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+                if (updatedMsgEl) {
+                    streamingContentEl = updatedMsgEl.querySelector('.sp-message-content');
+                }
+            }
+
+            if (streamingContentEl && streamingContentEl.isConnected && !isComplete) {
+                const { cleanedResponse } = parseThinking(partialResponse);
+                streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
+                scrollToBottom();
+            }
+        });
+
+        if (!result.success && !result.cancelled) {
+            showToast(`Swipe generation failed: ${result.error}`, 'error');
+        }
+
+        updateSwipeDisplay(messageId);
+
+    } finally {
+        endGeneration(generationId);
+        if (sendBtn) sendBtn.disabled = false;
+        if (textarea) {
+            textarea.disabled = false;
+            textarea.placeholder = 'Ask a question...';
+        }
+        showGeneratingIndicator(false);
+    }
+}
+
+/**
+ * Handle deleting the current swipe
+ * @param {string} messageId Message ID
+ */
+async function handleDeleteSwipe(messageId) {
+    if (!currentThreadId) return;
+
+    const message = getMessage(currentThreadId, messageId);
+    if (!message || !message.swipes) return;
+
+    // Don't allow deleting the last swipe
+    if (message.swipes.length <= 1) {
+        showToast('Cannot delete the only response', 'warning');
+        return;
+    }
+
+    const result = deleteSwipe(currentThreadId, messageId, message.swipeId);
+    if (result.empty) {
+        showToast('Cannot delete the only response', 'warning');
+        return;
+    }
+
+    await saveMetadata();
+    updateSwipeDisplay(messageId);
 }
 
 /**
@@ -914,6 +1125,14 @@ async function handleSendMessage() {
 async function handleRetry(messageId) {
     if (isGenerating() || !currentThreadId) return;
 
+    const message = getMessage(currentThreadId, messageId);
+
+    // For messages with swipes, use the swipe-based retry path in generation.js
+    if (message?.swipes) {
+        await handleGenerateSwipe(messageId);
+        return;
+    }
+
     const sendBtn = document.getElementById('sp-send-btn');
     const textarea = document.getElementById('sp-message-input');
 
@@ -967,62 +1186,11 @@ async function handleRetry(messageId) {
 }
 
 /**
- * Handle regenerating an assistant message
+ * Handle regenerating an assistant message (now generates a new swipe)
  * @param {string} messageId Message ID
  */
 async function handleRegenerate(messageId) {
-    if (isGenerating() || !currentThreadId) return;
-
-    const sendBtn = document.getElementById('sp-send-btn');
-    const textarea = document.getElementById('sp-message-input');
-
-    // Start generation and track ID
-    const generationId = startGeneration();
-    if (sendBtn) sendBtn.disabled = true;
-    if (textarea) {
-        textarea.disabled = true;
-        textarea.placeholder = 'Regenerating...';
-    }
-    showGeneratingIndicator(true, () => {
-        cancelGeneration();
-        showToast('Generation cancelled', 'info');
-    });
-
-    // Track the new assistant message ID for streaming updates
-    let streamingMsgEl = null;
-
-    try {
-        const result = await regenerateMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
-            // On first callback, refresh to show new pending message
-            if (!streamingMsgEl) {
-                refreshConversation();
-                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
-            }
-
-            if (streamingMsgEl && streamingMsgEl.isConnected && !isComplete) {
-                // Parse out thinking tags during streaming so they don't appear as raw markdown
-                const { cleanedResponse } = parseThinking(partialResponse);
-                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-            }
-            scrollToBottom();
-        });
-
-        if (!result.success && !result.cancelled) {
-            showToast(`Regeneration failed: ${result.error}`, 'error');
-        }
-
-        refreshConversation();
-        scrollToBottom();
-
-    } finally {
-        endGeneration(generationId);
-        if (sendBtn) sendBtn.disabled = false;
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Ask a question...';
-        }
-        showGeneratingIndicator(false);
-    }
+    await handleGenerateSwipe(messageId);
 }
 
 /**

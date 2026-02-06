@@ -265,5 +265,7 @@ export const Icons = {
     stopSpeak: '⏹',
     cancel: '⏹',
     pin: '📌',
-    swipe: '👈'
+    swipe: '👈',
+    chevronLeft: '\u2039',
+    chevronRight: '\u203A'
 };

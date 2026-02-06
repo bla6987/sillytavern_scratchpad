@@ -4,7 +4,7 @@
  */
 
 import { getSettings } from './settings.js';
-import { getThread, updateThread, addMessage, updateMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings } from './storage.js';
+import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -924,6 +924,220 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 }
 
 /**
+ * Build prompt for a swipe regeneration
+ * Slices thread messages to before the target message so all swipes see the same context
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Target assistant message ID
+ * @returns {Object|null} { systemPrompt, prompt, userQuestion } or null
+ */
+function buildPromptForSwipe(threadId, messageId) {
+    const thread = getThread(threadId);
+    if (!thread) return null;
+
+    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
+    if (messageIndex === -1) return null;
+
+    // Find the preceding user message
+    let userQuestion = '';
+    for (let i = messageIndex - 1; i >= 0; i--) {
+        if (thread.messages[i].role === 'user') {
+            userQuestion = thread.messages[i].content;
+            break;
+        }
+    }
+
+    if (!userQuestion) return null;
+
+    // Create a temporary thread view with messages sliced to before the target
+    const contextThread = {
+        ...thread,
+        messages: thread.messages.slice(0, messageIndex)
+    };
+
+    // Remove the user message that prompted this response from thread history
+    // (it'll be included as the user question directly)
+    let userIdx = -1;
+    for (let i = contextThread.messages.length - 1; i >= 0; i--) {
+        if (contextThread.messages[i].role === 'user') { userIdx = i; break; }
+    }
+    if (userIdx !== -1) {
+        contextThread.messages = [
+            ...contextThread.messages.slice(0, userIdx),
+            ...contextThread.messages.slice(userIdx + 1)
+        ];
+    }
+
+    const { systemPrompt, prompt } = buildPrompt(userQuestion, contextThread, false);
+    return { systemPrompt, prompt, userQuestion };
+}
+
+/**
+ * Generate a new swipe for an existing assistant message
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Target assistant message ID
+ * @param {Function} onStream Callback for streaming updates
+ * @returns {Promise<Object>} { success, response, thinking, swipeIndex, error, cancelled }
+ */
+export async function generateSwipe(threadId, messageId, onStream = null) {
+    const context = SillyTavern.getContext();
+    const { generateRaw, eventSource, event_types } = context;
+
+    const thread = getThread(threadId);
+    if (!thread) return { success: false, error: 'Thread not found' };
+
+    const message = getMessage(threadId, messageId);
+    if (!message || message.role !== 'assistant') {
+        return { success: false, error: 'Assistant message not found' };
+    }
+
+    // Build prompt with context as-of before the target message
+    const promptData = buildPromptForSwipe(threadId, messageId);
+    if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
+
+    const { systemPrompt, prompt } = promptData;
+
+    // Initialize swipe fields and add empty swipe
+    ensureSwipeFields(message);
+    const previousSwipeId = message.swipeId;
+    addSwipe(threadId, messageId, '', null, null);
+    const newSwipeIndex = message.swipeId;
+    message.status = 'pending';
+    await saveMetadata();
+
+    try {
+        const doGenerate = async () => {
+            let fullResponse = '';
+            let structuredReasoning = '';
+
+            const useStreaming = onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED;
+
+            if (useStreaming) {
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+
+                const streamHandler = (text) => {
+                    if (activeGenerationId === generationId) {
+                        fullResponse = text;
+                        onStream(fullResponse, false);
+                    }
+                };
+
+                const reasoningHandler = (reasoning) => {
+                    if (activeGenerationId === generationId && reasoning) {
+                        structuredReasoning = reasoning;
+                    }
+                };
+
+                eventSource.on(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                if (event_types?.STREAM_REASONING_DONE) {
+                    eventSource.on(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                }
+
+                try {
+                    const result = await generateRaw({ systemPrompt, prompt });
+
+                    if (result && typeof result === 'object') {
+                        fullResponse = extractAssistantText(result, fullResponse);
+                        if (!structuredReasoning) {
+                            structuredReasoning = extractStructuredReasoning(result);
+                        }
+                    } else {
+                        fullResponse = result || fullResponse;
+                    }
+                    onStream(fullResponse, true);
+                } finally {
+                    eventSource.removeListener(event_types.STREAM_TOKEN_RECEIVED, streamHandler);
+                    if (event_types?.STREAM_REASONING_DONE) {
+                        eventSource.removeListener(event_types.STREAM_REASONING_DONE, reasoningHandler);
+                    }
+                    if (activeGenerationId === generationId) {
+                        activeGenerationId = null;
+                    }
+                }
+            } else {
+                const result = await generateRaw({ systemPrompt, prompt });
+
+                if (result && typeof result === 'object') {
+                    fullResponse = extractAssistantText(result, '');
+                    structuredReasoning = extractStructuredReasoning(result);
+                } else {
+                    fullResponse = result || '';
+                }
+
+                if (onStream) {
+                    onStream(fullResponse, true);
+                }
+            }
+
+            return { text: fullResponse, reasoning: structuredReasoning };
+        };
+
+        let result;
+        const effectiveProfile = getEffectiveProfileForThread(threadId);
+        if (effectiveProfile) {
+            result = await generateWithProfile(effectiveProfile, doGenerate);
+        } else {
+            result = await doGenerate();
+        }
+
+        const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
+        const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
+
+        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
+
+        let combinedThinking = structuredReasoning || tagParsedThinking || null;
+        if (structuredReasoning && tagParsedThinking) {
+            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
+        }
+
+        // Strip title tags from swipe responses (they shouldn't appear in regenerations)
+        const { cleanedResponse: finalResponse } = parseThreadTitle(responseWithoutThinking);
+
+        // Check cancellation
+        if (checkAndResetCancellation()) {
+            // Remove the empty swipe and restore previous
+            deleteSwipe(threadId, messageId, newSwipeIndex);
+            setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));
+            message.status = 'complete';
+            syncSwipeToMessage(message);
+            await saveMetadata();
+            return { success: false, cancelled: true, response: responseText || '' };
+        }
+
+        // Update the swipe content
+        message.swipes[newSwipeIndex] = finalResponse;
+        message.swipeThinking[newSwipeIndex] = combinedThinking;
+        message.swipeTimestamps[newSwipeIndex] = new Date().toISOString();
+        message.status = 'complete';
+        syncSwipeToMessage(message);
+        await saveMetadata();
+
+        return { success: true, response: finalResponse, thinking: combinedThinking, swipeIndex: newSwipeIndex };
+
+    } catch (error) {
+        if (checkAndResetCancellation()) {
+            deleteSwipe(threadId, messageId, newSwipeIndex);
+            setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));
+            message.status = 'complete';
+            syncSwipeToMessage(message);
+            await saveMetadata();
+            return { success: false, cancelled: true };
+        }
+
+        console.error('[ScratchPad] Swipe generation error:', error);
+
+        // Remove the failed swipe and restore previous
+        deleteSwipe(threadId, messageId, newSwipeIndex);
+        setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));
+        message.status = 'complete';
+        syncSwipeToMessage(message);
+        await saveMetadata();
+
+        return { success: false, error: error.message };
+    }
+}
+
+/**
  * Retry a failed message
  * @param {string} threadId Thread ID
  * @param {string} messageId Message ID to retry
@@ -936,6 +1150,22 @@ export async function retryMessage(threadId, messageId, onStream = null) {
         return { success: false, error: 'Thread not found' };
     }
 
+    const message = getMessage(threadId, messageId);
+    if (!message) {
+        return { success: false, error: 'Message not found' };
+    }
+
+    // If the message has swipes, remove the failed swipe and generate a new one
+    if (message.swipes && message.swipes.length > 0) {
+        const failedIdx = message.swipeId ?? (message.swipes.length - 1);
+        deleteSwipe(threadId, messageId, failedIdx);
+        message.status = 'complete';
+        syncSwipeToMessage(message);
+        await saveMetadata();
+        return await generateSwipe(threadId, messageId, onStream);
+    }
+
+    // Legacy path: no swipes
     const messageIndex = thread.messages.findIndex(m => m.id === messageId);
     if (messageIndex === -1) {
         return { success: false, error: 'Message not found' };
@@ -960,7 +1190,6 @@ export async function retryMessage(threadId, messageId, onStream = null) {
     thread.messages.splice(messageIndex, 1);
 
     // Also remove the user message so generateScratchPadResponse can re-add it
-    // Note: after splicing messageIndex, userMsgIndex is still valid since it's before messageIndex
     if (userMsgIndex !== -1) {
         thread.messages.splice(userMsgIndex, 1);
     }
@@ -972,50 +1201,14 @@ export async function retryMessage(threadId, messageId, onStream = null) {
 }
 
 /**
- * Regenerate an assistant message (removes all messages after it, creating a branch point)
+ * Regenerate an assistant message by adding a new swipe alternative
  * @param {string} threadId Thread ID
  * @param {string} messageId Message ID to regenerate
  * @param {Function} onStream Callback for streaming updates
  * @returns {Promise<Object>} { success, response, error }
  */
 export async function regenerateMessage(threadId, messageId, onStream = null) {
-    const thread = getThread(threadId);
-    if (!thread) {
-        return { success: false, error: 'Thread not found' };
-    }
-
-    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
-    if (messageIndex === -1) {
-        return { success: false, error: 'Message not found' };
-    }
-
-    // Find the user message before this assistant message
-    let userQuestion = '';
-    let userMsgIndex = -1;
-    for (let i = messageIndex - 1; i >= 0; i--) {
-        if (thread.messages[i].role === 'user') {
-            userQuestion = thread.messages[i].content;
-            userMsgIndex = i;
-            break;
-        }
-    }
-
-    if (!userQuestion) {
-        return { success: false, error: 'Could not find original question' };
-    }
-
-    // Remove the assistant message and all messages after it (branch effect)
-    thread.messages.splice(messageIndex);
-
-    // Also remove the user message so generateScratchPadResponse can re-add it
-    if (userMsgIndex !== -1) {
-        thread.messages.splice(userMsgIndex, 1);
-    }
-
-    await saveMetadata();
-
-    // Re-generate
-    return await generateScratchPadResponse(userQuestion, threadId, onStream);
+    return await generateSwipe(threadId, messageId, onStream);
 }
 
 /**

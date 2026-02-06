@@ -1494,9 +1494,130 @@ body.sp-drawer-pinned.sp-drawer-open {
     color: var(--sp-text-primary);
 }
 
-/* Touch devices - always show message actions */
+/* ========================================
+   Swipe Controls
+   ======================================== */
+.sp-swipe-wrapper {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.sp-swipe-wrapper .sp-message-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.sp-swipe-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    min-width: 1.5rem;
+    min-height: auto;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--sp-text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--sp-transition), color var(--sp-transition);
+    flex-shrink: 0;
+}
+
+.sp-message:hover .sp-swipe-arrow:not(.sp-swipe-hidden) {
+    opacity: 1;
+}
+
+.sp-swipe-arrow:hover:not(:disabled) {
+    color: var(--sp-text-primary);
+}
+
+.sp-swipe-arrow:disabled {
+    opacity: 0 !important;
+    cursor: default;
+}
+
+.sp-message:hover .sp-swipe-arrow:disabled:not(.sp-swipe-hidden) {
+    opacity: 0.3 !important;
+    cursor: not-allowed;
+}
+
+.sp-swipe-arrow.sp-swipe-hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.sp-message:hover .sp-swipe-arrow.sp-swipe-hidden {
+    opacity: 0.4;
+    pointer-events: auto;
+}
+
+.sp-swipe-arrow.sp-swipe-generate:not(:disabled) {
+    color: var(--sp-accent);
+}
+
+.sp-swipe-arrow.sp-swipe-generate:hover:not(:disabled) {
+    color: var(--sp-accent-hover);
+}
+
+.sp-swipe-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.125rem 0;
+}
+
+.sp-swipe-counter {
+    font-size: 0.6875rem;
+    color: var(--sp-text-muted);
+    user-select: none;
+}
+
+.sp-swipe-delete {
+    background: transparent;
+    border: none;
+    color: var(--sp-text-muted);
+    padding: 0.125rem 0.25rem;
+    font-size: 0.6875rem;
+    min-width: auto;
+    min-height: auto;
+    opacity: 0;
+    transition: opacity var(--sp-transition), color var(--sp-transition);
+    cursor: pointer;
+}
+
+.sp-message:hover .sp-swipe-delete {
+    opacity: 0.6;
+}
+
+.sp-swipe-delete:hover {
+    color: var(--sp-error) !important;
+    opacity: 1 !important;
+}
+
+/* Touch devices - always show swipe controls and message actions */
 @media (hover: none) and (pointer: coarse) {
     .sp-message-actions {
         opacity: 1;
+    }
+
+    .sp-swipe-arrow:not(.sp-swipe-hidden):not(:disabled) {
+        opacity: 1;
+    }
+
+    .sp-swipe-arrow:disabled:not(.sp-swipe-hidden) {
+        opacity: 0.3;
+    }
+
+    .sp-swipe-arrow.sp-swipe-hidden {
+        opacity: 0.4;
+        pointer-events: auto;
+    }
+
+    .sp-swipe-delete {
+        opacity: 0.6;
     }
 }
