@@ -215,31 +215,13 @@ export function renderConversation(container, isNewThread = false) {
             messagesContainer.appendChild(msgEl);
         });
 
-        // Render collapsible section for branched messages
-        if (thread.branchedMessages && thread.branchedMessages.length > 0) {
-            const details = document.createElement('details');
-            details.className = 'sp-branched-messages';
-
-            const summary = document.createElement('summary');
-            const count = thread.branchedMessages.length;
-            summary.textContent = `${count} message${count !== 1 ? 's' : ''} from other branches`;
-            details.appendChild(summary);
-
-            const content = document.createElement('div');
-            content.className = 'sp-branched-messages-content';
-            thread.branchedMessages.forEach(msg => {
-                const msgEl = createMessageElement(msg);
-                content.appendChild(msgEl);
-            });
-            details.appendChild(content);
-
-            messagesContainer.appendChild(details);
-        }
+        renderBranchedMessages(thread, messagesContainer);
     } else if (!isNewThread && thread) {
         const emptyState = document.createElement('div');
         emptyState.className = 'sp-empty-state';
         emptyState.innerHTML = `<p>No messages yet. Ask a question below.</p>`;
         messagesContainer.appendChild(emptyState);
+        renderBranchedMessages(thread, messagesContainer);
     } else {
         const emptyState = document.createElement('div');
         emptyState.className = 'sp-empty-state';
@@ -647,6 +629,33 @@ function getContextSettingsFromUI() {
         includeCharacterCard: includeCharCardToggle?.checked ?? true,
         includeSystemPrompt: includeSysPromptToggle?.checked || false
     };
+}
+
+/**
+ * Render collapsible section for branched (off-branch) messages
+ * @param {Object} thread Thread object with branchedMessages
+ * @param {HTMLElement} container Container to append into
+ */
+function renderBranchedMessages(thread, container) {
+    if (!thread.branchedMessages || thread.branchedMessages.length === 0) return;
+
+    const details = document.createElement('details');
+    details.className = 'sp-branched-messages';
+
+    const summary = document.createElement('summary');
+    const count = thread.branchedMessages.length;
+    summary.textContent = `${count} message${count !== 1 ? 's' : ''} from other branches`;
+    details.appendChild(summary);
+
+    const content = document.createElement('div');
+    content.className = 'sp-branched-messages-content';
+    thread.branchedMessages.forEach(msg => {
+        const msgEl = createMessageElement(msg);
+        content.appendChild(msgEl);
+    });
+    details.appendChild(content);
+
+    container.appendChild(details);
 }
 
 /**

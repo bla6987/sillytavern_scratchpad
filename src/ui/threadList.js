@@ -90,7 +90,22 @@ export function renderThreadList(container) {
 
     const threads = getThreadsForCurrentBranch();
 
-    if (threads.length === 0) {
+    // Partition threads by branch relevance
+    const currentBranchThreads = [];
+    const offBranchThreads = [];
+    const emptyThreads = [];
+
+    for (const thread of threads) {
+        if (thread.messages.length > 0) {
+            currentBranchThreads.push(thread);
+        } else if (thread.branchedMessages && thread.branchedMessages.length > 0) {
+            offBranchThreads.push(thread);
+        } else {
+            emptyThreads.push(thread);
+        }
+    }
+
+    if (currentBranchThreads.length === 0 && offBranchThreads.length === 0 && emptyThreads.length === 0) {
         const emptyState = document.createElement('div');
         emptyState.className = 'sp-empty-state';
         emptyState.innerHTML = `
@@ -100,10 +115,33 @@ export function renderThreadList(container) {
         `;
         listContainer.appendChild(emptyState);
     } else {
-        threads.forEach(thread => {
-            const threadItem = createThreadItem(thread);
-            listContainer.appendChild(threadItem);
-        });
+        // Main list: threads with messages in current branch, then empty threads
+        for (const thread of currentBranchThreads) {
+            listContainer.appendChild(createThreadItem(thread));
+        }
+        for (const thread of emptyThreads) {
+            listContainer.appendChild(createThreadItem(thread));
+        }
+
+        // Off-branch threads in collapsible section
+        if (offBranchThreads.length > 0) {
+            const details = document.createElement('details');
+            details.className = 'sp-offbranch-threads';
+
+            const summary = document.createElement('summary');
+            const count = offBranchThreads.length;
+            summary.textContent = `${count} thread${count !== 1 ? 's' : ''} from other branches`;
+            details.appendChild(summary);
+
+            const content = document.createElement('div');
+            content.className = 'sp-offbranch-threads-content';
+            for (const thread of offBranchThreads) {
+                content.appendChild(createThreadItem(thread));
+            }
+            details.appendChild(content);
+
+            listContainer.appendChild(details);
+        }
     }
 
     container.appendChild(listContainer);
