@@ -6,6 +6,7 @@
 import { getSettings } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates } from './reasoning.js';
+import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -246,13 +247,61 @@ function buildReasoningPayload(responseText, streamReasoning = null, resultReaso
 
 /**
  * Unified generation helper.
- * Uses sendGenerationRequest for the openai backend (returns raw API response
- * with structured reasoning fields), falls back to generateRaw for others.
+ * When streaming is supported and onToken is provided, uses direct SSE streaming.
+ * Otherwise uses sendGenerationRequest for the openai backend (returns raw API
+ * response with structured reasoning fields), falls back to generateRaw for others.
+ *
+ * @param {Object} options
+ * @param {string} options.systemPrompt System prompt
+ * @param {string} options.prompt User prompt
+ * @param {Function} [options.onToken] Callback for streaming tokens: (accumulatedText, false)
+ * @returns {Promise<{text: string, streamReasoning: Object|null, resultReasoning: Object|null}>}
  */
-async function callGeneration({ systemPrompt, prompt }) {
+async function callGeneration({ systemPrompt, prompt, onToken }) {
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
 
+    // Try streaming first when supported and a token callback is provided
+    if (onToken && currentApi === 'openai' && isStreamingSupported()) {
+        try {
+            const messages = [];
+            if (systemPrompt) {
+                messages.push({ role: 'system', content: context.substituteParams(systemPrompt) });
+            }
+            messages.push({ role: 'user', content: context.substituteParams(prompt) });
+
+            const controller = new AbortController();
+            activeAbortController = controller;
+
+            let accumulatedText = '';
+            let accumulatedReasoning = '';
+
+            try {
+                for await (const chunk of streamGeneration({ messages, signal: controller.signal })) {
+                    if (chunk.text) accumulatedText += chunk.text;
+                    if (chunk.reasoning) accumulatedReasoning += chunk.reasoning;
+                    if (chunk.text) {
+                        onToken(accumulatedText, false);
+                    }
+                }
+            } finally {
+                if (activeAbortController === controller) {
+                    activeAbortController = null;
+                }
+            }
+
+            const streamReasoning = buildStreamReasoning(accumulatedReasoning);
+            return { text: accumulatedText, streamReasoning, resultReasoning: null };
+        } catch (err) {
+            if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
+                throw err;
+            }
+            console.warn('[ScratchPad] Streaming failed, falling back to non-streaming:', err.message);
+            // Fall through to non-streaming path
+        }
+    }
+
+    // Non-streaming path
     if (currentApi === 'openai') {
         try {
             const messages = [];
@@ -264,19 +313,19 @@ async function callGeneration({ systemPrompt, prompt }) {
             const data = await context.sendGenerationRequest('quiet', { prompt: messages });
             const text = context.extractMessageFromData(data) || '';
             const resultReasoning = extractReasoningFromResult(data);
-            return { text, resultReasoning };
+            return { text, streamReasoning: null, resultReasoning };
         } catch (err) {
             if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
                 throw err;
             }
             console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
             const result = await context.generateRaw({ systemPrompt, prompt });
-            return { text: result || '', resultReasoning: null };
+            return { text: result || '', streamReasoning: null, resultReasoning: null };
         }
     }
 
     const result = await context.generateRaw({ systemPrompt, prompt });
-    return { text: result || '', resultReasoning: null };
+    return { text: result || '', streamReasoning: null, resultReasoning: null };
 }
 
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
@@ -309,9 +358,10 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             activeGenerationId = generationId;
             try {
-                const { text, resultReasoning } = await callGeneration({ systemPrompt: '', prompt: userPrompt });
-                if (onStream) onStream(text, true);
-                return { text, resultReasoning };
+                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                const result = await callGeneration({ systemPrompt: '', prompt: userPrompt, onToken });
+                if (onStream) onStream(result.text, true);
+                return result;
             } finally {
                 if (activeGenerationId === generationId) {
                     activeGenerationId = null;
@@ -328,7 +378,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, null, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
@@ -485,6 +535,7 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
 // Track active generation for streaming token identification
 let activeGenerationId = null;
 let isCancellationRequested = false;
+let activeAbortController = null;
 
 /**
  * Cancel any active generation
@@ -494,6 +545,12 @@ export function cancelGeneration() {
     if (activeGenerationId) {
         isCancellationRequested = true;
         activeGenerationId = null;
+
+        // Abort our own streaming request if active
+        if (activeAbortController) {
+            try { activeAbortController.abort(); } catch { /* noop */ }
+            activeAbortController = null;
+        }
 
         // Try to stop SillyTavern's generation if possible
         try {
@@ -574,9 +631,10 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             activeGenerationId = generationId;
             try {
-                const { text, resultReasoning } = await callGeneration({ systemPrompt, prompt });
-                if (onStream) onStream(text, true);
-                return { text, resultReasoning };
+                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                const result = await callGeneration({ systemPrompt, prompt, onToken });
+                if (onStream) onStream(result.text, true);
+                return result;
             } finally {
                 if (activeGenerationId === generationId) {
                     activeGenerationId = null;
@@ -594,7 +652,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, null, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
@@ -745,9 +803,10 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             activeGenerationId = generationId;
             try {
-                const { text, resultReasoning } = await callGeneration({ systemPrompt, prompt });
-                if (onStream) onStream(text, true);
-                return { text, resultReasoning };
+                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                const result = await callGeneration({ systemPrompt, prompt, onToken });
+                if (onStream) onStream(result.text, true);
+                return result;
             } finally {
                 if (activeGenerationId === generationId) {
                     activeGenerationId = null;
@@ -764,7 +823,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, null, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
