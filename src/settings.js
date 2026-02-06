@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     textSize: 14, // Default text size in pixels
     ttsEnabled: false, // Enable TTS for assistant messages
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
+    soundOnComplete: false, // Play notification sound when generation finishes
     pinnedMode: false // Pin drawer to side instead of overlay (desktop only)
 });
 
@@ -171,6 +172,12 @@ export function loadSettingsUI() {
         ttsVoiceContainer.style.display = settings.ttsEnabled ? 'block' : 'none';
     }
 
+    // Sound on completion toggle
+    const soundToggle = document.getElementById('sp_sound_on_complete');
+    if (soundToggle) {
+        soundToggle.checked = settings.soundOnComplete;
+    }
+
     // Pinned mode toggle
     const pinnedModeToggle = document.getElementById('sp_pinned_mode');
     if (pinnedModeToggle) {
@@ -315,6 +322,14 @@ export function initSettingsListeners() {
     if (ttsVoiceInput) {
         bindOnce(ttsVoiceInput, 'input', (e) => {
             updateSettings({ ttsVoice: e.target.value.trim() });
+        });
+    }
+
+    // Sound on completion toggle
+    const soundToggle = document.getElementById('sp_sound_on_complete');
+    if (soundToggle) {
+        bindOnce(soundToggle, 'change', (e) => {
+            updateSettings({ soundOnComplete: e.target.checked });
         });
     }
 

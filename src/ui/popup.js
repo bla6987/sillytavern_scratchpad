@@ -5,7 +5,7 @@
 
 import { createThread, saveMetadata, getThread } from '../storage.js';
 import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, cancelGeneration } from '../generation.js';
-import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
+import { renderMarkdown, createButton, createSpinner, showToast, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
@@ -320,6 +320,7 @@ async function generatePopupResponse(message) {
             `;
             // Store response for TTS
             currentPopupResponse = result.response;
+            playCompletionSound();
         }
 
         // Update title with thread name
@@ -398,6 +399,7 @@ async function generatePopupRawResponse(message) {
             `;
             // Store response for TTS
             currentPopupResponse = result.response;
+            playCompletionSound();
         }
 
         const thread = getThread(currentPopupThreadId);

@@ -2,6 +2,8 @@
  * Shared UI components for Scratch Pad extension
  */
 
+import { getSettings } from '../settings.js';
+
 // Lazy-initialized to avoid errors if SillyTavern isn't ready at module load time
 let _converter = null;
 let _DOMPurify = null;
@@ -243,6 +245,20 @@ export function createSpinner() {
         <div class="sp-spinner-dot"></div>
     `;
     return spinner;
+}
+
+/**
+ * Play a notification sound when generation completes (if enabled)
+ */
+export function playCompletionSound() {
+    if (!getSettings().soundOnComplete) return;
+    const audio = document.getElementById('audio_message_sound');
+    if (audio instanceof HTMLAudioElement) {
+        audio.volume = 0.8;
+        audio.pause();
+        audio.currentTime = 0;
+        audio.play();
+    }
 }
 
 /**

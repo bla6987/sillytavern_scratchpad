@@ -4,7 +4,7 @@
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
 import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
-import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons } from './components.js';
+import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
@@ -1014,6 +1014,10 @@ async function handleGenerateSwipe(messageId) {
             showToast(`Swipe generation failed: ${result.error}`, 'error');
         }
 
+        if (result.success) {
+            playCompletionSound();
+        }
+
         updateSwipeDisplay(messageId);
 
     } finally {
@@ -1129,6 +1133,10 @@ async function handleSendMessage() {
             showToast(`Error: ${result.error}`, 'error');
         }
 
+        if (result.success) {
+            playCompletionSound();
+        }
+
         // Refresh conversation to show final state
         refreshConversation();
         // Ensure we scroll to show the new messages after refresh
@@ -1204,6 +1212,10 @@ async function handleRetry(messageId) {
 
         if (!result.success && !result.cancelled) {
             showToast(`Retry failed: ${result.error}`, 'error');
+        }
+
+        if (result.success) {
+            playCompletionSound();
         }
 
         refreshConversation();
