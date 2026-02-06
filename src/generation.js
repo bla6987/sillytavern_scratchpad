@@ -5,6 +5,7 @@
 
 import { getSettings } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
+import { parseThinkingFromText, extractReasoningFromResult, normalizeReasoningEvent, mergeReasoningCandidates } from './reasoning.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -133,21 +134,7 @@ export function parseThreadTitle(response) {
  * @returns {Object} { thinking: string|null, cleanedResponse: string }
  */
 export function parseThinking(response) {
-    if (!response) return { thinking: null, cleanedResponse: '' };
-
-    // Match <thinking>...</thinking> or <think>...</think> (case insensitive, multiline)
-    const thinkingRegex = /<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/gi;
-
-    let thinking = null;
-    let cleanedResponse = response;
-
-    // Collect all thinking blocks
-    const matches = [...response.matchAll(thinkingRegex)];
-    if (matches.length > 0) {
-        thinking = matches.map(m => m[1].trim()).join('\n\n');
-        cleanedResponse = response.replace(thinkingRegex, '').trim();
-    }
-
+    const { thinking, cleanedResponse } = parseThinkingFromText(response);
     return { thinking, cleanedResponse };
 }
 
@@ -193,48 +180,6 @@ function contentBlocksToAssistantText(blocks) {
     return parts.join('').trim();
 }
 
-function contentBlocksToReasoning(blocks) {
-    if (!Array.isArray(blocks)) return '';
-
-    const parts = [];
-    for (const b of blocks) {
-        if (!b) continue;
-        if (typeof b !== 'object') continue;
-
-        const type = typeof b.type === 'string' ? b.type : '';
-        if (!type) continue;
-
-        // Anthropic-style reasoning blocks.
-        if (type === 'thinking' || type === 'reasoning' || type === 'reasoning.text') {
-            const t = normalizeTextContent(b.thinking) || normalizeTextContent(b.reasoning) || normalizeTextContent(b.text) || normalizeTextContent(b.summary);
-            if (t) parts.push(t.trim());
-        }
-    }
-
-    return parts.join('\n\n').trim();
-}
-
-function reasoningDetailsToString(details) {
-    if (!Array.isArray(details)) return '';
-
-    const parts = [];
-    for (const item of details) {
-        if (!item) continue;
-        if (item.type === 'reasoning.encrypted') continue;
-
-        if (typeof item.text === 'string' && item.text.trim()) {
-            parts.push(item.text.trim());
-            continue;
-        }
-
-        if (typeof item.summary === 'string' && item.summary.trim()) {
-            parts.push(item.summary.trim());
-        }
-    }
-
-    return parts.join('\n\n').trim();
-}
-
 function extractAssistantText(result, fallback = '') {
     if (!result) return fallback;
     if (typeof result === 'string') return result;
@@ -253,57 +198,6 @@ function extractAssistantText(result, fallback = '') {
     if (directMsgText) return directMsgText;
 
     return fallback;
-}
-
-function extractStructuredReasoning(result) {
-    if (!result) return '';
-    if (typeof result === 'string') return '';
-
-    const directCandidates = [
-        result.thinking,
-        result.reasoning,
-        result.extended_thinking,
-        result.extra?.thinking,
-        result.extra?.reasoning,
-    ];
-
-    for (const c of directCandidates) {
-        if (typeof c === 'string' && c.trim()) return c.trim();
-    }
-
-    const detailsCandidates = [
-        result.reasoning_details,
-        result.extra?.reasoning_details,
-        result.choices?.[0]?.message?.reasoning_details,
-        result.choices?.[0]?.delta?.reasoning_details,
-    ];
-
-    for (const d of detailsCandidates) {
-        const text = reasoningDetailsToString(d);
-        if (text) return text;
-    }
-
-    const contentCandidates = [
-        result.choices?.[0]?.message?.content,
-        result.choices?.[0]?.delta?.content,
-        result.message?.content,
-    ];
-
-    for (const c of contentCandidates) {
-        const text = contentBlocksToReasoning(c);
-        if (text) return text;
-    }
-
-    const stringCandidates = [
-        result.choices?.[0]?.message?.reasoning,
-        result.choices?.[0]?.delta?.reasoning,
-    ];
-
-    for (const c of stringCandidates) {
-        if (typeof c === 'string' && c.trim()) return c.trim();
-    }
-
-    return '';
 }
 
 /**
@@ -397,6 +291,21 @@ export function getEffectiveProfileForThread(threadId) {
     return null;
 }
 
+function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null) {
+    const parsed = parseThinkingFromText(responseText);
+    const merged = mergeReasoningCandidates(streamReasoning, resultReasoning, parsed.reasoning);
+    return {
+        thinking: merged.text || null,
+        reasoningMeta: {
+            state: merged.state,
+            durationMs: merged.durationMs,
+            source: merged.source,
+            signature: merged.signature,
+        },
+        cleanedResponse: parsed.cleanedResponse,
+    };
+}
+
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
     const context = SillyTavern.getContext();
     const { generateRaw, eventSource, event_types } = context;
@@ -426,7 +335,8 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
     try {
         const doGenerate = async () => {
             let fullResponse = '';
-            let structuredReasoning = '';
+            let streamReasoning = null;
+            let resultReasoning = null;
 
             if (onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED) {
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -439,9 +349,9 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                     }
                 };
 
-                const reasoningHandler = (reasoning) => {
-                    if (activeGenerationId === generationId && reasoning) {
-                        structuredReasoning = reasoning;
+                const reasoningHandler = (...args) => {
+                    if (activeGenerationId === generationId) {
+                        streamReasoning = normalizeReasoningEvent(...args);
                     }
                 };
 
@@ -460,10 +370,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                     // Handle result - can be string or object with thinking/reasoning
                     if (result && typeof result === 'object') {
                         fullResponse = extractAssistantText(result, fullResponse);
-                        // Capture thinking from multiple possible locations (Anthropic, OpenAI, etc.)
-                        if (!structuredReasoning) {
-                            structuredReasoning = extractStructuredReasoning(result);
-                        }
+                        resultReasoning = extractReasoningFromResult(result);
                     } else {
                         fullResponse = result || fullResponse;
                     }
@@ -486,7 +393,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                 // Handle result - can be string or object with thinking/reasoning
                 if (result && typeof result === 'object') {
                     fullResponse = extractAssistantText(result, '');
-                    structuredReasoning = extractStructuredReasoning(result);
+                    resultReasoning = extractReasoningFromResult(result);
                 } else {
                     fullResponse = result || '';
                 }
@@ -496,7 +403,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                 }
             }
 
-            return { text: fullResponse, reasoning: structuredReasoning };
+            return { text: fullResponse, streamReasoning, resultReasoning };
         };
 
         let result;
@@ -507,22 +414,21 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             result = await doGenerate();
         }
 
-        // Extract text and reasoning from result (which should be { text, reasoning } from doGenerate)
+        // Extract text and normalized reasoning from result
         const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
-        const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
-
-        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
-
-        let combinedThinking = structuredReasoning || tagParsedThinking || null;
-        if (structuredReasoning && tagParsedThinking) {
-            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
-        }
+        const streamReasoning = (result && typeof result === 'object') ? (result.streamReasoning || null) : null;
+        const resultReasoning = (result && typeof result === 'object') ? (result.resultReasoning || null) : null;
+        const reasoningPayload = buildReasoningPayload(responseText, streamReasoning, resultReasoning);
+        const combinedThinking = reasoningPayload.thinking;
+        const reasoningMeta = reasoningPayload.reasoningMeta;
+        const responseWithoutThinking = reasoningPayload.cleanedResponse;
 
         // Check if generation was cancelled
         if (checkAndResetCancellation()) {
             updateMessage(threadId, assistantMessage.id, {
                 content: responseText || '',
                 thinking: combinedThinking,
+                reasoningMeta,
                 noContext: true,
                 status: responseText ? 'complete' : 'cancelled'
             });
@@ -533,6 +439,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         updateMessage(threadId, assistantMessage.id, {
             content: responseWithoutThinking,
             thinking: combinedThinking,
+            reasoningMeta,
             noContext: true,
             status: 'complete'
         });
@@ -543,7 +450,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
 
         await saveMetadata();
 
-        return { success: true, response: responseWithoutThinking, thinking: combinedThinking };
+        return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta };
 
     } catch (error) {
         // Check if this was a cancellation
@@ -718,7 +625,7 @@ function checkAndResetCancellation() {
  * @param {string} userQuestion User's question
  * @param {string} threadId Thread ID
  * @param {Function} onStream Callback for streaming updates
- * @returns {Promise<Object>} { success, response, error }
+ * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, error }
  */
 export async function generateScratchPadResponse(userQuestion, threadId, onStream = null) {
     const context = SillyTavern.getContext();
@@ -757,7 +664,8 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         // Generation function
         const doGenerate = async () => {
             let fullResponse = '';
-            let structuredReasoning = '';
+            let streamReasoning = null;
+            let resultReasoning = null;
 
             const useStreaming = onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED;
 
@@ -776,9 +684,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 };
 
                 // Handler for structured reasoning (Anthropic extended thinking, DeepSeek, Gemini, etc.)
-                const reasoningHandler = (reasoning) => {
-                    if (activeGenerationId === generationId && reasoning) {
-                        structuredReasoning = reasoning;
+                const reasoningHandler = (...args) => {
+                    if (activeGenerationId === generationId) {
+                        streamReasoning = normalizeReasoningEvent(...args);
                     }
                 };
 
@@ -796,10 +704,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                     // Handle result - can be string or object with thinking/reasoning
                     if (result && typeof result === 'object') {
                         fullResponse = extractAssistantText(result, fullResponse);
-                        // Capture thinking from multiple possible locations (Anthropic, OpenAI, etc.)
-                        if (!structuredReasoning) {
-                            structuredReasoning = extractStructuredReasoning(result);
-                        }
+                        resultReasoning = extractReasoningFromResult(result);
                     } else {
                         fullResponse = result || fullResponse;
                     }
@@ -824,7 +729,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 // Handle result - can be string or object with thinking/reasoning
                 if (result && typeof result === 'object') {
                     fullResponse = extractAssistantText(result, '');
-                    structuredReasoning = extractStructuredReasoning(result);
+                    resultReasoning = extractReasoningFromResult(result);
                 } else {
                     fullResponse = result || '';
                 }
@@ -835,7 +740,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 }
             }
 
-            return { text: fullResponse, reasoning: structuredReasoning };
+            return { text: fullResponse, streamReasoning, resultReasoning };
         };
 
         // Execute with profile switching if enabled
@@ -847,20 +752,14 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             result = await doGenerate();
         }
 
-        // Extract text and structured reasoning from result
+        // Extract text and normalized reasoning from result
         const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
-        const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
-
-        // Parse thinking from response text (for models using XML tags like <think>)
-        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
-
-        // Merge structured reasoning (Anthropic, Gemini, DeepSeek) with tag-parsed reasoning
-        // Prefer structured reasoning if available, as it's the native format
-        let combinedThinking = structuredReasoning || tagParsedThinking || null;
-        if (structuredReasoning && tagParsedThinking) {
-            // If we have both, combine them (unlikely but possible)
-            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
-        }
+        const streamReasoning = (result && typeof result === 'object') ? (result.streamReasoning || null) : null;
+        const resultReasoning = (result && typeof result === 'object') ? (result.resultReasoning || null) : null;
+        const reasoningPayload = buildReasoningPayload(responseText, streamReasoning, resultReasoning);
+        const combinedThinking = reasoningPayload.thinking;
+        const reasoningMeta = reasoningPayload.reasoningMeta;
+        const responseWithoutThinking = reasoningPayload.cleanedResponse;
 
         // Always strip titles from responses; only update thread name on first message
         const { title, cleanedResponse } = parseThreadTitle(responseWithoutThinking);
@@ -878,6 +777,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             updateMessage(threadId, assistantMessage.id, {
                 content: responseText || '',
                 thinking: combinedThinking,
+                reasoningMeta,
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
@@ -888,12 +788,13 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         updateMessage(threadId, assistantMessage.id, {
             content: finalResponse,
             thinking: combinedThinking,
+            reasoningMeta,
             status: 'complete'
         });
 
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta };
 
     } catch (error) {
         if (checkAndResetCancellation()) {
@@ -976,7 +877,7 @@ function buildPromptForSwipe(threadId, messageId) {
  * @param {string} threadId Thread ID
  * @param {string} messageId Target assistant message ID
  * @param {Function} onStream Callback for streaming updates
- * @returns {Promise<Object>} { success, response, thinking, swipeIndex, error, cancelled }
+ * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, swipeIndex, error, cancelled }
  */
 export async function generateSwipe(threadId, messageId, onStream = null) {
     const context = SillyTavern.getContext();
@@ -999,7 +900,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     // Initialize swipe fields and add empty swipe
     ensureSwipeFields(message);
     const previousSwipeId = message.swipeId;
-    addSwipe(threadId, messageId, '', null, null);
+    addSwipe(threadId, messageId, '', null, null, null);
     const newSwipeIndex = message.swipeId;
     message.status = 'pending';
     await saveMetadata();
@@ -1007,7 +908,8 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     try {
         const doGenerate = async () => {
             let fullResponse = '';
-            let structuredReasoning = '';
+            let streamReasoning = null;
+            let resultReasoning = null;
 
             const useStreaming = onStream && eventSource && event_types?.STREAM_TOKEN_RECEIVED;
 
@@ -1022,9 +924,9 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
                     }
                 };
 
-                const reasoningHandler = (reasoning) => {
-                    if (activeGenerationId === generationId && reasoning) {
-                        structuredReasoning = reasoning;
+                const reasoningHandler = (...args) => {
+                    if (activeGenerationId === generationId) {
+                        streamReasoning = normalizeReasoningEvent(...args);
                     }
                 };
 
@@ -1038,9 +940,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
 
                     if (result && typeof result === 'object') {
                         fullResponse = extractAssistantText(result, fullResponse);
-                        if (!structuredReasoning) {
-                            structuredReasoning = extractStructuredReasoning(result);
-                        }
+                        resultReasoning = extractReasoningFromResult(result);
                     } else {
                         fullResponse = result || fullResponse;
                     }
@@ -1059,7 +959,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
 
                 if (result && typeof result === 'object') {
                     fullResponse = extractAssistantText(result, '');
-                    structuredReasoning = extractStructuredReasoning(result);
+                    resultReasoning = extractReasoningFromResult(result);
                 } else {
                     fullResponse = result || '';
                 }
@@ -1069,7 +969,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
                 }
             }
 
-            return { text: fullResponse, reasoning: structuredReasoning };
+            return { text: fullResponse, streamReasoning, resultReasoning };
         };
 
         let result;
@@ -1081,14 +981,12 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         }
 
         const responseText = (result && typeof result === 'object') ? (result.text || '') : (result || '');
-        const structuredReasoning = (result && typeof result === 'object') ? (result.reasoning || '') : '';
-
-        const { thinking: tagParsedThinking, cleanedResponse: responseWithoutThinking } = parseThinking(responseText);
-
-        let combinedThinking = structuredReasoning || tagParsedThinking || null;
-        if (structuredReasoning && tagParsedThinking) {
-            combinedThinking = `${structuredReasoning}\n\n---\n\n${tagParsedThinking}`;
-        }
+        const streamReasoning = (result && typeof result === 'object') ? (result.streamReasoning || null) : null;
+        const resultReasoning = (result && typeof result === 'object') ? (result.resultReasoning || null) : null;
+        const reasoningPayload = buildReasoningPayload(responseText, streamReasoning, resultReasoning);
+        const combinedThinking = reasoningPayload.thinking;
+        const reasoningMeta = reasoningPayload.reasoningMeta;
+        const responseWithoutThinking = reasoningPayload.cleanedResponse;
 
         // Strip title tags from swipe responses (they shouldn't appear in regenerations)
         const { cleanedResponse: finalResponse } = parseThreadTitle(responseWithoutThinking);
@@ -1107,12 +1005,13 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         // Update the swipe content
         message.swipes[newSwipeIndex] = finalResponse;
         message.swipeThinking[newSwipeIndex] = combinedThinking;
+        message.swipeReasoningMeta[newSwipeIndex] = reasoningMeta;
         message.swipeTimestamps[newSwipeIndex] = new Date().toISOString();
         message.status = 'complete';
         syncSwipeToMessage(message);
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking, swipeIndex: newSwipeIndex };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex };
 
     } catch (error) {
         if (checkAndResetCancellation()) {
@@ -1353,4 +1252,3 @@ Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
         return { success: false, error: error.message };
     }
 }
-

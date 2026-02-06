@@ -1366,6 +1366,16 @@ body.sp-drawer-pinned.sp-drawer-open {
     margin-bottom: 0;
 }
 
+.sp-thinking-hidden {
+    background: color-mix(in srgb, var(--sp-bg-secondary) 80%, var(--sp-border) 20%);
+    border-left: 3px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    color: var(--sp-text-secondary);
+    font-size: 0.8125rem;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.75rem;
+}
+
 /* ========================================
    Branched Messages (Collapsible)
    ======================================== */

@@ -8,6 +8,7 @@ import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showCo
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
+import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
@@ -658,6 +659,38 @@ function renderBranchedMessages(thread, container) {
     container.appendChild(details);
 }
 
+function formatReasoningDuration(durationMs) {
+    const duration = Number(durationMs);
+    if (!Number.isFinite(duration) || duration <= 0) return '';
+    if (duration >= 10000) return `${Math.round(duration / 1000)}s`;
+    return `${(duration / 1000).toFixed(1)}s`;
+}
+
+function appendReasoningSection(container, thinking, reasoningMeta) {
+    const normalizedMeta = normalizeReasoningMeta(reasoningMeta, thinking);
+
+    if (thinking) {
+        const thinkingEl = document.createElement('details');
+        thinkingEl.className = 'sp-thinking';
+        thinkingEl.innerHTML = `
+            <summary>💭 Model Thinking</summary>
+            <div class="sp-thinking-content">${renderMarkdown(thinking)}</div>
+        `;
+        container.appendChild(thinkingEl);
+        return;
+    }
+
+    if (normalizedMeta.state === REASONING_STATE.HIDDEN) {
+        const hiddenEl = document.createElement('div');
+        hiddenEl.className = 'sp-thinking-hidden';
+        const duration = formatReasoningDuration(normalizedMeta.durationMs);
+        hiddenEl.textContent = duration
+            ? `Model reasoning hidden by provider (${duration})`
+            : 'Model reasoning hidden by provider';
+        container.appendChild(hiddenEl);
+    }
+}
+
 /**
  * Create a message element
  * @param {Object} message Message object
@@ -722,15 +755,8 @@ function createMessageElement(message) {
     } else if (message.status === 'cancelled') {
         contentEl.innerHTML = '<div class="sp-cancelled-message"><span>Generation cancelled</span></div>';
     } else {
-        // Render thinking section if present (collapsible)
-        if (message.thinking && isAssistant) {
-            const thinkingEl = document.createElement('details');
-            thinkingEl.className = 'sp-thinking';
-            thinkingEl.innerHTML = `
-                <summary>💭 Model Thinking</summary>
-                <div class="sp-thinking-content">${renderMarkdown(message.thinking)}</div>
-            `;
-            contentEl.appendChild(thinkingEl);
+        if (isAssistant) {
+            appendReasoningSection(contentEl, message.thinking, message.reasoningMeta);
         }
 
         // Render main content

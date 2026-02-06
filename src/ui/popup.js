@@ -8,6 +8,7 @@ import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, c
 import { renderMarkdown, createButton, createSpinner, showToast, Icons } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
+import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 
 let isPopupGenerating = false;
 
@@ -232,6 +233,35 @@ function updatePopupActionButtons(isGenerating, hasResponse = false) {
     }
 }
 
+function formatReasoningDuration(durationMs) {
+    const duration = Number(durationMs);
+    if (!Number.isFinite(duration) || duration <= 0) return '';
+    if (duration >= 10000) return `${Math.round(duration / 1000)}s`;
+    return `${(duration / 1000).toFixed(1)}s`;
+}
+
+function renderReasoningHtml(thinking, reasoningMeta) {
+    if (thinking) {
+        return `
+            <details class="sp-thinking">
+                <summary>💭 Model Thinking</summary>
+                <div class="sp-thinking-content">${renderMarkdown(thinking)}</div>
+            </details>
+        `;
+    }
+
+    const normalizedMeta = normalizeReasoningMeta(reasoningMeta, thinking);
+    if (normalizedMeta.state === REASONING_STATE.HIDDEN) {
+        const duration = formatReasoningDuration(normalizedMeta.durationMs);
+        const hiddenText = duration
+            ? `Model reasoning hidden by provider (${duration})`
+            : 'Model reasoning hidden by provider';
+        return `<div class="sp-thinking-hidden">${hiddenText}</div>`;
+    }
+
+    return '';
+}
+
 /**
  * Generate response for popup
  * @param {string} message User's message
@@ -281,15 +311,7 @@ async function generatePopupResponse(message) {
             `;
         } else {
             // Render final response with thinking if present
-            let thinkingHtml = '';
-            if (result.thinking) {
-                thinkingHtml = `
-                    <details class="sp-thinking">
-                        <summary>💭 Model Thinking</summary>
-                        <div class="sp-thinking-content">${renderMarkdown(result.thinking)}</div>
-                    </details>
-                `;
-            }
+            const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
             contentEl.innerHTML = `
                 <div class="sp-popup-response">
                     ${thinkingHtml}
@@ -367,15 +389,7 @@ async function generatePopupRawResponse(message) {
                 </div>
             `;
         } else {
-            let thinkingHtml = '';
-            if (result.thinking) {
-                thinkingHtml = `
-                    <details class="sp-thinking">
-                        <summary>💭 Model Thinking</summary>
-                        <div class="sp-thinking-content">${renderMarkdown(result.thinking)}</div>
-                    </details>
-                `;
-            }
+            const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
             contentEl.innerHTML = `
                 <div class="sp-popup-response">
                     ${thinkingHtml}

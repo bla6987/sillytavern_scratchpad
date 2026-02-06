@@ -8,6 +8,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Threaded Discussions**: Organize different lines of inquiry into separate threads
 - **Full Context**: AI responses are informed by your chat history and character information
 - **Streaming Responses**: Watch AI responses generate in real-time
+- **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats
 - **Mobile Friendly**: Full-screen drawer UI with touch support and bottom sheet popups
 - **Persistent Storage**: Threads are saved with your chat and inherit properly when branching
 - **Quick Access**: Use `/sp <question>` for quick popup responses
@@ -100,7 +101,10 @@ When you ask a question in the Scratch Pad:
 
 3. The AI generates a response as a neutral assistant, not as any character
 
-4. The conversation is stored in the chat metadata, separate from the main chat
+4. If the provider returns reasoning, Scratch Pad stores and shows it in a collapsible "Model Thinking" section.  
+   For providers/models that hide reasoning text, Scratch Pad shows a "reasoning hidden by provider" indicator instead.
+
+5. The conversation is stored in the chat metadata, separate from the main chat
 
 **Important**: Scratch pad content is never injected into the main chat's context. Your roleplay remains unaffected.
 

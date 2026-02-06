@@ -3,6 +3,8 @@
  * Handles chatMetadata operations and thread CRUD
  */
 
+import { createReasoningMeta, normalizeReasoningMeta } from './reasoning.js';
+
 const MODULE_NAME = 'scratchPad';
 
 /**
@@ -228,6 +230,11 @@ export function addMessage(threadId, role, content, status = 'complete', chatMes
         chatMessageIndex: messageIndex
     };
 
+    if (role === 'assistant') {
+        message.thinking = null;
+        message.reasoningMeta = createReasoningMeta();
+    }
+
     thread.messages.push(message);
     thread.updatedAt = getTimestamp();
 
@@ -366,12 +373,62 @@ export function getThreadForCurrentBranch(threadId) {
  */
 export function ensureSwipeFields(message) {
     if (!message || message.role !== 'assistant') return message;
-    if (message.swipes) return message; // Already initialized
 
-    message.swipes = [message.content || ''];
-    message.swipeThinking = [message.thinking || null];
-    message.swipeTimestamps = [message.timestamp || getTimestamp()];
-    message.swipeId = 0;
+    if (!Array.isArray(message.swipes) || message.swipes.length === 0) {
+        message.swipes = [message.content || ''];
+    }
+
+    if (!Array.isArray(message.swipeThinking)) {
+        message.swipeThinking = message.swipes.map(() => null);
+    }
+    while (message.swipeThinking.length < message.swipes.length) {
+        message.swipeThinking.push(null);
+    }
+    if (message.swipeThinking.length > message.swipes.length) {
+        message.swipeThinking = message.swipeThinking.slice(0, message.swipes.length);
+    }
+
+    if (!Array.isArray(message.swipeTimestamps)) {
+        message.swipeTimestamps = message.swipes.map(() => message.timestamp || getTimestamp());
+    }
+    while (message.swipeTimestamps.length < message.swipes.length) {
+        message.swipeTimestamps.push(getTimestamp());
+    }
+    if (message.swipeTimestamps.length > message.swipes.length) {
+        message.swipeTimestamps = message.swipeTimestamps.slice(0, message.swipes.length);
+    }
+
+    if (!Number.isInteger(message.swipeId)) {
+        message.swipeId = 0;
+    }
+    message.swipeId = Math.max(0, Math.min(message.swipeId, message.swipes.length - 1));
+
+    if (!message.swipeThinking[message.swipeId] && message.thinking) {
+        message.swipeThinking[message.swipeId] = message.thinking;
+    }
+
+    if (!Array.isArray(message.swipeReasoningMeta)) {
+        message.swipeReasoningMeta = message.swipeThinking.map(() => null);
+    }
+    while (message.swipeReasoningMeta.length < message.swipes.length) {
+        message.swipeReasoningMeta.push(null);
+    }
+    if (message.swipeReasoningMeta.length > message.swipes.length) {
+        message.swipeReasoningMeta = message.swipeReasoningMeta.slice(0, message.swipes.length);
+    }
+
+    message.swipeReasoningMeta = message.swipeReasoningMeta.map((meta, idx) => {
+        const fallback = message.swipeThinking[idx] || null;
+        if (idx === message.swipeId && message.reasoningMeta) {
+            return normalizeReasoningMeta(message.reasoningMeta, fallback);
+        }
+        return normalizeReasoningMeta(meta, fallback);
+    });
+
+    message.reasoningMeta = normalizeReasoningMeta(
+        message.swipeReasoningMeta[message.swipeId],
+        message.swipeThinking[message.swipeId] || null,
+    );
 
     return message;
 }
@@ -386,6 +443,7 @@ export function syncSwipeToMessage(message) {
     const idx = message.swipeId ?? 0;
     message.content = message.swipes[idx] ?? '';
     message.thinking = message.swipeThinking?.[idx] ?? null;
+    message.reasoningMeta = normalizeReasoningMeta(message.swipeReasoningMeta?.[idx], message.thinking);
     message.timestamp = message.swipeTimestamps?.[idx] ?? message.timestamp;
 }
 
@@ -396,9 +454,10 @@ export function syncSwipeToMessage(message) {
  * @param {string} content Swipe content
  * @param {string|null} thinking Thinking content
  * @param {string} timestamp ISO timestamp
+ * @param {Object|null} reasoningMeta Reasoning metadata
  * @returns {Object|null} Updated message or null
  */
-export function addSwipe(threadId, messageId, content, thinking = null, timestamp = null) {
+export function addSwipe(threadId, messageId, content, thinking = null, timestamp = null, reasoningMeta = null) {
     const message = getMessage(threadId, messageId);
     if (!message) return null;
 
@@ -407,6 +466,7 @@ export function addSwipe(threadId, messageId, content, thinking = null, timestam
     const ts = timestamp || getTimestamp();
     message.swipes.push(content);
     message.swipeThinking.push(thinking);
+    message.swipeReasoningMeta.push(normalizeReasoningMeta(reasoningMeta, thinking));
     message.swipeTimestamps.push(ts);
     message.swipeId = message.swipes.length - 1;
 
@@ -427,7 +487,10 @@ export function addSwipe(threadId, messageId, content, thinking = null, timestam
  */
 export function setActiveSwipe(threadId, messageId, index) {
     const message = getMessage(threadId, messageId);
-    if (!message || !message.swipes) return null;
+    if (!message) return null;
+
+    ensureSwipeFields(message);
+    if (!message.swipes) return null;
 
     if (index < 0 || index >= message.swipes.length) return null;
 
@@ -446,12 +509,18 @@ export function setActiveSwipe(threadId, messageId, index) {
  */
 export function deleteSwipe(threadId, messageId, index) {
     const message = getMessage(threadId, messageId);
-    if (!message || !message.swipes) return { empty: true };
+    if (!message) return { empty: true };
+
+    ensureSwipeFields(message);
+    if (!message.swipes) return { empty: true };
 
     if (index < 0 || index >= message.swipes.length) return message;
 
     message.swipes.splice(index, 1);
     message.swipeThinking.splice(index, 1);
+    if (Array.isArray(message.swipeReasoningMeta)) {
+        message.swipeReasoningMeta.splice(index, 1);
+    }
     message.swipeTimestamps.splice(index, 1);
 
     if (message.swipes.length === 0) {
