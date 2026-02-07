@@ -260,6 +260,7 @@ function buildReasoningPayload(responseText, streamReasoning = null, resultReaso
 async function callGeneration({ systemPrompt, prompt, onToken }) {
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
+    let generationResult;
 
     // Try streaming first when supported and a token callback is provided
     if (onToken && currentApi === 'openai' && isStreamingSupported()) {
@@ -291,7 +292,7 @@ async function callGeneration({ systemPrompt, prompt, onToken }) {
             }
 
             const streamReasoning = buildStreamReasoning(accumulatedReasoning);
-            return { text: accumulatedText, streamReasoning, resultReasoning: null };
+            generationResult = { text: accumulatedText, streamReasoning, resultReasoning: null };
         } catch (err) {
             if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
                 throw err;
@@ -302,7 +303,7 @@ async function callGeneration({ systemPrompt, prompt, onToken }) {
     }
 
     // Non-streaming path
-    if (currentApi === 'openai') {
+    if (!generationResult && currentApi === 'openai') {
         try {
             const messages = [];
             if (systemPrompt) {
@@ -313,19 +314,46 @@ async function callGeneration({ systemPrompt, prompt, onToken }) {
             const data = await context.sendGenerationRequest('quiet', { prompt: messages });
             const text = context.extractMessageFromData(data) || '';
             const resultReasoning = extractReasoningFromResult(data);
-            return { text, streamReasoning: null, resultReasoning };
+            generationResult = { text, streamReasoning: null, resultReasoning };
         } catch (err) {
             if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
                 throw err;
             }
             console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
             const result = await context.generateRaw({ systemPrompt, prompt });
-            return { text: result || '', streamReasoning: null, resultReasoning: null };
+            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
         }
     }
 
-    const result = await context.generateRaw({ systemPrompt, prompt });
-    return { text: result || '', streamReasoning: null, resultReasoning: null };
+    if (!generationResult) {
+        const result = await context.generateRaw({ systemPrompt, prompt });
+        generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+    }
+
+    // Report token usage to Token Usage Tracker
+    try {
+        const tracker = window['TokenUsageTracker'];
+        if (tracker) {
+            const inputText = (systemPrompt || '') + '\n' + (prompt || '');
+            const inputTokens = await tracker.countTokens(inputText);
+            const outputTokens = await tracker.countTokens(generationResult.text || '');
+
+            let reasoningTokens = 0;
+            const reasoningText = generationResult.streamReasoning?.text || '';
+            if (reasoningText) {
+                reasoningTokens = await tracker.countTokens(reasoningText);
+            }
+
+            const modelId = tracker.getCurrentModelId();
+            const sourceId = tracker.getCurrentSourceId();
+            const chatId = SillyTavern.getContext().getCurrentChatId?.() || null;
+            tracker.recordUsage(inputTokens, outputTokens, chatId, modelId, sourceId, reasoningTokens);
+        }
+    } catch (e) {
+        console.warn('[ScratchPad] Token usage reporting failed:', e);
+    }
+
+    return generationResult;
 }
 
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
