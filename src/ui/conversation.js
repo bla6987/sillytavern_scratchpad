@@ -848,6 +848,24 @@ function createMessageElement(message) {
         });
         actionsEl.appendChild(regenerateBtn);
 
+        // Copy button
+        const copyBtn = createButton({
+            icon: Icons.copy,
+            className: 'sp-action-btn',
+            ariaLabel: 'Copy to clipboard',
+            onClick: async () => {
+                const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
+                const content = currentMsg?.content || message.content;
+                try {
+                    await navigator.clipboard.writeText(content);
+                    showToast('Copied to clipboard', 'success');
+                } catch {
+                    showToast('Failed to copy', 'error');
+                }
+            }
+        });
+        actionsEl.appendChild(copyBtn);
+
         // Apply to Guided Swipe button (only if GG is installed)
         // Read content at click time (stays in sync via syncSwipeToMessage)
         if (isGuidedGenerationsInstalled()) {

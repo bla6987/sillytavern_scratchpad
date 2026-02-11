@@ -283,5 +283,6 @@ export const Icons = {
     pin: '📌',
     swipe: '👈',
     chevronLeft: '\u2039',
-    chevronRight: '\u203A'
+    chevronRight: '\u203A',
+    copy: '📋'
 };
