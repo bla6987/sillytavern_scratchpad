@@ -218,11 +218,14 @@ export function renderConversation(container, isNewThread = false) {
 
         renderBranchedMessages(thread, messagesContainer);
     } else if (!isNewThread && thread) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'sp-empty-state';
-        emptyState.innerHTML = `<p>No messages yet. Ask a question below.</p>`;
-        messagesContainer.appendChild(emptyState);
-        renderBranchedMessages(thread, messagesContainer);
+        const hasBranchedMessages = thread.branchedMessages && thread.branchedMessages.length > 0;
+        if (!hasBranchedMessages) {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'sp-empty-state';
+            emptyState.innerHTML = `<p>No messages yet. Ask a question below.</p>`;
+            messagesContainer.appendChild(emptyState);
+        }
+        renderBranchedMessages(thread, messagesContainer, hasBranchedMessages);
     } else {
         const emptyState = document.createElement('div');
         emptyState.className = 'sp-empty-state';
@@ -637,11 +640,14 @@ function getContextSettingsFromUI() {
  * @param {Object} thread Thread object with branchedMessages
  * @param {HTMLElement} container Container to append into
  */
-function renderBranchedMessages(thread, container) {
+function renderBranchedMessages(thread, container, autoExpand = false) {
     if (!thread.branchedMessages || thread.branchedMessages.length === 0) return;
 
     const details = document.createElement('details');
     details.className = 'sp-branched-messages';
+    if (autoExpand) {
+        details.open = true;
+    }
 
     const summary = document.createElement('summary');
     const count = thread.branchedMessages.length;

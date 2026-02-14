@@ -1542,8 +1542,9 @@ body.sp-drawer-pinned.sp-drawer-open {
     white-space: nowrap;
 }
 
-/* Empty branch indicator in thread list */
-.sp-thread-preview-empty {
+/* Empty/branched preview in thread list */
+.sp-thread-preview-empty,
+.sp-thread-preview-branched {
     font-style: italic;
     color: var(--sp-text-muted);
 }

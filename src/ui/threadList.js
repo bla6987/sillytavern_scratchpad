@@ -237,6 +237,13 @@ function createThreadItem(thread) {
         previewEl.className = 'sp-thread-preview';
         previewEl.textContent = truncateText(lastMessage.content, 60);
         mainContent.appendChild(previewEl);
+    } else if (thread.branchedMessages && thread.branchedMessages.length > 0) {
+        // Show preview from last branched message
+        const lastBranched = thread.branchedMessages[thread.branchedMessages.length - 1];
+        const previewEl = document.createElement('div');
+        previewEl.className = 'sp-thread-preview sp-thread-preview-branched';
+        previewEl.textContent = truncateText(lastBranched.content, 60);
+        mainContent.appendChild(previewEl);
     } else {
         // Thread has no messages in this branch
         const previewEl = document.createElement('div');
