@@ -57,7 +57,7 @@
 /* ========================================
    Body Lock when drawer open
    ======================================== */
-body.sp-drawer-open {
+body.sp-drawer-open:not(.sp-drawer-pinned) {
     overflow: hidden;
 }
 
@@ -124,10 +124,6 @@ body.sp-drawer-open {
 /* Pinned Mode */
 body.sp-drawer-pinned .sp-drawer-backdrop {
     display: none !important;
-}
-
-body.sp-drawer-pinned.sp-drawer-open {
-    overflow: auto;
 }
 
 .sp-drawer.sp-pinned {
@@ -787,18 +783,8 @@ body.sp-drawer-pinned.sp-drawer-open {
     left: 0;
     right: 0;
     bottom: 0;
-    height: 100vh !important;
-    height: 100dvh !important;
-    height: 100svh !important;
-    min-height: 100vh;
-    min-height: 100dvh;
-    min-height: 100svh;
-    padding-bottom: env(safe-area-inset-bottom);
     box-sizing: border-box;
     z-index: 10000;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
@@ -823,18 +809,21 @@ body.sp-drawer-pinned.sp-drawer-open {
 }
 
 .sp-popup-sheet {
-    position: relative;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
     background: var(--sp-bg-primary);
     border-radius: var(--sp-radius-lg) var(--sp-radius-lg) 0 0;
     max-height: 70vh;
     max-height: 70dvh;
-    /* Dynamic viewport for mobile */
     min-height: 12.5rem;
     display: flex;
     flex-direction: column;
     transform: translateY(100%);
     transition: transform 0.3s ease;
     box-shadow: 0 -0.25rem 1.25rem rgba(0, 0, 0, 0.4);
+    padding-bottom: env(safe-area-inset-bottom);
 }
 
 .sp-popup.sp-popup-visible .sp-popup-sheet {
