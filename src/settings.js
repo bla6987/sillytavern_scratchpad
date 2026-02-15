@@ -22,7 +22,8 @@ const DEFAULT_SETTINGS = Object.freeze({
     ttsEnabled: false, // Enable TTS for assistant messages
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
     soundOnComplete: false, // Play notification sound when generation finishes
-    pinnedMode: false // Pin drawer to side instead of overlay (desktop only)
+    pinnedMode: false, // Pin drawer to side instead of overlay (desktop only)
+    useMultiMessageFormat: false // Send structured multi-message array instead of concatenated prompt
 });
 
 /**
@@ -183,6 +184,12 @@ export function loadSettingsUI() {
     if (pinnedModeToggle) {
         pinnedModeToggle.checked = settings.pinnedMode;
     }
+
+    // Multi-message format toggle
+    const multiMsgToggle = document.getElementById('sp_multi_message_format');
+    if (multiMsgToggle) {
+        multiMsgToggle.checked = settings.useMultiMessageFormat;
+    }
 }
 
 /**
@@ -338,6 +345,14 @@ export function initSettingsListeners() {
     if (pinnedModeToggle) {
         bindOnce(pinnedModeToggle, 'change', (e) => {
             updateSettings({ pinnedMode: e.target.checked });
+        });
+    }
+
+    // Multi-message format toggle
+    const multiMsgToggle = document.getElementById('sp_multi_message_format');
+    if (multiMsgToggle) {
+        bindOnce(multiMsgToggle, 'change', (e) => {
+            updateSettings({ useMultiMessageFormat: e.target.checked });
         });
     }
 }

@@ -108,6 +108,22 @@ function formatThreadHistory(messages) {
 }
 
 /**
+ * Build thread messages as an array of {role, content} objects for multi-message mode
+ * @param {Array} messages Thread messages array
+ * @returns {Array<{role: string, content: string}>} Messages array
+ */
+function buildThreadMessages(messages) {
+    if (!messages || messages.length === 0) return [];
+
+    return messages
+        .filter(m => m.status === 'complete')
+        .map(msg => ({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: msg.content
+        }));
+}
+
+/**
  * Parse thread title from AI response
  * @param {string} response AI response text
  * @returns {Object} { title: string|null, cleanedResponse: string }
@@ -253,23 +269,44 @@ function buildReasoningPayload(responseText, streamReasoning = null, resultReaso
  *
  * @param {Object} options
  * @param {string} options.systemPrompt System prompt
- * @param {string} options.prompt User prompt
+ * @param {string} [options.prompt] User prompt (concatenated format)
+ * @param {Array} [options.messages] Pre-built messages array (multi-message format)
  * @param {Function} [options.onToken] Callback for streaming tokens: (accumulatedText, false)
  * @returns {Promise<{text: string, streamReasoning: Object|null, resultReasoning: Object|null}>}
  */
-async function callGeneration({ systemPrompt, prompt, onToken }) {
+async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages, onToken }) {
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
     let generationResult;
 
+    /**
+     * Build the messages array for the API request.
+     * When prebuiltMessages is provided (multi-message mode), prepend the system prompt
+     * and apply substituteParams. Otherwise, build the traditional 2-message array.
+     */
+    function buildMessages() {
+        if (prebuiltMessages) {
+            const msgs = [];
+            if (systemPrompt) {
+                msgs.push({ role: 'system', content: context.substituteParams(systemPrompt) });
+            }
+            for (const msg of prebuiltMessages) {
+                msgs.push({ role: msg.role, content: context.substituteParams(msg.content) });
+            }
+            return msgs;
+        }
+        const msgs = [];
+        if (systemPrompt) {
+            msgs.push({ role: 'system', content: context.substituteParams(systemPrompt) });
+        }
+        msgs.push({ role: 'user', content: context.substituteParams(prompt) });
+        return msgs;
+    }
+
     // Try streaming first when supported and a token callback is provided
     if (onToken && currentApi === 'openai' && isStreamingSupported()) {
         try {
-            const messages = [];
-            if (systemPrompt) {
-                messages.push({ role: 'system', content: context.substituteParams(systemPrompt) });
-            }
-            messages.push({ role: 'user', content: context.substituteParams(prompt) });
+            const messages = buildMessages();
 
             const controller = new AbortController();
             activeAbortController = controller;
@@ -305,11 +342,7 @@ async function callGeneration({ systemPrompt, prompt, onToken }) {
     // Non-streaming path
     if (!generationResult && currentApi === 'openai') {
         try {
-            const messages = [];
-            if (systemPrompt) {
-                messages.push({ role: 'system', content: context.substituteParams(systemPrompt) });
-            }
-            messages.push({ role: 'user', content: context.substituteParams(prompt) });
+            const messages = buildMessages();
 
             const data = await context.sendGenerationRequest('quiet', { prompt: messages });
             const text = context.extractMessageFromData(data) || '';
@@ -320,21 +353,39 @@ async function callGeneration({ systemPrompt, prompt, onToken }) {
                 throw err;
             }
             console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
-            const result = await context.generateRaw({ systemPrompt, prompt });
-            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+            if (prebuiltMessages) {
+                // For multi-message mode, pass the messages array to generateRaw
+                const messages = buildMessages();
+                const result = await context.generateRaw({ prompt: messages });
+                generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+            } else {
+                const result = await context.generateRaw({ systemPrompt, prompt });
+                generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+            }
         }
     }
 
     if (!generationResult) {
-        const result = await context.generateRaw({ systemPrompt, prompt });
-        generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+        if (prebuiltMessages) {
+            const messages = buildMessages();
+            const result = await context.generateRaw({ prompt: messages });
+            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+        } else {
+            const result = await context.generateRaw({ systemPrompt, prompt });
+            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+        }
     }
 
     // Report token usage to Token Usage Tracker
     try {
         const tracker = window['TokenUsageTracker'];
         if (tracker) {
-            const inputText = (systemPrompt || '') + '\n' + (prompt || '');
+            let inputText;
+            if (prebuiltMessages) {
+                inputText = (systemPrompt || '') + '\n' + prebuiltMessages.map(m => m.content).join('\n');
+            } else {
+                inputText = (systemPrompt || '') + '\n' + (prompt || '');
+            }
             const inputTokens = await tracker.countTokens(inputText);
             const outputTokens = await tracker.countTokens(generationResult.text || '');
 
@@ -474,7 +525,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
  * @param {string} userQuestion User's question
  * @param {Object} thread Thread object
  * @param {boolean} isFirstMessage Whether this is the first message in the thread
- * @returns {Object} { systemPrompt, prompt }
+ * @returns {Object} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
  */
 function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     const context = SillyTavern.getContext();
@@ -493,8 +544,6 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         chatHistoryLimit: globalSettings.chatHistoryLimit
     };
 
-    const parts = [];
-
     // OOC system instruction
     let systemPrompt = settings.oocSystemPrompt;
 
@@ -502,6 +551,60 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     if (isFirstMessage) {
         systemPrompt += '\n\nAt the very beginning of your first response in this new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**\n\nThen provide your response.';
     }
+
+    // Multi-message format: return structured messages array
+    if (globalSettings.useMultiMessageFormat) {
+        const messages = [];
+
+        // ST system prompt as a system message
+        if (settings.includeSystemPrompt) {
+            try {
+                const stContext = SillyTavern.getContext();
+                let stSystemPrompt = '';
+                if (typeof stContext.getSystemPrompt === 'function') {
+                    stSystemPrompt = stContext.getSystemPrompt();
+                } else if (typeof stContext.systemPrompt === 'string') {
+                    stSystemPrompt = stContext.systemPrompt;
+                }
+                if (stSystemPrompt && stSystemPrompt.trim()) {
+                    messages.push({ role: 'system', content: stSystemPrompt.trim() });
+                }
+            } catch (e) {
+                console.warn('[ScratchPad] Could not retrieve system prompt:', e);
+            }
+        }
+
+        // Character card as a system message
+        if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
+            const charContext = buildCharacterContext(characters[characterId]);
+            if (charContext) {
+                messages.push({ role: 'system', content: charContext });
+            }
+        }
+
+        // Chat history as a system message
+        if (!settings.characterCardOnly && chat && chat.length > 0) {
+            const selectedChat = selectChatHistory(chat, settings);
+            const chatHistory = formatChatHistory(selectedChat);
+            if (chatHistory) {
+                messages.push({ role: 'system', content: `Roleplay chat history:\n\n${chatHistory}` });
+            }
+        }
+
+        // Thread history as alternating user/assistant messages
+        if (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0) {
+            const threadMessages = buildThreadMessages(thread.messages);
+            messages.push(...threadMessages);
+        }
+
+        // Current user question
+        messages.push({ role: 'user', content: userQuestion });
+
+        return { systemPrompt, messages };
+    }
+
+    // Default: concatenated single-prompt format
+    const parts = [];
 
     // Include SillyTavern's main system prompt if enabled
     if (settings.includeSystemPrompt) {
@@ -653,14 +756,19 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             return { success: false, error: 'Thread not found' };
         }
         const isFirstMessage = !currentThread.titled;
-        const { systemPrompt, prompt } = buildPrompt(userQuestion, currentThread, isFirstMessage);
+        const promptData = buildPrompt(userQuestion, currentThread, isFirstMessage);
 
         const doGenerate = async () => {
             const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             activeGenerationId = generationId;
             try {
                 const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                const result = await callGeneration({ systemPrompt, prompt, onToken });
+                const result = await callGeneration({
+                    systemPrompt: promptData.systemPrompt,
+                    prompt: promptData.prompt,
+                    messages: promptData.messages,
+                    onToken,
+                });
                 if (onStream) onStream(result.text, true);
                 return result;
             } finally {
@@ -753,7 +861,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
  * Slices thread messages to before the target message so all swipes see the same context
  * @param {string} threadId Thread ID
  * @param {string} messageId Target assistant message ID
- * @returns {Object|null} { systemPrompt, prompt, userQuestion } or null
+ * @returns {Object|null} { systemPrompt, prompt, userQuestion } or { systemPrompt, messages, userQuestion } or null
  */
 function buildPromptForSwipe(threadId, messageId) {
     const thread = getThread(threadId);
@@ -792,8 +900,8 @@ function buildPromptForSwipe(threadId, messageId) {
         ];
     }
 
-    const { systemPrompt, prompt } = buildPrompt(userQuestion, contextThread, false);
-    return { systemPrompt, prompt, userQuestion };
+    const promptData = buildPrompt(userQuestion, contextThread, false);
+    return { ...promptData, userQuestion };
 }
 
 /**
@@ -816,8 +924,6 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     const promptData = buildPromptForSwipe(threadId, messageId);
     if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
 
-    const { systemPrompt, prompt } = promptData;
-
     // Initialize swipe fields and add empty swipe
     ensureSwipeFields(message);
     const previousSwipeId = message.swipeId;
@@ -832,7 +938,12 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             activeGenerationId = generationId;
             try {
                 const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                const result = await callGeneration({ systemPrompt, prompt, onToken });
+                const result = await callGeneration({
+                    systemPrompt: promptData.systemPrompt,
+                    prompt: promptData.prompt,
+                    messages: promptData.messages,
+                    onToken,
+                });
                 if (onStream) onStream(result.text, true);
                 return result;
             } finally {
