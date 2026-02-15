@@ -298,7 +298,7 @@ async function generatePopupResponse(message) {
             iconSpan.className = 'sp-error-icon';
             iconSpan.innerHTML = Icons.error;
             const textSpan = document.createElement('span');
-            textSpan.textContent = `Error: ${result.error}`;
+            textSpan.textContent = `Response generation failed: ${result.error}`;
             errorDiv.appendChild(iconSpan);
             errorDiv.appendChild(textSpan);
             contentEl.innerHTML = '';
@@ -337,7 +337,7 @@ async function generatePopupResponse(message) {
         iconSpan.className = 'sp-error-icon';
         iconSpan.innerHTML = Icons.error;
         const textSpan = document.createElement('span');
-        textSpan.textContent = `Error: ${error.message}`;
+        textSpan.textContent = `Response generation failed: ${error.message}`;
         errorDiv.appendChild(iconSpan);
         errorDiv.appendChild(textSpan);
         contentEl.innerHTML = '';
@@ -378,7 +378,7 @@ async function generatePopupRawResponse(message) {
             iconSpan.className = 'sp-error-icon';
             iconSpan.innerHTML = Icons.error;
             const textSpan = document.createElement('span');
-            textSpan.textContent = `Error: ${result.error}`;
+            textSpan.textContent = `Raw prompt failed: ${result.error}`;
             errorDiv.appendChild(iconSpan);
             errorDiv.appendChild(textSpan);
             contentEl.innerHTML = '';
@@ -415,7 +415,7 @@ async function generatePopupRawResponse(message) {
         iconSpan.className = 'sp-error-icon';
         iconSpan.innerHTML = Icons.error;
         const textSpan = document.createElement('span');
-        textSpan.textContent = `Error: ${error.message}`;
+        textSpan.textContent = `Raw prompt failed: ${error.message}`;
         errorDiv.appendChild(iconSpan);
         errorDiv.appendChild(textSpan);
         contentEl.innerHTML = '';

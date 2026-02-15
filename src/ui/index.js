@@ -346,6 +346,41 @@ export function initUI() {
 }
 
 /**
+ * Dispose all UI resources (listeners, DOM elements, state)
+ * Call on extension unload or hot-reload to prevent leaks.
+ */
+export function disposeUI() {
+    // Close drawer if open
+    if (drawerElement) {
+        drawerElement.remove();
+        drawerElement = null;
+    }
+    if (backdropElement) {
+        backdropElement.remove();
+        backdropElement = null;
+    }
+
+    // Remove global event listeners
+    if (keydownHandler) {
+        document.removeEventListener('keydown', keydownHandler);
+        keydownHandler = null;
+    }
+    if (popstateHandler) {
+        window.removeEventListener('popstate', popstateHandler);
+        popstateHandler = null;
+    }
+    if (resizeHandler) {
+        window.removeEventListener('resize', resizeHandler);
+        resizeHandler = null;
+    }
+
+    // Clean up body classes
+    document.body.classList.remove('sp-drawer-open');
+    document.body.classList.remove('sp-drawer-pinned');
+    isPinned = false;
+}
+
+/**
  * Toggle pinned mode
  * @returns {boolean} New pinned state
  */

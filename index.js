@@ -7,7 +7,7 @@ import { ensureScratchPadExists } from './src/storage.js';
 import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
 import { isChatActive } from './src/generation.js';
-import { initUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen } from './src/ui/index.js';
+import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen } from './src/ui/index.js';
 
 const MODULE_NAME = 'scratchPad';
 const EXTENSION_NAME = 'Scratch Pad';
@@ -238,5 +238,28 @@ if (typeof jQuery !== 'undefined') {
     }
 }
 
+/**
+ * Dispose the extension (cleanup listeners, DOM elements, state)
+ * Call on extension unload or hot-reload to prevent leaks.
+ */
+function dispose() {
+    const context = SillyTavern.getContext();
+    const { eventSource, event_types } = context;
+
+    // Unregister event listeners
+    if (eventSource && event_types) {
+        eventSource.off(event_types.CHAT_CHANGED, handleChatChanged);
+    }
+
+    // Dispose UI (listeners, drawer, backdrop, body classes)
+    disposeUI();
+
+    // Remove DOM elements added during init
+    document.getElementById('scratch_pad_button')?.remove();
+    document.getElementById('scratch_pad_wand_button')?.remove();
+    document.getElementById('scratch_pad_styles')?.remove();
+    document.getElementById('scratch_pad_settings')?.remove();
+}
+
 // Export for potential external use
-export { openScratchPad, closeScratchPad, isScratchPadOpen };
+export { openScratchPad, closeScratchPad, isScratchPadOpen, dispose };

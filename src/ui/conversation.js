@@ -1154,7 +1154,7 @@ async function handleSendMessage() {
         });
 
         if (!result.success && !result.cancelled) {
-            showToast(`Error: ${result.error}`, 'error');
+            showToast(`Failed to send message: ${result.error}`, 'error');
         }
 
         if (result.success) {
@@ -1299,7 +1299,7 @@ async function handleAiRename(thread) {
         const result = await generateThreadTitle(thread);
 
         if (!result.success) {
-            showToast(`Error: ${result.error}`, 'error');
+            showToast(`Title generation failed: ${result.error}`, 'error');
             return;
         }
 
@@ -1322,7 +1322,7 @@ async function handleAiRename(thread) {
         }
     } catch (error) {
         console.error('[ScratchPad] AI rename error:', error);
-        showToast(`Error: ${error.message}`, 'error');
+        showToast(`Title generation failed: ${error.message}`, 'error');
     }
 }
 

@@ -1108,8 +1108,11 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
 
-        // Strip title tags from swipe responses (they shouldn't appear in regenerations)
-        const { cleanedResponse: finalResponse } = parseThreadTitle(responseWithoutThinking);
+        // Strip title tags from swipe responses and apply extracted title to thread
+        const { title, cleanedResponse: finalResponse } = parseThreadTitle(responseWithoutThinking);
+        if (title) {
+            updateThread(threadId, { name: title, titled: true });
+        }
 
         // Check cancellation
         if (checkAndResetCancellation()) {
