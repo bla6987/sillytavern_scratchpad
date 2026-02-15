@@ -415,18 +415,63 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
 }
 
 /**
- * Standard generation using SillyTavern's full pipeline (generateQuietPrompt).
+ * Determine whether the active target is Claude-like (native Claude source or
+ * Claude-routed model IDs via other providers).
+ * @param {Object} context SillyTavern context
+ * @returns {boolean}
+ */
+function isClaudeLikeTarget(context) {
+    const source = String(context?.chatCompletionSettings?.chat_completion_source || '').toLowerCase();
+    const model = String(context?.getChatCompletionModel?.() || context?.chatCompletionSettings?.model || '').toLowerCase();
+    return source === 'claude' || model.includes('claude');
+}
+
+function isAbortError(err) {
+    return err?.name === 'AbortError' || /abort|cancel/i.test(err?.message || '');
+}
+
+/**
+ * Standard generation mode.
+ * Default path uses SillyTavern's full quiet pipeline (generateQuietPrompt).
+ * For Claude-like targets, uses a prefill-safe user-terminated quiet request
+ * to avoid providers that reject assistant-prefill style endings.
+ *
  * Returns the same shape as callGeneration() for downstream compatibility.
  * @param {Object} options
  * @param {string} options.quietPrompt Prompt injected into ST's pipeline
- * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: null}>}
+ * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: Object|null}>}
  */
 async function callStandardGeneration({ quietPrompt }) {
     const context = SillyTavern.getContext();
-    const text = await context.generateQuietPrompt({
-        quietPrompt,
-        removeReasoning: false, // we parse reasoning ourselves
-    });
+    const source = String(context?.chatCompletionSettings?.chat_completion_source || '').toLowerCase();
+    const model = String(context?.getChatCompletionModel?.() || context?.chatCompletionSettings?.model || '').toLowerCase();
+    const usePrefillSafeClaudePath = context.mainApi === 'openai' && isClaudeLikeTarget(context);
+    const modeBranch = usePrefillSafeClaudePath ? 'claude-prefill-safe' : 'standard-quiet';
+    console.debug(`[ScratchPad] Emergency generation mode=${modeBranch} source=${source || 'unknown'} model=${model || 'unknown'}`);
+
+    let text = '';
+    let resultReasoning = null;
+
+    if (usePrefillSafeClaudePath) {
+        const messages = [{ role: 'user', content: context.substituteParams(quietPrompt || '') }];
+        try {
+            const data = await context.sendGenerationRequest('quiet', { prompt: messages });
+            text = context.extractMessageFromData(data) || '';
+            resultReasoning = extractReasoningFromResult(data);
+        } catch (err) {
+            if (isAbortError(err)) {
+                throw err;
+            }
+            console.warn('[ScratchPad] Emergency prefill-safe generation failed, falling back to generateRaw:', err.message);
+            const result = await context.generateRaw({ prompt: messages });
+            text = result || '';
+        }
+    } else {
+        text = await context.generateQuietPrompt({
+            quietPrompt,
+            removeReasoning: false, // we parse reasoning ourselves
+        });
+    }
 
     // Report token usage (approximate — only our quiet prompt, not ST's full constructed prompt)
     try {
@@ -443,7 +488,7 @@ async function callStandardGeneration({ quietPrompt }) {
         console.warn('[ScratchPad] Token usage reporting failed:', e);
     }
 
-    return { text: text || '', streamReasoning: null, resultReasoning: null };
+    return { text: text || '', streamReasoning: null, resultReasoning };
 }
 
 /**
