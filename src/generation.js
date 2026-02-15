@@ -192,6 +192,7 @@ async function generateWithProfile(profileName, generateFn) {
     profileSwitchLock = new Promise(resolve => { releaseLock = resolve; });
 
     let currentProfile = '';
+    let didSwitch = false;
 
     try {
         // Get current profile
@@ -203,18 +204,24 @@ async function generateWithProfile(profileName, generateFn) {
         // Switch to alternative profile
         const safeProfileName = profileName.replace(/\|/g, '').replace(/^\//gm, '');
         await executeSlashCommandsWithOptions(`/profile ${safeProfileName}`, { handleParserErrors: false, handleExecutionErrors: false });
+        didSwitch = true;
 
         // Execute generation
         const result = await generateFn();
         return result;
     } finally {
         // Restore original profile
-        if (currentProfile) {
+        if (didSwitch) {
             try {
-                const safeCurrentProfile = currentProfile.replace(/\|/g, '').replace(/^\//gm, '');
-                await executeSlashCommandsWithOptions(`/profile ${safeCurrentProfile}`, { handleParserErrors: false, handleExecutionErrors: false });
+                // /profile returns '<None>' when no profile is active, and
+                // /profile <None> clears the active profile back to default.
+                // Fall back to '<None>' if the pipe was unexpectedly empty.
+                const restoreProfile = currentProfile || '<None>';
+                const safeRestoreProfile = restoreProfile.replace(/\|/g, '').replace(/^\//gm, '');
+                await executeSlashCommandsWithOptions(`/profile ${safeRestoreProfile}`, { handleParserErrors: false, handleExecutionErrors: false });
             } catch (e) {
                 console.warn('[ScratchPad] Could not restore profile:', e);
+                toastr.warning('Could not restore your previous connection profile. You may need to switch back manually.', 'Scratch Pad');
             }
         }
         // Release the lock
