@@ -23,7 +23,8 @@ const DEFAULT_SETTINGS = Object.freeze({
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
     soundOnComplete: false, // Play notification sound when generation finishes
     pinnedMode: false, // Pin drawer to side instead of overlay (desktop only)
-    useMultiMessageFormat: false // Send structured multi-message array instead of concatenated prompt
+    useMultiMessageFormat: false, // Send structured multi-message array instead of concatenated prompt
+    useStandardGeneration: false // Use ST's full generation pipeline (emergency compatibility mode)
 });
 
 /**
@@ -190,6 +191,12 @@ export function loadSettingsUI() {
     if (multiMsgToggle) {
         multiMsgToggle.checked = settings.useMultiMessageFormat;
     }
+
+    // Standard generation toggle
+    const stdGenToggle = document.getElementById('sp_standard_generation');
+    if (stdGenToggle) {
+        stdGenToggle.checked = settings.useStandardGeneration;
+    }
 }
 
 /**
@@ -353,6 +360,14 @@ export function initSettingsListeners() {
     if (multiMsgToggle) {
         bindOnce(multiMsgToggle, 'change', (e) => {
             updateSettings({ useMultiMessageFormat: e.target.checked });
+        });
+    }
+
+    // Standard generation toggle
+    const stdGenToggle = document.getElementById('sp_standard_generation');
+    if (stdGenToggle) {
+        bindOnce(stdGenToggle, 'change', (e) => {
+            updateSettings({ useStandardGeneration: e.target.checked });
         });
     }
 }

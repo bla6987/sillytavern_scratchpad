@@ -414,6 +414,115 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     return generationResult;
 }
 
+/**
+ * Standard generation using SillyTavern's full pipeline (generateQuietPrompt).
+ * Returns the same shape as callGeneration() for downstream compatibility.
+ * @param {Object} options
+ * @param {string} options.quietPrompt Prompt injected into ST's pipeline
+ * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: null}>}
+ */
+async function callStandardGeneration({ quietPrompt }) {
+    const context = SillyTavern.getContext();
+    const text = await context.generateQuietPrompt({
+        quietPrompt,
+        removeReasoning: false, // we parse reasoning ourselves
+    });
+
+    // Report token usage (approximate — only our quiet prompt, not ST's full constructed prompt)
+    try {
+        const tracker = window['TokenUsageTracker'];
+        if (tracker) {
+            const inputTokens = await tracker.countTokens(quietPrompt || '');
+            const outputTokens = await tracker.countTokens(text || '');
+            const modelId = tracker.getCurrentModelId();
+            const sourceId = tracker.getCurrentSourceId();
+            const chatId = SillyTavern.getContext().getCurrentChatId?.() || null;
+            tracker.recordUsage(inputTokens, outputTokens, chatId, modelId, sourceId, 0);
+        }
+    } catch (e) {
+        console.warn('[ScratchPad] Token usage reporting failed:', e);
+    }
+
+    return { text: text || '', streamReasoning: null, resultReasoning: null };
+}
+
+/**
+ * Build the quiet prompt string for standard generation mode.
+ * ST already includes character card + chat history + world info,
+ * so we only include extension-specific context (OOC instruction, thread history, question).
+ * @param {string} userQuestion User's question
+ * @param {Object} thread Thread object (for previous discussion history)
+ * @param {boolean} isFirstMessage Whether to request a title
+ * @returns {string} Combined quiet prompt
+ */
+function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
+    const settings = getSettings();
+    const parts = [];
+
+    // OOC system instruction
+    parts.push(settings.oocSystemPrompt);
+
+    // Title instruction for first message
+    if (isFirstMessage) {
+        parts.push('At the very beginning of your response, provide a brief title (3-6 words) formatted as: **Title: [Your Title Here]**\nThen provide your response.');
+    }
+
+    // Thread history (previous scratch pad discussion)
+    if (thread?.messages?.length > 0) {
+        const threadHistory = formatThreadHistory(thread.messages);
+        if (threadHistory) {
+            parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
+            parts.push(threadHistory);
+        }
+    }
+
+    // User question
+    parts.push('--- USER QUESTION ---');
+    parts.push(userQuestion);
+
+    return parts.join('\n\n');
+}
+
+/**
+ * Extract swipe context (user question + sliced thread) from a thread/message pair.
+ * Used by both buildPromptForSwipe (custom generation) and standard generation swipe path.
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Target assistant message ID
+ * @returns {Object|null} { userQuestion, contextThread } or null
+ */
+function getSwipeContext(threadId, messageId) {
+    const thread = getThread(threadId);
+    if (!thread) return null;
+
+    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
+    if (messageIndex === -1) return null;
+
+    // Find the preceding user message
+    let userQuestion = '';
+    for (let i = messageIndex - 1; i >= 0; i--) {
+        if (thread.messages[i].role === 'user') {
+            userQuestion = thread.messages[i].content;
+            break;
+        }
+    }
+    if (!userQuestion) return null;
+
+    // Create context thread sliced to before the target, without the triggering user msg
+    const contextThread = { ...thread, messages: thread.messages.slice(0, messageIndex) };
+    let userIdx = -1;
+    for (let i = contextThread.messages.length - 1; i >= 0; i--) {
+        if (contextThread.messages[i].role === 'user') { userIdx = i; break; }
+    }
+    if (userIdx !== -1) {
+        contextThread.messages = [
+            ...contextThread.messages.slice(0, userIdx),
+            ...contextThread.messages.slice(userIdx + 1)
+        ];
+    }
+
+    return { userQuestion, contextThread };
+}
+
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
     const context = SillyTavern.getContext();
 
@@ -440,20 +549,32 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
     await saveMetadata();
 
     try {
-        const doGenerate = async () => {
-            const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            activeGenerationId = generationId;
-            try {
-                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                const result = await callGeneration({ systemPrompt: '', prompt: userPrompt, onToken });
-                if (onStream) onStream(result.text, true);
-                return result;
-            } finally {
-                if (activeGenerationId === generationId) {
-                    activeGenerationId = null;
+        const globalSettings = getSettings();
+
+        const doGenerate = globalSettings.useStandardGeneration
+            ? async () => {
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const result = await callStandardGeneration({ quietPrompt: userPrompt });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
                 }
             }
-        };
+            : async () => {
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                    const result = await callGeneration({ systemPrompt: '', prompt: userPrompt, onToken });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
+                }
+            };
 
         let result;
         const effectiveProfile = getEffectiveProfileForThread(threadId);
@@ -763,27 +884,39 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             return { success: false, error: 'Thread not found' };
         }
         const isFirstMessage = !currentThread.titled;
-        const promptData = buildPrompt(userQuestion, currentThread, isFirstMessage);
+        const globalSettings = getSettings();
 
-        const doGenerate = async () => {
-            const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            activeGenerationId = generationId;
-            try {
-                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                const result = await callGeneration({
-                    systemPrompt: promptData.systemPrompt,
-                    prompt: promptData.prompt,
-                    messages: promptData.messages,
-                    onToken,
-                });
-                if (onStream) onStream(result.text, true);
-                return result;
-            } finally {
-                if (activeGenerationId === generationId) {
-                    activeGenerationId = null;
+        const doGenerate = globalSettings.useStandardGeneration
+            ? async () => {
+                const quietPrompt = buildQuietPrompt(userQuestion, currentThread, isFirstMessage);
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const result = await callStandardGeneration({ quietPrompt });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
                 }
             }
-        };
+            : async () => {
+                const promptData = buildPrompt(userQuestion, currentThread, isFirstMessage);
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                    const result = await callGeneration({
+                        systemPrompt: promptData.systemPrompt,
+                        prompt: promptData.prompt,
+                        messages: promptData.messages,
+                        onToken,
+                    });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
+                }
+            };
 
         // Execute with profile switching if enabled
         let result;
@@ -871,44 +1004,10 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
  * @returns {Object|null} { systemPrompt, prompt, userQuestion } or { systemPrompt, messages, userQuestion } or null
  */
 function buildPromptForSwipe(threadId, messageId) {
-    const thread = getThread(threadId);
-    if (!thread) return null;
-
-    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
-    if (messageIndex === -1) return null;
-
-    // Find the preceding user message
-    let userQuestion = '';
-    for (let i = messageIndex - 1; i >= 0; i--) {
-        if (thread.messages[i].role === 'user') {
-            userQuestion = thread.messages[i].content;
-            break;
-        }
-    }
-
-    if (!userQuestion) return null;
-
-    // Create a temporary thread view with messages sliced to before the target
-    const contextThread = {
-        ...thread,
-        messages: thread.messages.slice(0, messageIndex)
-    };
-
-    // Remove the user message that prompted this response from thread history
-    // (it'll be included as the user question directly)
-    let userIdx = -1;
-    for (let i = contextThread.messages.length - 1; i >= 0; i--) {
-        if (contextThread.messages[i].role === 'user') { userIdx = i; break; }
-    }
-    if (userIdx !== -1) {
-        contextThread.messages = [
-            ...contextThread.messages.slice(0, userIdx),
-            ...contextThread.messages.slice(userIdx + 1)
-        ];
-    }
-
-    const promptData = buildPrompt(userQuestion, contextThread, false);
-    return { ...promptData, userQuestion };
+    const swipeCtx = getSwipeContext(threadId, messageId);
+    if (!swipeCtx) return null;
+    const promptData = buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+    return { ...promptData, userQuestion: swipeCtx.userQuestion };
 }
 
 /**
@@ -927,9 +1026,18 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         return { success: false, error: 'Assistant message not found' };
     }
 
-    // Build prompt with context as-of before the target message
-    const promptData = buildPromptForSwipe(threadId, messageId);
-    if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
+    const globalSettings = getSettings();
+
+    // Build prompt / context for swipe
+    let swipeCtx = null;
+    let promptData = null;
+    if (globalSettings.useStandardGeneration) {
+        swipeCtx = getSwipeContext(threadId, messageId);
+        if (!swipeCtx) return { success: false, error: 'Could not build prompt for swipe' };
+    } else {
+        promptData = buildPromptForSwipe(threadId, messageId);
+        if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
+    }
 
     // Initialize swipe fields and add empty swipe
     ensureSwipeFields(message);
@@ -940,25 +1048,36 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     await saveMetadata();
 
     try {
-        const doGenerate = async () => {
-            const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            activeGenerationId = generationId;
-            try {
-                const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                const result = await callGeneration({
-                    systemPrompt: promptData.systemPrompt,
-                    prompt: promptData.prompt,
-                    messages: promptData.messages,
-                    onToken,
-                });
-                if (onStream) onStream(result.text, true);
-                return result;
-            } finally {
-                if (activeGenerationId === generationId) {
-                    activeGenerationId = null;
+        const doGenerate = globalSettings.useStandardGeneration
+            ? async () => {
+                const quietPrompt = buildQuietPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const result = await callStandardGeneration({ quietPrompt });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
                 }
             }
-        };
+            : async () => {
+                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                activeGenerationId = generationId;
+                try {
+                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+                    const result = await callGeneration({
+                        systemPrompt: promptData.systemPrompt,
+                        prompt: promptData.prompt,
+                        messages: promptData.messages,
+                        onToken,
+                    });
+                    if (onStream) onStream(result.text, true);
+                    return result;
+                } finally {
+                    if (activeGenerationId === generationId) activeGenerationId = null;
+                }
+            };
 
         let result;
         const effectiveProfile = getEffectiveProfileForThread(threadId);
@@ -1199,10 +1318,16 @@ ${threadHistory}
 
 Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
 
-        const doGenerate = async () => {
-            const { text } = await callGeneration({ systemPrompt, prompt });
-            return text;
-        };
+        const doGenerate = getSettings().useStandardGeneration
+            ? async () => {
+                const titleQuiet = `${systemPrompt}\n\n${prompt}`;
+                const { text } = await callStandardGeneration({ quietPrompt: titleQuiet });
+                return text;
+            }
+            : async () => {
+                const { text } = await callGeneration({ systemPrompt, prompt });
+                return text;
+            };
 
         // Execute with profile switching if enabled
         let response;

@@ -101,6 +101,12 @@
                     <small>Send structured role-alternating messages instead of a single concatenated prompt (improves compatibility with some APIs)</small>
                 </label>
 
+                <label class="checkbox_label" for="sp_standard_generation">
+                    <input type="checkbox" id="sp_standard_generation">
+                    <span>Use Standard Generation (Emergency)</span>
+                    <small>Routes requests through SillyTavern's full chat pipeline for maximum API compatibility. No streaming; per-thread context settings are ignored.</small>
+                </label>
+
                 <label class="checkbox_label" for="sp_use_alt_api">
                     <input type="checkbox" id="sp_use_alt_api">
                     <span>Use Alternative API</span>
