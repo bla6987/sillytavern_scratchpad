@@ -784,7 +784,7 @@ body.sp-drawer-pinned .sp-drawer-backdrop {
     right: 0;
     bottom: 0;
     box-sizing: border-box;
-    z-index: 10000;
+    z-index: 100000;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;

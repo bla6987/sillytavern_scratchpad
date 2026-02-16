@@ -62,6 +62,19 @@ function createPopupElement() {
     popupElement.id = 'scratch-pad-popup';
     popupElement.className = 'sp-popup';
 
+    // Inline style fallbacks — SillyTavern's mobile UI has high z-index elements
+    // that bury CSS-only z-index: 10000. Match the drawer's defensive pattern.
+    // Note: opacity/pointerEvents are toggled via CSS classes, so don't set them inline.
+    Object.assign(popupElement.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        right: '0',
+        bottom: '0',
+        zIndex: '100000',
+        boxSizing: 'border-box',
+    });
+
     // Backdrop
     const backdrop = document.createElement('div');
     backdrop.className = 'sp-popup-backdrop';
