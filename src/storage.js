@@ -18,6 +18,7 @@ export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
     characterCardOnly: false,
     includeCharacterCard: true,
     includeSystemPrompt: false,
+    includeAuthorsNote: false,
     connectionProfile: null
 });
 

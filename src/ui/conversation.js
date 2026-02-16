@@ -394,6 +394,11 @@ function renderContextOptions(container, thread, isNewThread) {
             <input type="checkbox" id="${idPrefix}include_sys_prompt" ${contextSettings.includeSystemPrompt ? 'checked' : ''}>
             <span>Include System Prompt</span>
         </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_authors_note">
+            <input type="checkbox" id="${idPrefix}include_authors_note" ${contextSettings.includeAuthorsNote ? 'checked' : ''}>
+            <span>Include Author's Note</span>
+        </label>
     `;
 
     details.appendChild(optionsBlock);
@@ -522,6 +527,7 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
     const charCardOnlyToggle = document.getElementById(`${idPrefix}char_card_only`);
     const includeCharCardToggle = document.getElementById(`${idPrefix}include_char_card`);
     const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
+    const includeAuthorsNoteToggle = document.getElementById(`${idPrefix}include_authors_note`);
 
     const updateContextSetting = async (key, value) => {
         if (threadId) {
@@ -585,6 +591,12 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
             updateContextSetting('includeSystemPrompt', e.target.checked);
         });
     }
+
+    if (includeAuthorsNoteToggle) {
+        includeAuthorsNoteToggle.addEventListener('change', (e) => {
+            updateContextSetting('includeAuthorsNote', e.target.checked);
+        });
+    }
 }
 
 /**
@@ -623,6 +635,7 @@ function getContextSettingsFromUI() {
     const charCardOnlyToggle = document.getElementById(`${idPrefix}char_card_only`);
     const includeCharCardToggle = document.getElementById(`${idPrefix}include_char_card`);
     const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
+    const includeAuthorsNoteToggle = document.getElementById(`${idPrefix}include_authors_note`);
 
     return {
         connectionProfile: profileSelect?.value || null,
@@ -631,7 +644,8 @@ function getContextSettingsFromUI() {
         chatHistoryRangeEnd: parseRangeNumber(rangeEndInput?.value),
         characterCardOnly: charCardOnlyToggle?.checked || false,
         includeCharacterCard: includeCharCardToggle?.checked ?? true,
-        includeSystemPrompt: includeSysPromptToggle?.checked || false
+        includeSystemPrompt: includeSysPromptToggle?.checked || false,
+        includeAuthorsNote: includeAuthorsNoteToggle?.checked || false
     };
 }
 

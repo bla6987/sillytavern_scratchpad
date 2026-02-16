@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     includeCharacterCard: true,
     characterCardOnly: false,
     includeSystemPrompt: false,
+    includeAuthorsNote: false,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
     connectionProfile: '',
@@ -119,6 +120,12 @@ export function loadSettingsUI() {
     const sysPromptToggle = document.getElementById('sp_include_sys_prompt');
     if (sysPromptToggle) {
         sysPromptToggle.checked = settings.includeSystemPrompt;
+    }
+
+    // Include author's note toggle
+    const authorsNoteToggle = document.getElementById('sp_include_authors_note');
+    if (authorsNoteToggle) {
+        authorsNoteToggle.checked = settings.includeAuthorsNote;
     }
 
     // OOC system prompt textarea
@@ -263,6 +270,14 @@ export function initSettingsListeners() {
     if (sysPromptToggle) {
         bindOnce(sysPromptToggle, 'change', (e) => {
             updateSettings({ includeSystemPrompt: e.target.checked });
+        });
+    }
+
+    // Include author's note toggle
+    const authorsNoteToggle = document.getElementById('sp_include_authors_note');
+    if (authorsNoteToggle) {
+        bindOnce(authorsNoteToggle, 'change', (e) => {
+            updateSettings({ includeAuthorsNote: e.target.checked });
         });
     }
 
@@ -416,6 +431,7 @@ export function getCurrentContextSettings() {
         characterCardOnly: settings.characterCardOnly,
         includeCharacterCard: settings.includeCharacterCard,
         includeSystemPrompt: settings.includeSystemPrompt,
+        includeAuthorsNote: settings.includeAuthorsNote,
         connectionProfile: settings.useAlternativeApi ? settings.connectionProfile : null
     };
 }

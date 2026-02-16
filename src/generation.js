@@ -40,6 +40,16 @@ function buildCharacterContext(char) {
 }
 
 /**
+ * Get the Author's Note from the current chat's metadata
+ * @returns {string} Author's Note text, or empty string if not set
+ */
+function getAuthorsNote() {
+    const { chatMetadata } = SillyTavern.getContext();
+    const note = chatMetadata?.note_prompt;
+    return (typeof note === 'string' && note.trim()) ? note.trim() : '';
+}
+
+/**
  * Format chat history for context
  * @param {Array} chat Chat messages array
  * @returns {string} Formatted chat history
@@ -424,15 +434,24 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
  * Returns the same shape as callGeneration() for downstream compatibility.
  * @param {Object} options
  * @param {string} options.quietPrompt Prompt injected into ST's pipeline
+ * @param {boolean} [options.includeAuthorsNote=true] Whether to keep ST's Author's Note in the pipeline
  * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: null}>}
  */
-async function callStandardGeneration({ quietPrompt }) {
+async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }) {
     const context = SillyTavern.getContext();
 
     // Inject as user-role message instead of system-role quiet prompt.
     // extension_prompt_types.IN_CHAT = 1, extension_prompt_roles.USER = 1
     const INJECT_KEY = 'sp_quiet_inject';
     context.setExtensionPrompt(INJECT_KEY, quietPrompt, 1 /* IN_CHAT */, 0, false, 1 /* USER */);
+
+    // Suppress Author's Note if disabled — save and clear the floating prompt
+    const AN_KEY = '2_floating_prompt';
+    let savedAN = null;
+    if (!includeAuthorsNote && context.extensionPrompts?.[AN_KEY]) {
+        savedAN = { ...context.extensionPrompts[AN_KEY] };
+        context.setExtensionPrompt(AN_KEY, '', 1, 0, false, 0);
+    }
 
     try {
         const text = await context.generateQuietPrompt({
@@ -458,6 +477,17 @@ async function callStandardGeneration({ quietPrompt }) {
         return { text: text || '', streamReasoning: null, resultReasoning: null };
     } finally {
         context.setExtensionPrompt(INJECT_KEY, '', 1, 0, false, 1);
+        // Restore Author's Note if we suppressed it
+        if (savedAN) {
+            context.setExtensionPrompt(
+                AN_KEY,
+                savedAN.value ?? '',
+                savedAN.extension ?? 1,
+                savedAN.position ?? 0,
+                savedAN.depth ?? false,
+                savedAN.role ?? 0,
+            );
+        }
     }
 }
 
@@ -725,6 +755,14 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
             }
         }
 
+        // Author's Note as a system message
+        if (settings.includeAuthorsNote) {
+            const authorsNote = getAuthorsNote();
+            if (authorsNote) {
+                messages.push({ role: 'system', content: `Author's Note: ${authorsNote}` });
+            }
+        }
+
         // Chat history as a system message
         if (!settings.characterCardOnly && chat && chat.length > 0) {
             const selectedChat = selectChatHistory(chat, settings);
@@ -774,6 +812,15 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         if (charContext) {
             parts.push('--- CHARACTER INFORMATION ---');
             parts.push(charContext);
+        }
+    }
+
+    // Author's Note
+    if (settings.includeAuthorsNote) {
+        const authorsNote = getAuthorsNote();
+        if (authorsNote) {
+            parts.push("--- AUTHOR'S NOTE ---");
+            parts.push(authorsNote);
         }
     }
 
@@ -900,6 +947,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         }
         const isFirstMessage = !currentThread.titled;
         const globalSettings = getSettings();
+        const threadCtxSettings = getThreadContextSettings(threadId);
 
         const doGenerate = globalSettings.useStandardGeneration
             ? async () => {
@@ -907,7 +955,10 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
-                    const result = await callStandardGeneration({ quietPrompt });
+                    const result = await callStandardGeneration({
+                        quietPrompt,
+                        includeAuthorsNote: threadCtxSettings.includeAuthorsNote,
+                    });
                     if (onStream) onStream(result.text, true);
                     return result;
                 } finally {
@@ -1042,6 +1093,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     }
 
     const globalSettings = getSettings();
+    const threadCtxSettings = getThreadContextSettings(threadId);
 
     // Build prompt / context for swipe
     let swipeCtx = null;
@@ -1069,7 +1121,10 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
-                    const result = await callStandardGeneration({ quietPrompt });
+                    const result = await callStandardGeneration({
+                        quietPrompt,
+                        includeAuthorsNote: threadCtxSettings.includeAuthorsNote,
+                    });
                     if (onStream) onStream(result.text, true);
                     return result;
                 } finally {
