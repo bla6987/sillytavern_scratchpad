@@ -62,28 +62,53 @@ function createPopupElement() {
     popupElement.id = 'scratch-pad-popup';
     popupElement.className = 'sp-popup';
 
-    // Inline style fallbacks — SillyTavern's mobile UI has high z-index elements
-    // that bury CSS-only z-index: 10000. Match the drawer's defensive pattern.
-    // Note: opacity/pointerEvents are toggled via CSS classes, so don't set them inline.
+    // Inline style fallbacks keep the popup visible even if stylesheet loading is delayed.
     Object.assign(popupElement.style, {
         position: 'fixed',
-        top: '0',
-        left: '0',
-        right: '0',
-        bottom: '0',
-        zIndex: '100000',
+        inset: '0',
+        width: '100vw',
+        height: '100vh',
+        minHeight: '100vh',
+        zIndex: '2147483647',
         boxSizing: 'border-box',
+        overflow: 'hidden',
+        isolation: 'isolate',
+        opacity: '0',
+        pointerEvents: 'none',
     });
+    popupElement.style.setProperty('height', '100dvh');
+    popupElement.style.setProperty('min-height', '100dvh');
 
     // Backdrop
     const backdrop = document.createElement('div');
     backdrop.className = 'sp-popup-backdrop';
+    Object.assign(backdrop.style, {
+        position: 'absolute',
+        inset: '0',
+        background: 'rgba(0, 0, 0, 0.6)',
+    });
     backdrop.addEventListener('click', () => dismissPopup());
     popupElement.appendChild(backdrop);
 
     // Bottom sheet
     const sheet = document.createElement('div');
     sheet.className = 'sp-popup-sheet';
+    Object.assign(sheet.style, {
+        position: 'absolute',
+        left: '0',
+        right: '0',
+        bottom: '0',
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        minHeight: '12.5rem',
+        maxHeight: '70vh',
+        transform: 'translateY(100%)',
+        transition: 'transform 0.3s ease',
+        boxSizing: 'border-box',
+    });
+    sheet.style.setProperty('max-height', '70dvh');
+    sheet.style.setProperty('padding-bottom', 'env(safe-area-inset-bottom)');
 
     // Handle swipe to dismiss
     let startY = 0;
@@ -221,11 +246,14 @@ function createPopupElement() {
     sheet.appendChild(actions);
 
     popupElement.appendChild(sheet);
-    document.body.appendChild(popupElement);
+    (document.body || document.documentElement).appendChild(popupElement);
 
     // Animate in
     requestAnimationFrame(() => {
         popupElement.classList.add('sp-popup-visible');
+        popupElement.style.opacity = '1';
+        popupElement.style.pointerEvents = 'auto';
+        sheet.style.transform = 'translateY(0)';
     });
 }
 
@@ -471,6 +499,12 @@ export function dismissPopup() {
 
     popupElement.classList.remove('sp-popup-visible');
     popupElement.classList.add('sp-popup-hiding');
+    popupElement.style.opacity = '0';
+    popupElement.style.pointerEvents = 'none';
+    const sheetEl = popupElement.querySelector('.sp-popup-sheet');
+    if (sheetEl) {
+        sheetEl.style.transform = 'translateY(100%)';
+    }
 
     setTimeout(() => {
         if (popupElement) {

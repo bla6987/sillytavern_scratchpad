@@ -965,12 +965,16 @@ body.sp-fullscreen-open {
    ======================================== */
 .sp-popup {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
     box-sizing: border-box;
-    z-index: 100000;
+    z-index: 2147483647;
+    isolation: isolate;
+    overflow: hidden;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
@@ -987,10 +991,7 @@ body.sp-fullscreen-open {
 
 .sp-popup-backdrop {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     background: rgba(0, 0, 0, 0.6);
 }
 
