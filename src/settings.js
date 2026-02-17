@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     ttsEnabled: false, // Enable TTS for assistant messages
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
     soundOnComplete: false, // Play notification sound when generation finishes
-    pinnedMode: false, // Pin drawer to side instead of overlay (desktop only)
+    displayMode: 'drawer', // Display mode: 'drawer' (overlay), 'pinned' (sidebar), 'fullscreen'
     useMultiMessageFormat: false, // Send structured multi-message array instead of concatenated prompt
     useStandardGeneration: false // Use ST's full generation pipeline (emergency compatibility mode)
 });
@@ -37,6 +37,14 @@ export function getSettings() {
 
     if (!extensionSettings[MODULE_NAME]) {
         extensionSettings[MODULE_NAME] = structuredClone(DEFAULT_SETTINGS);
+    }
+
+    // Migrate pinnedMode → displayMode for existing users (must run before defaults fill)
+    if (Object.hasOwn(extensionSettings[MODULE_NAME], 'pinnedMode')) {
+        if (!Object.hasOwn(extensionSettings[MODULE_NAME], 'displayMode')) {
+            extensionSettings[MODULE_NAME].displayMode = extensionSettings[MODULE_NAME].pinnedMode ? 'pinned' : 'drawer';
+        }
+        delete extensionSettings[MODULE_NAME].pinnedMode;
     }
 
     // Ensure all default keys exist
@@ -74,6 +82,22 @@ export function resetOocPrompt() {
  */
 export function getDefaultOocPrompt() {
     return DEFAULT_OOC_PROMPT;
+}
+
+/**
+ * Get the current display mode
+ * @returns {'drawer'|'pinned'|'fullscreen'} Display mode
+ */
+export function getDisplayMode() {
+    return getSettings().displayMode || 'drawer';
+}
+
+/**
+ * Set the display mode
+ * @param {'drawer'|'pinned'|'fullscreen'} mode Display mode
+ */
+export function setDisplayMode(mode) {
+    updateSettings({ displayMode: mode });
 }
 
 /**
@@ -187,10 +211,10 @@ export function loadSettingsUI() {
         soundToggle.checked = settings.soundOnComplete;
     }
 
-    // Pinned mode toggle
-    const pinnedModeToggle = document.getElementById('sp_pinned_mode');
-    if (pinnedModeToggle) {
-        pinnedModeToggle.checked = settings.pinnedMode;
+    // Display mode select
+    const displayModeSelect = document.getElementById('sp_display_mode');
+    if (displayModeSelect) {
+        displayModeSelect.value = settings.displayMode || 'drawer';
     }
 
     // Multi-message format toggle
@@ -362,11 +386,11 @@ export function initSettingsListeners() {
         });
     }
 
-    // Pinned mode toggle
-    const pinnedModeToggle = document.getElementById('sp_pinned_mode');
-    if (pinnedModeToggle) {
-        bindOnce(pinnedModeToggle, 'change', (e) => {
-            updateSettings({ pinnedMode: e.target.checked });
+    // Display mode select
+    const displayModeSelect = document.getElementById('sp_display_mode');
+    if (displayModeSelect) {
+        bindOnce(displayModeSelect, 'change', (e) => {
+            updateSettings({ displayMode: e.target.value });
         });
     }
 

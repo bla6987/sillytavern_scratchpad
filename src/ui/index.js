@@ -6,11 +6,13 @@
 import { renderThreadList, refreshThreadList } from './threadList.js';
 import { openThread, startNewThread, getCurrentThreadId, renderConversation } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
-import { getSettings, updateSettings } from '../settings.js';
+import { getSettings, updateSettings, getDisplayMode, setDisplayMode } from '../settings.js';
+import { Icons, createButton } from './components.js';
 
 export { renderThreadList, refreshThreadList } from './threadList.js';
 export { openThread, startNewThread, getCurrentThreadId } from './conversation.js';
 export { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
+export { isFullscreenMode, getConversationContainer };
 
 let drawerElement = null;
 let backdropElement = null;
@@ -18,6 +20,9 @@ let isPinned = false;
 let keydownHandler = null;
 let popstateHandler = null;
 let resizeHandler = null;
+let overlayElement = null;
+let fullscreenElement = null;
+let currentDisplayMode = null; // tracks active mode: 'drawer' | 'pinned' | 'fullscreen'
 
 /**
  * Check if viewport is mobile width
@@ -25,6 +30,25 @@ let resizeHandler = null;
  */
 function isMobileViewport() {
     return window.innerWidth <= 480;
+}
+
+/**
+ * Check if currently in fullscreen mode
+ * @returns {boolean} True if fullscreen mode is active
+ */
+function isFullscreenMode() {
+    return currentDisplayMode === 'fullscreen';
+}
+
+/**
+ * Get the conversation container for the current display mode
+ * @returns {HTMLElement|null} The conversation content container
+ */
+function getConversationContainer() {
+    const fullscreenMain = document.querySelector('.sp-fullscreen-main .sp-drawer-content');
+    if (fullscreenMain) return fullscreenMain;
+    const drawer = document.getElementById('scratch-pad-drawer');
+    return drawer?.querySelector('.sp-drawer-content') || null;
 }
 
 /**
@@ -153,10 +177,21 @@ function hideBackdrop() {
 }
 
 /**
- * Open the scratch pad drawer
+ * Open the scratch pad in the configured display mode
  * @param {string} [threadId] Optional thread ID to open directly
  */
 export function openScratchPad(threadId = null) {
+    const mode = getDisplayMode();
+
+    // Fullscreen mode (desktop only, falls back to drawer on mobile)
+    if (mode === 'fullscreen' && !isMobileViewport()) {
+        openFullscreen(threadId);
+        return;
+    }
+
+    // Pinned mode (desktop only, falls back to drawer on mobile)
+    const usePinned = mode === 'pinned' && !isMobileViewport();
+
     // Check if drawer exists AND is still in the DOM
     if (!drawerElement || !drawerElement.isConnected) {
         if (drawerElement && !drawerElement.isConnected) {
@@ -171,20 +206,18 @@ export function openScratchPad(threadId = null) {
         console.error('[ScratchPad UI] No content element found in drawer');
         return;
     }
+
     // Prevent body scroll (unless pinned)
     document.body.classList.add('sp-drawer-open');
 
-    // Check if we should use pinned mode
-    const settings = getSettings();
-    isPinned = settings.pinnedMode && !isMobileViewport();
+    isPinned = usePinned;
+    currentDisplayMode = usePinned ? 'pinned' : 'drawer';
 
     if (isPinned) {
-        // Pinned mode: no backdrop, add pinned classes
         document.body.classList.add('sp-drawer-pinned');
         drawerElement.classList.add('sp-pinned');
         hideBackdrop();
     } else {
-        // Overlay mode: show backdrop
         document.body.classList.remove('sp-drawer-pinned');
         drawerElement.classList.remove('sp-pinned');
         showBackdrop();
@@ -209,25 +242,175 @@ export function openScratchPad(threadId = null) {
 }
 
 /**
- * Close the scratch pad drawer
+ * Create the fullscreen overlay and modal DOM
+ */
+function createFullscreen() {
+    // Clean up any existing fullscreen elements
+    document.getElementById('scratch-pad-overlay')?.remove();
+
+    // Overlay (backdrop with blur)
+    overlayElement = document.createElement('div');
+    overlayElement.id = 'scratch-pad-overlay';
+    overlayElement.className = 'sp-overlay';
+    overlayElement.addEventListener('click', (e) => {
+        if (e.target === overlayElement) {
+            closeFullscreen();
+        }
+    });
+
+    // Modal container
+    fullscreenElement = document.createElement('div');
+    fullscreenElement.id = 'scratch-pad-fullscreen';
+    fullscreenElement.className = 'sp-fullscreen';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'sp-fullscreen-header';
+
+    const titleContainer = document.createElement('div');
+    titleContainer.className = 'sp-title-container';
+
+    const titleEl = document.createElement('h2');
+    titleEl.className = 'sp-title';
+    titleEl.textContent = 'Scratch Pad';
+    titleContainer.appendChild(titleEl);
+
+    const subtitleEl = document.createElement('span');
+    subtitleEl.className = 'sp-subtitle';
+    subtitleEl.textContent = 'Out of Character';
+    titleContainer.appendChild(subtitleEl);
+
+    header.appendChild(titleContainer);
+
+    const closeBtn = createButton({
+        icon: Icons.close,
+        className: 'sp-close-btn',
+        ariaLabel: 'Close scratch pad',
+        onClick: () => closeFullscreen()
+    });
+    header.appendChild(closeBtn);
+
+    fullscreenElement.appendChild(header);
+
+    // Body (split layout)
+    const body = document.createElement('div');
+    body.className = 'sp-fullscreen-body';
+
+    // Sidebar (thread list)
+    const sidebar = document.createElement('div');
+    sidebar.className = 'sp-fullscreen-sidebar';
+    const sidebarContent = document.createElement('div');
+    sidebarContent.className = 'sp-drawer-content';
+    sidebar.appendChild(sidebarContent);
+    body.appendChild(sidebar);
+
+    // Main (conversation)
+    const main = document.createElement('div');
+    main.className = 'sp-fullscreen-main';
+    const mainContent = document.createElement('div');
+    mainContent.className = 'sp-drawer-content';
+    main.appendChild(mainContent);
+    body.appendChild(main);
+
+    fullscreenElement.appendChild(body);
+    overlayElement.appendChild(fullscreenElement);
+    document.body.appendChild(overlayElement);
+}
+
+/**
+ * Open the fullscreen display mode
+ * @param {string} [threadId] Optional thread ID to open directly
+ */
+function openFullscreen(threadId = null) {
+    if (!overlayElement || !overlayElement.isConnected) {
+        createFullscreen();
+    }
+
+    currentDisplayMode = 'fullscreen';
+    document.body.classList.add('sp-fullscreen-open');
+
+    // Show with animation
+    overlayElement.style.display = 'block';
+    // Force reflow before adding visible class for transition
+    void overlayElement.offsetHeight;
+    overlayElement.classList.add('visible');
+
+    // Render thread list in sidebar
+    const sidebarContent = overlayElement.querySelector('.sp-fullscreen-sidebar .sp-drawer-content');
+    if (sidebarContent) {
+        renderThreadList(sidebarContent);
+    }
+
+    // Render conversation or empty state in main
+    const mainContent = overlayElement.querySelector('.sp-fullscreen-main .sp-drawer-content');
+    if (mainContent) {
+        if (threadId) {
+            openThread(threadId);
+        } else {
+            showFullscreenEmptyState(mainContent);
+        }
+    }
+}
+
+/**
+ * Show empty state in fullscreen main panel
+ * @param {HTMLElement} container Main content container
+ */
+function showFullscreenEmptyState(container) {
+    container.innerHTML = '';
+    container.className = 'sp-drawer-content';
+    const empty = document.createElement('div');
+    empty.className = 'sp-fullscreen-empty';
+    empty.innerHTML = `
+        <div class="sp-empty-icon">${Icons.thread}</div>
+        <p>Select a thread or start a new conversation</p>
+    `;
+    container.appendChild(empty);
+}
+
+/**
+ * Close the fullscreen display
+ */
+function closeFullscreen() {
+    if (!overlayElement) return;
+
+    overlayElement.classList.remove('visible');
+    document.body.classList.remove('sp-fullscreen-open');
+    currentDisplayMode = null;
+
+    // Remove after transition
+    setTimeout(() => {
+        if (overlayElement && !overlayElement.classList.contains('visible')) {
+            overlayElement.remove();
+            overlayElement = null;
+            fullscreenElement = null;
+        }
+    }, 350);
+}
+
+/**
+ * Close the scratch pad (any mode)
  */
 export function closeScratchPad() {
+    if (currentDisplayMode === 'fullscreen') {
+        closeFullscreen();
+        return;
+    }
+
     if (!drawerElement) {
         return;
     }
 
     drawerElement.classList.remove('open');
     drawerElement.classList.remove('sp-pinned');
-    // Reset inline transform to allow CSS default (translateX(100%)) for close animation
     drawerElement.style.transform = '';
     document.body.classList.remove('sp-drawer-open');
     document.body.classList.remove('sp-drawer-pinned');
     isPinned = false;
+    currentDisplayMode = null;
 
-    // Hide backdrop
     hideBackdrop();
 
-    // Remove drawer element after transition completes (300ms as per CSS)
     setTimeout(() => {
         if (drawerElement && !drawerElement.classList.contains('open')) {
             drawerElement.remove();
@@ -240,7 +423,7 @@ export function closeScratchPad() {
  * Toggle the scratch pad drawer
  */
 export function toggleScratchPad() {
-    if (drawerElement && drawerElement.classList.contains('open')) {
+    if (isScratchPadOpen()) {
         closeScratchPad();
     } else {
         openScratchPad();
@@ -252,6 +435,9 @@ export function toggleScratchPad() {
  * @returns {boolean} True if drawer is open
  */
 export function isScratchPadOpen() {
+    if (currentDisplayMode === 'fullscreen') {
+        return overlayElement && overlayElement.classList.contains('visible');
+    }
     return drawerElement && drawerElement.classList.contains('open');
 }
 
@@ -261,16 +447,29 @@ export function isScratchPadOpen() {
 export function refreshScratchPadUI() {
     if (!isScratchPadOpen()) return;
 
-    const content = drawerElement.querySelector('.sp-drawer-content');
+    if (currentDisplayMode === 'fullscreen') {
+        // Refresh sidebar thread list
+        const sidebarContent = document.querySelector('.sp-fullscreen-sidebar .sp-drawer-content');
+        if (sidebarContent) {
+            renderThreadList(sidebarContent);
+        }
+        // Refresh main conversation if a thread is open
+        const mainContent = document.querySelector('.sp-fullscreen-main .sp-drawer-content');
+        const currentThread = getCurrentThreadId();
+        if (mainContent && currentThread) {
+            renderConversation(mainContent);
+        }
+        return;
+    }
+
+    const content = drawerElement?.querySelector('.sp-drawer-content');
     if (!content) return;
 
     const currentThread = getCurrentThreadId();
 
     if (currentThread) {
-        // Refresh conversation view
         renderConversation(content);
     } else {
-        // Refresh thread list
         renderThreadList(content);
     }
 }
@@ -293,6 +492,7 @@ export function initUI() {
     isPinned = false;
     document.body.classList.remove('sp-drawer-open');
     document.body.classList.remove('sp-drawer-pinned');
+    document.body.classList.remove('sp-fullscreen-open');
 
     // Handle escape key to close (remove old listener first to prevent duplicates)
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
@@ -318,22 +518,35 @@ export function initUI() {
     };
     window.addEventListener('popstate', popstateHandler);
 
-    // Handle resize - force overlay mode on mobile even if pinned
+    // Handle resize - force overlay mode on mobile even if pinned/fullscreen
     if (resizeHandler) window.removeEventListener('resize', resizeHandler);
     resizeHandler = () => {
-        if (isPinned && isMobileViewport() && isScratchPadOpen()) {
-            // Force overlay mode on mobile
+        if (!isScratchPadOpen()) return;
+
+        if (currentDisplayMode === 'fullscreen') {
+            // On mobile, fall back to drawer mode
+            if (isMobileViewport()) {
+                closeFullscreen();
+                // Reopen as drawer
+                currentDisplayMode = 'drawer';
+                openScratchPad();
+            }
+            return;
+        }
+
+        if (isPinned && isMobileViewport()) {
             isPinned = false;
+            currentDisplayMode = 'drawer';
             document.body.classList.remove('sp-drawer-pinned');
             if (drawerElement) {
                 drawerElement.classList.remove('sp-pinned');
             }
             showBackdrop();
-        } else if (!isPinned && !isMobileViewport() && isScratchPadOpen()) {
-            // Check if we should switch to pinned mode
-            const settings = getSettings();
-            if (settings.pinnedMode) {
+        } else if (!isPinned && !isMobileViewport()) {
+            const mode = getDisplayMode();
+            if (mode === 'pinned') {
                 isPinned = true;
+                currentDisplayMode = 'pinned';
                 document.body.classList.add('sp-drawer-pinned');
                 if (drawerElement) {
                     drawerElement.classList.add('sp-pinned');
@@ -359,6 +572,11 @@ export function disposeUI() {
         backdropElement.remove();
         backdropElement = null;
     }
+    if (overlayElement) {
+        overlayElement.remove();
+        overlayElement = null;
+    }
+    fullscreenElement = null;
 
     // Remove global event listeners
     if (keydownHandler) {
@@ -377,7 +595,9 @@ export function disposeUI() {
     // Clean up body classes
     document.body.classList.remove('sp-drawer-open');
     document.body.classList.remove('sp-drawer-pinned');
+    document.body.classList.remove('sp-fullscreen-open');
     isPinned = false;
+    currentDisplayMode = null;
 }
 
 /**
@@ -385,12 +605,13 @@ export function disposeUI() {
  * @returns {boolean} New pinned state
  */
 export function togglePinnedMode() {
-    const settings = getSettings();
-    const newState = !settings.pinnedMode;
-    updateSettings({ pinnedMode: newState });
+    const currentMode = getDisplayMode();
+    const newMode = currentMode === 'pinned' ? 'drawer' : 'pinned';
+    setDisplayMode(newMode);
 
-    if (isScratchPadOpen()) {
-        isPinned = newState && !isMobileViewport();
+    if (isScratchPadOpen() && currentDisplayMode !== 'fullscreen') {
+        isPinned = newMode === 'pinned' && !isMobileViewport();
+        currentDisplayMode = isPinned ? 'pinned' : 'drawer';
         if (isPinned) {
             document.body.classList.add('sp-drawer-pinned');
             if (drawerElement) {
@@ -405,7 +626,7 @@ export function togglePinnedMode() {
             showBackdrop();
         }
     }
-    return newState;
+    return isPinned;
 }
 
 /**

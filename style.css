@@ -154,6 +154,192 @@ body.sp-drawer-pinned .sp-drawer-backdrop {
     .sp-button.sp-pin-btn { display: none !important; }
 }
 
+/* ========================================
+   Fullscreen Mode
+   ======================================== */
+
+/* Body lock */
+body.sp-fullscreen-open {
+    overflow: hidden;
+}
+
+/* Overlay backdrop */
+.sp-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 4px));
+    -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength, 4px));
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sp-overlay.visible {
+    opacity: 1;
+}
+
+/* Modal container */
+.sp-fullscreen {
+    display: flex;
+    flex-direction: column;
+    max-width: var(--sheldWidth, 1200px);
+    width: calc(100vw - 4rem);
+    max-height: calc(100dvh - 4rem);
+    height: calc(100dvh - 4rem);
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    background: var(--sp-bg-primary);
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius-lg);
+    box-shadow: 0 0 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6));
+    overflow: hidden;
+}
+
+/* Fullscreen header */
+.sp-fullscreen-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    background: var(--sp-bg-secondary);
+    border-bottom: 1px solid var(--sp-border);
+    flex-shrink: 0;
+}
+
+/* Split layout body */
+.sp-fullscreen-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* Sidebar (thread list) */
+.sp-fullscreen-sidebar {
+    width: 280px;
+    border-right: 1px solid var(--sp-border);
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sp-fullscreen-sidebar .sp-drawer-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Main conversation area */
+.sp-fullscreen-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.sp-fullscreen-main .sp-drawer-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Empty state for main panel */
+.sp-fullscreen-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--sp-text-muted);
+    text-align: center;
+    padding: 2rem;
+    gap: 1rem;
+}
+
+.sp-fullscreen-empty .sp-empty-icon {
+    font-size: 3rem;
+    opacity: 0.4;
+}
+
+/* Element suppression in fullscreen */
+.sp-fullscreen-main .sp-back-btn {
+    display: none;
+}
+
+.sp-fullscreen-sidebar .sp-pin-btn,
+.sp-fullscreen-main .sp-pin-btn,
+.sp-fullscreen-sidebar .sp-close-btn,
+.sp-fullscreen-main .sp-close-btn {
+    display: none;
+}
+
+/* Scrollbar styling for fullscreen panels */
+.sp-fullscreen-sidebar .sp-thread-list::-webkit-scrollbar,
+.sp-fullscreen-main .sp-messages::-webkit-scrollbar {
+    width: 0.375rem;
+}
+
+.sp-fullscreen-sidebar .sp-thread-list::-webkit-scrollbar-track,
+.sp-fullscreen-main .sp-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sp-fullscreen-sidebar .sp-thread-list::-webkit-scrollbar-thumb,
+.sp-fullscreen-main .sp-messages::-webkit-scrollbar-thumb {
+    background: var(--sp-border);
+    border-radius: 0.1875rem;
+}
+
+/* Mobile fullscreen (<=48rem / 768px) */
+@media (max-width: 48rem) {
+    .sp-fullscreen {
+        width: 100vw;
+        max-width: 100vw;
+        max-height: 100dvh;
+        height: 100dvh;
+        min-height: 100dvh;
+        border-radius: 0;
+        margin: 0;
+        border: none;
+    }
+
+    .sp-fullscreen-sidebar {
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+    }
+
+    .sp-fullscreen-sidebar.sp-fs-hidden {
+        display: none;
+    }
+
+    .sp-fullscreen-main.sp-fs-hidden {
+        display: none;
+    }
+
+    .sp-fullscreen-main .sp-back-btn {
+        display: inline-flex;
+    }
+}
+
+/* Reduced motion for fullscreen */
+@media (prefers-reduced-motion: reduce) {
+    .sp-overlay {
+        transition: none;
+    }
+}
+
 .sp-drawer-content {
     flex: 1 1 auto;
     display: flex;

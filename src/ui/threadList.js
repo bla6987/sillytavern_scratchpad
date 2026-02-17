@@ -198,6 +198,13 @@ function createThreadItem(thread) {
         try {
             const { openThread } = await getConversationModule();
             openThread(thread.id);
+            // In fullscreen mobile, hide sidebar and show main
+            const fsSidebar = document.querySelector('.sp-fullscreen-sidebar');
+            const fsMain = document.querySelector('.sp-fullscreen-main');
+            if (fsSidebar && fsMain && window.innerWidth <= 768) {
+                fsSidebar.classList.add('sp-fs-hidden');
+                fsMain.classList.remove('sp-fs-hidden');
+            }
         } catch (err) {
             console.error('[ScratchPad] Error opening thread:', err);
         }
@@ -317,6 +324,13 @@ async function handleNewThread() {
     try {
         const { startNewThread } = await getConversationModule();
         startNewThread();
+        // In fullscreen mobile, show main panel
+        const fsSidebar = document.querySelector('.sp-fullscreen-sidebar');
+        const fsMain = document.querySelector('.sp-fullscreen-main');
+        if (fsSidebar && fsMain && window.innerWidth <= 768) {
+            fsSidebar.classList.add('sp-fs-hidden');
+            fsMain.classList.remove('sp-fs-hidden');
+        }
     } catch (err) {
         console.error('[ScratchPad] Error starting new thread:', err);
     }
@@ -350,6 +364,19 @@ async function handleQuickSend(message) {
     try {
         const { openThread } = await getConversationModule();
         openThread(thread.id, trimmedMessage);
+        // In fullscreen, ensure main is visible and refresh sidebar
+        const fsSidebar = document.querySelector('.sp-fullscreen-sidebar');
+        const fsMain = document.querySelector('.sp-fullscreen-main');
+        if (fsSidebar && fsMain) {
+            fsMain.classList.remove('sp-fs-hidden');
+            if (window.innerWidth <= 768) {
+                fsSidebar.classList.add('sp-fs-hidden');
+            }
+            const sidebarContent = fsSidebar.querySelector('.sp-drawer-content');
+            if (sidebarContent) {
+                renderThreadList(sidebarContent);
+            }
+        }
     } catch (err) {
         console.error('[ScratchPad] Error opening thread:', err);
     }

@@ -4,7 +4,7 @@
  */
 
 import { ensureScratchPadExists } from './src/storage.js';
-import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize } from './src/settings.js';
+import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize, getDisplayMode } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
 import { isChatActive } from './src/generation.js';
 import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen } from './src/ui/index.js';
@@ -217,7 +217,7 @@ async function init() {
     }
 
     // Auto-open if pinned mode is enabled and a chat is active
-    if (settings.pinnedMode && isChatActive()) {
+    if (getDisplayMode() === 'pinned' && isChatActive()) {
         setTimeout(() => openScratchPad(), 500);
     }
 

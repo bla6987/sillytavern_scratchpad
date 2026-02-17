@@ -30,11 +30,15 @@
                     <span id="sp_text_size_value">14px</span>
                 </div>
 
-                <label class="checkbox_label" for="sp_pinned_mode">
-                    <input type="checkbox" id="sp_pinned_mode">
-                    <span>Pin to Side (Desktop Only)</span>
-                    <small>Keep Scratch Pad visible next to chat instead of overlaying it</small>
+                <label for="sp_display_mode">
+                    <span>Display Mode:</span>
+                    <small>How the Scratch Pad opens (Pinned and Fullscreen are desktop only)</small>
                 </label>
+                <select id="sp_display_mode" class="text_pole">
+                    <option value="drawer">Drawer (Overlay)</option>
+                    <option value="pinned">Pinned Sidebar</option>
+                    <option value="fullscreen">Fullscreen</option>
+                </select>
 
                 <hr>
 

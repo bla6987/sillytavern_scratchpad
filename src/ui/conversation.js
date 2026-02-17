@@ -7,7 +7,7 @@ import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSw
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
-import { isPinnedMode, togglePinnedMode } from './index.js';
+import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 
 let conversationContainer = null;
@@ -79,10 +79,7 @@ export function openThread(threadId, initialMessage = null) {
     currentThreadId = threadId;
     pendingMessage = initialMessage;
 
-    const drawer = document.getElementById('scratch-pad-drawer');
-    if (!drawer) return;
-
-    const content = drawer.querySelector('.sp-drawer-content');
+    const content = getConversationContainer();
     if (!content) return;
 
     renderConversation(content);
@@ -95,10 +92,7 @@ export function startNewThread() {
     currentThreadId = null;
     pendingMessage = null;
 
-    const drawer = document.getElementById('scratch-pad-drawer');
-    if (!drawer) return;
-
-    const content = drawer.querySelector('.sp-drawer-content');
+    const content = getConversationContainer();
     if (!content) return;
 
     renderConversation(content, true);
@@ -1348,13 +1342,40 @@ function goBackToThreadList() {
     currentThreadId = null;
     removeViewportHandler();
 
+    if (isFullscreenMode()) {
+        // In fullscreen mode on mobile, show sidebar and hide main
+        const sidebar = document.querySelector('.sp-fullscreen-sidebar');
+        const main = document.querySelector('.sp-fullscreen-main');
+        if (sidebar && main) {
+            sidebar.classList.remove('sp-fs-hidden');
+            main.classList.add('sp-fs-hidden');
+        }
+        // Show empty state in main
+        const mainContent = document.querySelector('.sp-fullscreen-main .sp-drawer-content');
+        if (mainContent) {
+            mainContent.innerHTML = '';
+            mainContent.className = 'sp-drawer-content';
+            const empty = document.createElement('div');
+            empty.className = 'sp-fullscreen-empty';
+            empty.textContent = 'Select a thread or start a new conversation';
+            mainContent.appendChild(empty);
+        }
+        // Refresh sidebar thread list
+        import('./threadList.js').then(({ renderThreadList }) => {
+            const sidebarContent = document.querySelector('.sp-fullscreen-sidebar .sp-drawer-content');
+            if (sidebarContent) {
+                renderThreadList(sidebarContent);
+            }
+        });
+        return;
+    }
+
     const drawer = document.getElementById('scratch-pad-drawer');
     if (!drawer) return;
 
     const content = drawer.querySelector('.sp-drawer-content');
     if (!content) return;
 
-    // Import dynamically to avoid circular dependency
     import('./threadList.js').then(({ renderThreadList }) => {
         renderThreadList(content);
     });
