@@ -412,7 +412,7 @@ body.sp-fullscreen-open {
     color: white;
     border: none;
     border-radius: var(--sp-radius);
-    font-size: 0.875rem;
+    font-size: var(--sp-text-size);
     font-weight: 500;
     cursor: pointer;
     transition: background var(--sp-transition);
@@ -610,6 +610,7 @@ body.sp-fullscreen-open {
     display: flex;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     background: var(--sp-bg-secondary);
     border-top: 1px solid var(--sp-border);
     flex-shrink: 0;
@@ -622,7 +623,7 @@ body.sp-fullscreen-open {
     border: 1px solid var(--sp-border);
     border-radius: var(--sp-radius);
     color: var(--sp-text-primary);
-    font-size: 0.875rem;
+    font-size: var(--sp-text-size);
     resize: none;
     min-height: var(--sp-min-touch-target);
 }
@@ -683,7 +684,7 @@ body.sp-fullscreen-open {
 .sp-message-user {
     align-self: flex-end;
     background: var(--sp-user-msg-bg);
-    color: white;
+    color: var(--sp-text-primary);
     border-bottom-right-radius: 4px;
 }
 
@@ -772,7 +773,7 @@ body.sp-fullscreen-open {
 }
 
 .sp-message-user .sp-message-time {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--sp-text-muted);
 }
 
 /* Message Footer */
@@ -802,8 +803,6 @@ body.sp-fullscreen-open {
     color: var(--sp-text-secondary);
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
-    min-width: auto;
-    min-height: auto;
 }
 
 .sp-speak-btn:hover:not(:disabled) {
@@ -829,8 +828,6 @@ body.sp-fullscreen-open {
     cursor: pointer;
     opacity: 0.7;
     transition: opacity var(--sp-transition), background var(--sp-transition), border-color var(--sp-transition);
-    min-width: auto;
-    min-height: auto;
 }
 
 .sp-apply-swipe:hover:not(:disabled) {
@@ -883,6 +880,7 @@ body.sp-fullscreen-open {
    ======================================== */
 .sp-input-container {
     padding: 0.75rem 1rem;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     background: var(--sp-bg-secondary);
     border-top: 1px solid var(--sp-border);
     flex-shrink: 0;
@@ -902,7 +900,7 @@ body.sp-fullscreen-open {
     border: 1px solid var(--sp-border);
     border-radius: var(--sp-radius);
     color: var(--sp-text-primary);
-    font-size: 0.875rem;
+    font-size: var(--sp-text-size);
     resize: none;
     min-height: var(--sp-min-touch-target);
     max-height: 9.375rem;
@@ -1439,11 +1437,12 @@ body.sp-fullscreen-open {
 .sp-cancel-btn {
     margin-left: auto;
     padding: 0.25rem 0.5rem;
+    min-height: var(--sp-min-touch-target);
     font-size: 0.75rem;
     background: transparent;
     border: 1px solid var(--sp-text-muted);
     color: var(--sp-text-muted);
-    border-radius: 0.25rem;
+    border-radius: var(--sp-radius);
     cursor: pointer;
     transition: all 0.2s ease;
     animation: none;
@@ -1666,7 +1665,11 @@ body.sp-fullscreen-open {
 .sp-button:focus-visible,
 .sp-quick-input:focus-visible,
 .sp-message-input:focus-visible,
-.sp-thread-item:focus-visible {
+.sp-thread-item:focus-visible,
+.sp-thread-main:focus-visible,
+.sp-swipe-arrow:focus-visible,
+.sp-context-details summary:focus-visible,
+.sp-settings-details summary:focus-visible {
     outline: 2px solid var(--sp-accent);
     outline-offset: 2px;
 }
@@ -1753,9 +1756,9 @@ body.sp-fullscreen-open {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 1.5rem;
-    min-width: 1.5rem;
-    min-height: auto;
+    width: var(--sp-min-touch-target);
+    min-width: var(--sp-min-touch-target);
+    min-height: var(--sp-min-touch-target);
     padding: 0;
     background: transparent;
     border: none;
@@ -1821,10 +1824,9 @@ body.sp-fullscreen-open {
     background: transparent;
     border: none;
     color: var(--sp-text-muted);
-    padding: 0.125rem 0.25rem;
+    padding: 0.25rem 0.5rem;
     font-size: 0.6875rem;
-    min-width: auto;
-    min-height: auto;
+    min-height: var(--sp-min-touch-target);
     opacity: 0;
     transition: opacity var(--sp-transition), color var(--sp-transition);
     cursor: pointer;
@@ -1860,5 +1862,18 @@ body.sp-fullscreen-open {
 
     .sp-swipe-delete {
         opacity: 0.6;
+    }
+}
+
+/* Mobile-specific layout adjustments */
+@media (max-width: 30rem) {
+    .sp-context-options {
+        flex-shrink: 1;
+        max-height: 40vh;
+        overflow-y: auto;
+    }
+
+    .sp-message-input {
+        max-height: 5rem;
     }
 }

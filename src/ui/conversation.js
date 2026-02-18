@@ -263,10 +263,10 @@ export function renderConversation(container, isNewThread = false) {
         }
     });
 
-    // Auto-resize textarea
+    // Auto-resize textarea (CSS max-height constrains the final size)
     textarea.addEventListener('input', debounce(() => {
         textarea.style.height = 'auto';
-        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+        textarea.style.height = textarea.scrollHeight + 'px';
     }, 50));
 
     inputWrapper.appendChild(textarea);
@@ -1439,6 +1439,11 @@ function removeViewportHandler() {
         window.visualViewport.removeEventListener('resize', currentViewportHandler);
         currentViewportHandler = null;
     }
+    // Reset container height when keyboard handler is removed
+    const container = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+    if (container) {
+        container.style.removeProperty('height');
+    }
 }
 
 /**
@@ -1461,17 +1466,12 @@ function setupViewportHandlers() {
 
         // Create and store new handler
         currentViewportHandler = debounce(() => {
-            const inputContainer = document.querySelector('.sp-input-container');
-            if (inputContainer) {
-                const viewportHeight = window.visualViewport.height;
-                const windowHeight = window.innerHeight;
-                const keyboardHeight = windowHeight - viewportHeight;
-
-                if (keyboardHeight > 0) {
-                    inputContainer.style.bottom = `${keyboardHeight}px`;
-                } else {
-                    inputContainer.style.bottom = '0';
-                }
+            const viewportHeight = window.visualViewport.height;
+            // Resize the drawer/fullscreen container to match the visual viewport,
+            // so the flex layout naturally adjusts the messages area for the keyboard
+            const container = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+            if (container) {
+                container.style.setProperty('height', `${viewportHeight}px`, 'important');
             }
             scrollToBottom();
         }, 50);

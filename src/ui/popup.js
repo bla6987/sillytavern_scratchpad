@@ -101,7 +101,6 @@ function createPopupElement() {
         display: 'flex',
         flexDirection: 'column',
         width: '100%',
-        minHeight: '12.5rem',
         maxHeight: '70vh',
         transform: 'translateY(100%)',
         transition: 'transform 0.3s ease',

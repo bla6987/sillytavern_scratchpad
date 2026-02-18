@@ -29,7 +29,7 @@ let currentDisplayMode = null; // tracks active mode: 'drawer' | 'pinned' | 'ful
  * @returns {boolean} True if mobile viewport
  */
 function isMobileViewport() {
-    return window.innerWidth <= 480;
+    return window.matchMedia('(max-width: 30rem)').matches;
 }
 
 /**
@@ -90,14 +90,14 @@ function createDrawer() {
     content.className = 'sp-drawer-content';
     drawerElement.appendChild(content);
 
-    // Prevent body scroll when drawer is open
+    // Prevent body scroll when drawer is open (non-passive for iOS Safari)
     drawerElement.addEventListener('touchmove', (e) => {
         const target = e.target;
         const scrollableEl = target.closest('.sp-messages, .sp-thread-list, .sp-popup-content');
         if (!scrollableEl) {
-            // Allow scrolling only in scrollable containers
+            e.preventDefault();
         }
-    }, { passive: true });
+    }, { passive: false });
 
     document.body.appendChild(drawerElement);
 

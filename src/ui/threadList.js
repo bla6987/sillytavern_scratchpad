@@ -194,6 +194,14 @@ function createThreadItem(thread) {
     // Main clickable area
     const mainContent = document.createElement('div');
     mainContent.className = 'sp-thread-main';
+    mainContent.setAttribute('role', 'button');
+    mainContent.setAttribute('tabindex', '0');
+    mainContent.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            mainContent.click();
+        }
+    });
     mainContent.addEventListener('click', async () => {
         try {
             const { openThread } = await getConversationModule();

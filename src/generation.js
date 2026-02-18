@@ -482,9 +482,9 @@ async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }
             context.setExtensionPrompt(
                 AN_KEY,
                 savedAN.value ?? '',
-                savedAN.extension ?? 1,
-                savedAN.position ?? 0,
-                savedAN.depth ?? false,
+                savedAN.position ?? 1,
+                savedAN.depth ?? 0,
+                savedAN.scan ?? false,
                 savedAN.role ?? 0,
             );
         }
@@ -733,13 +733,8 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         if (settings.includeSystemPrompt) {
             try {
                 const stContext = SillyTavern.getContext();
-                let stSystemPrompt = '';
-                if (typeof stContext.getSystemPrompt === 'function') {
-                    stSystemPrompt = stContext.getSystemPrompt();
-                } else if (typeof stContext.systemPrompt === 'string') {
-                    stSystemPrompt = stContext.systemPrompt;
-                }
-                if (stSystemPrompt && stSystemPrompt.trim()) {
+                const stSystemPrompt = stContext.chat_metadata?.system_prompt || '';
+                if (stSystemPrompt.trim()) {
                     messages.push({ role: 'system', content: stSystemPrompt.trim() });
                 }
             } catch (e) {
@@ -791,13 +786,8 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     if (settings.includeSystemPrompt) {
         try {
             const stContext = SillyTavern.getContext();
-            let stSystemPrompt = '';
-            if (typeof stContext.getSystemPrompt === 'function') {
-                stSystemPrompt = stContext.getSystemPrompt();
-            } else if (typeof stContext.systemPrompt === 'string') {
-                stSystemPrompt = stContext.systemPrompt;
-            }
-            if (stSystemPrompt && stSystemPrompt.trim()) {
+            const stSystemPrompt = stContext.chat_metadata?.system_prompt || '';
+            if (stSystemPrompt.trim()) {
                 parts.push('--- SYSTEM PROMPT ---');
                 parts.push(stSystemPrompt.trim());
             }
@@ -878,8 +868,6 @@ export function cancelGeneration() {
             const context = SillyTavern.getContext();
             if (context.stopGeneration) {
                 context.stopGeneration();
-            } else if (context.abortController) {
-                context.abortController.abort();
             }
         } catch (e) {
             console.warn('[ScratchPad] Could not stop ST generation:', e);

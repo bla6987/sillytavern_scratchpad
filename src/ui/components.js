@@ -94,6 +94,7 @@ export function createButton({ text, icon, className, onClick, ariaLabel, disabl
     if (icon) {
         const iconSpan = document.createElement('span');
         iconSpan.className = 'sp-button-icon';
+        iconSpan.setAttribute('aria-hidden', 'true');
         iconSpan.innerHTML = icon;
         button.appendChild(iconSpan);
     }
