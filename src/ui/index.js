@@ -519,41 +519,52 @@ export function initUI() {
     window.addEventListener('popstate', popstateHandler);
 
     // Handle resize - force overlay mode on mobile even if pinned/fullscreen
+    // Debounced with rAF to avoid layout thrashing on rapid resize events
     if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+    let resizeRafId = null;
+    let cachedIsMobile = isMobileViewport();
     resizeHandler = () => {
-        if (!isScratchPadOpen()) return;
+        if (resizeRafId !== null) return;
+        resizeRafId = requestAnimationFrame(() => {
+            resizeRafId = null;
+            if (!isScratchPadOpen()) return;
 
-        if (currentDisplayMode === 'fullscreen') {
-            // On mobile, fall back to drawer mode
-            if (isMobileViewport()) {
-                closeFullscreen();
-                // Reopen as drawer
-                currentDisplayMode = 'drawer';
-                openScratchPad();
-            }
-            return;
-        }
-
-        if (isPinned && isMobileViewport()) {
-            isPinned = false;
-            currentDisplayMode = 'drawer';
-            document.body.classList.remove('sp-drawer-pinned');
-            if (drawerElement) {
-                drawerElement.classList.remove('sp-pinned');
-            }
-            showBackdrop();
-        } else if (!isPinned && !isMobileViewport()) {
-            const mode = getDisplayMode();
-            if (mode === 'pinned') {
-                isPinned = true;
-                currentDisplayMode = 'pinned';
-                document.body.classList.add('sp-drawer-pinned');
-                if (drawerElement) {
-                    drawerElement.classList.add('sp-pinned');
+            const nowMobile = isMobileViewport();
+            // Only proceed if viewport mobile-ness actually changed or we need to check mode
+            if (currentDisplayMode === 'fullscreen') {
+                if (nowMobile) {
+                    cachedIsMobile = nowMobile;
+                    closeFullscreen();
+                    // Reopen as drawer
+                    currentDisplayMode = 'drawer';
+                    openScratchPad();
                 }
-                hideBackdrop();
+                return;
             }
-        }
+
+            if (isPinned && nowMobile) {
+                cachedIsMobile = nowMobile;
+                isPinned = false;
+                currentDisplayMode = 'drawer';
+                document.body.classList.remove('sp-drawer-pinned');
+                if (drawerElement) {
+                    drawerElement.classList.remove('sp-pinned');
+                }
+                showBackdrop();
+            } else if (!isPinned && !nowMobile) {
+                const mode = getDisplayMode();
+                if (mode === 'pinned') {
+                    cachedIsMobile = nowMobile;
+                    isPinned = true;
+                    currentDisplayMode = 'pinned';
+                    document.body.classList.add('sp-drawer-pinned');
+                    if (drawerElement) {
+                        drawerElement.classList.add('sp-pinned');
+                    }
+                    hideBackdrop();
+                }
+            }
+        });
     };
     window.addEventListener('resize', resizeHandler);
 }

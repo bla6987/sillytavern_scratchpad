@@ -16,6 +16,8 @@ let activeGenerationId = null;
 let pendingMessage = null;
 let cleanupFunctions = [];
 let currentViewportHandler = null;
+let lastRenderedThreadId = null;
+let lastRenderedMessageCount = -1;
 
 /**
  * Start a new generation and return its ID
@@ -111,6 +113,10 @@ export function renderConversation(container, isNewThread = false) {
 
     // Use branch-filtered thread for display (hides messages from "future" branches)
     const thread = currentThreadId ? getThreadForCurrentBranch(currentThreadId) : null;
+
+    // Track rendered state for refreshConversation optimization
+    lastRenderedThreadId = currentThreadId;
+    lastRenderedMessageCount = thread ? thread.messages.length : 0;
 
     container.innerHTML = '';
     // Preserve sp-drawer-content class while adding view-specific class
@@ -1383,11 +1389,20 @@ function goBackToThreadList() {
 
 /**
  * Refresh the conversation view
+ * Skips re-render if the thread ID and message count haven't changed.
  */
 function refreshConversation() {
-    if (conversationContainer && currentThreadId) {
-        renderConversation(conversationContainer);
+    if (!conversationContainer || !currentThreadId) return;
+
+    const thread = getThreadForCurrentBranch(currentThreadId);
+    const currentCount = thread ? thread.messages.length : 0;
+
+    // Skip expensive full re-render if nothing has changed
+    if (currentThreadId === lastRenderedThreadId && currentCount === lastRenderedMessageCount) {
+        return;
     }
+
+    renderConversation(conversationContainer);
 }
 
 /**
@@ -1464,17 +1479,30 @@ function setupViewportHandlers() {
         // Remove old handler if exists
         removeViewportHandler();
 
-        // Create and store new handler
+        // Cache container reference and last height to avoid redundant DOM updates
+        let cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+        let lastHeight = 0;
+
+        // Create and store new handler with increased debounce for mobile keyboard open/close
         currentViewportHandler = debounce(() => {
             const viewportHeight = window.visualViewport.height;
+
+            // Only update DOM if height actually changed
+            if (viewportHeight === lastHeight) return;
+            lastHeight = viewportHeight;
+
+            // Re-query only if cached reference is stale
+            if (!cachedContainer || !cachedContainer.isConnected) {
+                cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+            }
+
             // Resize the drawer/fullscreen container to match the visual viewport,
             // so the flex layout naturally adjusts the messages area for the keyboard
-            const container = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
-            if (container) {
-                container.style.setProperty('height', `${viewportHeight}px`, 'important');
+            if (cachedContainer) {
+                cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
             }
             scrollToBottom();
-        }, 50);
+        }, 150);
 
         window.visualViewport.addEventListener('resize', currentViewportHandler);
     }

@@ -309,7 +309,7 @@ function createThreadItem(thread) {
 
     item.addEventListener('touchstart', (e) => {
         touchStartX = e.changedTouches[0].screenX;
-    });
+    }, { passive: true });
 
     item.addEventListener('touchend', (e) => {
         touchEndX = e.changedTouches[0].screenX;
@@ -320,7 +320,7 @@ function createThreadItem(thread) {
             // Swiped right - cancel
             item.classList.remove('sp-swipe-delete');
         }
-    });
+    }, { passive: true });
 
     return item;
 }
