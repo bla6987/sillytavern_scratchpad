@@ -51,6 +51,25 @@ function getAuthorsNote() {
 }
 
 /**
+ * Resolve SillyTavern's main system prompt across context variants.
+ * @param {Object} [context] SillyTavern context
+ * @returns {string} System prompt text, or empty string if unavailable
+ */
+function getStSystemPrompt(context = SillyTavern.getContext()) {
+    const fromChatMetadata = context?.chatMetadata?.system_prompt;
+    if (typeof fromChatMetadata === 'string' && fromChatMetadata.trim()) {
+        return fromChatMetadata.trim();
+    }
+
+    const fromChatMetadataLegacy = context?.chat_metadata?.system_prompt;
+    if (typeof fromChatMetadataLegacy === 'string' && fromChatMetadataLegacy.trim()) {
+        return fromChatMetadataLegacy.trim();
+    }
+
+    return '';
+}
+
+/**
  * Format chat history for context
  * @param {Array} chat Chat messages array
  * @returns {string} Formatted chat history
@@ -491,15 +510,24 @@ async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }
 
 /**
  * Build the quiet prompt string for standard generation mode.
- * ST already includes character card + chat history + world info,
- * so we only include extension-specific context (OOC instruction, thread history, question).
+ * Keeps context controls aligned with the non-standard prompt path.
  * @param {string} userQuestion User's question
  * @param {Object} thread Thread object (for previous discussion history)
  * @param {boolean} isFirstMessage Whether to request a title
  * @returns {string} Combined quiet prompt
  */
 function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
-    const settings = getSettings();
+    const context = SillyTavern.getContext();
+    const { chat, characters, characterId } = context;
+    const globalSettings = getSettings();
+    const contextSettings = thread?.contextSettings
+        ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
+        : DEFAULT_CONTEXT_SETTINGS;
+    const settings = {
+        ...contextSettings,
+        oocSystemPrompt: globalSettings.oocSystemPrompt,
+        chatHistoryLimit: globalSettings.chatHistoryLimit,
+    };
     const parts = [];
 
     // OOC system instruction
@@ -510,8 +538,39 @@ function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
         parts.push('At the very beginning of your response, provide a brief title (3-6 words) formatted as: **Title: [Your Title Here]**\nThen provide your response.');
     }
 
+    // Include SillyTavern's main system prompt if enabled
+    if (settings.includeSystemPrompt) {
+        const stSystemPrompt = getStSystemPrompt(context);
+        if (stSystemPrompt) {
+            parts.push('--- SYSTEM PROMPT ---');
+            parts.push(stSystemPrompt);
+        }
+    }
+
+    // Character card (if enabled)
+    if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
+        const charContext = buildCharacterContext(characters[characterId]);
+        if (charContext) {
+            parts.push('--- CHARACTER INFORMATION ---');
+            parts.push(charContext);
+        }
+    }
+
+    // Author's Note
+    appendAuthorsNoteToPromptParts(parts, settings.includeAuthorsNote, getAuthorsNote());
+
+    // Chat history
+    if (!settings.characterCardOnly && chat && chat.length > 0) {
+        const selectedChat = selectChatHistory(chat, settings);
+        const chatHistory = formatChatHistory(selectedChat);
+        if (chatHistory) {
+            parts.push('--- ROLEPLAY CHAT HISTORY ---');
+            parts.push(chatHistory);
+        }
+    }
+
     // Thread history (previous scratch pad discussion)
-    if (thread?.messages?.length > 0) {
+    if (!settings.characterCardOnly && thread?.messages?.length > 0) {
         const threadHistory = formatThreadHistory(thread.messages);
         if (threadHistory) {
             parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
@@ -731,9 +790,9 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         if (settings.includeSystemPrompt) {
             try {
                 const stContext = SillyTavern.getContext();
-                const stSystemPrompt = stContext.chat_metadata?.system_prompt || '';
-                if (stSystemPrompt.trim()) {
-                    messages.push({ role: 'system', content: stSystemPrompt.trim() });
+                const stSystemPrompt = getStSystemPrompt(stContext);
+                if (stSystemPrompt) {
+                    messages.push({ role: 'system', content: stSystemPrompt });
                 }
             } catch (e) {
                 console.warn('[ScratchPad] Could not retrieve system prompt:', e);
@@ -779,10 +838,10 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     if (settings.includeSystemPrompt) {
         try {
             const stContext = SillyTavern.getContext();
-            const stSystemPrompt = stContext.chat_metadata?.system_prompt || '';
-            if (stSystemPrompt.trim()) {
+            const stSystemPrompt = getStSystemPrompt(stContext);
+            if (stSystemPrompt) {
                 parts.push('--- SYSTEM PROMPT ---');
-                parts.push(stSystemPrompt.trim());
+                parts.push(stSystemPrompt);
             }
         } catch (e) {
             console.warn('[ScratchPad] Could not retrieve system prompt:', e);
@@ -1268,8 +1327,10 @@ export async function regenerateMessage(threadId, messageId, onStream = null) {
  * @returns {boolean} True if a chat is active
  */
 export function isChatActive() {
-    const { chat, characterId, groupId } = SillyTavern.getContext();
-    return (chat && chat.length > 0) && (characterId !== undefined || groupId !== undefined);
+    const { characterId, groupId } = SillyTavern.getContext();
+    const hasCharacterTarget = characterId !== undefined && characterId !== null && characterId !== -1;
+    const hasGroupTarget = groupId !== undefined && groupId !== null && groupId !== -1;
+    return hasCharacterTarget || hasGroupTarget;
 }
 
 /**
