@@ -74,6 +74,10 @@ Access settings in the Extensions panel under "Scratch Pad":
 
 - **Include Character Card**: Send character description and personality (default: ON)
 - **Include System Prompt**: Send the main system prompt (default: OFF)
+- **Include Author's Note**: Send the chat's Author's Note (default: OFF)
+
+Global content inclusion settings are used as defaults for new Scratch Pad threads.
+Existing threads keep their own context settings, which you can change in each thread's context panel.
 
 ### OOC System Prompt
 
