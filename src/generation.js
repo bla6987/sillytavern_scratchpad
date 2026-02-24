@@ -517,17 +517,7 @@ async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }
  * @returns {string} Combined quiet prompt
  */
 function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
-    const context = SillyTavern.getContext();
-    const { chat, characters, characterId } = context;
-    const globalSettings = getSettings();
-    const contextSettings = thread?.contextSettings
-        ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
-        : DEFAULT_CONTEXT_SETTINGS;
-    const settings = {
-        ...contextSettings,
-        oocSystemPrompt: globalSettings.oocSystemPrompt,
-        chatHistoryLimit: globalSettings.chatHistoryLimit,
-    };
+    const settings = getSettings();
     const parts = [];
 
     // OOC system instruction
@@ -538,39 +528,8 @@ function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
         parts.push('At the very beginning of your response, provide a brief title (3-6 words) formatted as: **Title: [Your Title Here]**\nThen provide your response.');
     }
 
-    // Include SillyTavern's main system prompt if enabled
-    if (settings.includeSystemPrompt) {
-        const stSystemPrompt = getStSystemPrompt(context);
-        if (stSystemPrompt) {
-            parts.push('--- SYSTEM PROMPT ---');
-            parts.push(stSystemPrompt);
-        }
-    }
-
-    // Character card (if enabled)
-    if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
-        const charContext = buildCharacterContext(characters[characterId]);
-        if (charContext) {
-            parts.push('--- CHARACTER INFORMATION ---');
-            parts.push(charContext);
-        }
-    }
-
-    // Author's Note
-    appendAuthorsNoteToPromptParts(parts, settings.includeAuthorsNote, getAuthorsNote());
-
-    // Chat history
-    if (!settings.characterCardOnly && chat && chat.length > 0) {
-        const selectedChat = selectChatHistory(chat, settings);
-        const chatHistory = formatChatHistory(selectedChat);
-        if (chatHistory) {
-            parts.push('--- ROLEPLAY CHAT HISTORY ---');
-            parts.push(chatHistory);
-        }
-    }
-
     // Thread history (previous scratch pad discussion)
-    if (!settings.characterCardOnly && thread?.messages?.length > 0) {
+    if (thread?.messages?.length > 0) {
         const threadHistory = formatThreadHistory(thread.messages);
         if (threadHistory) {
             parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');

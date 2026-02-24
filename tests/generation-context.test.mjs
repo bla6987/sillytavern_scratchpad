@@ -71,97 +71,22 @@ test('isChatActive allows empty chats for active character/group', () => {
     assert.equal(isChatActive(), false);
 });
 
-test('standard generation includes system prompt from chatMetadata', async () => {
+test('standard generation builds quiet prompt with OOC prompt and thread history only', async () => {
     const quietPrompt = await runStandardGeneration({
-        contextOverrides: {
-            chatMetadata: {
-                note_prompt: 'Author note',
-                system_prompt: 'System from chatMetadata',
-            },
-        },
-        threadSettings: {
-            includeSystemPrompt: true,
-            includeAuthorsNote: true,
-            includeCharacterCard: false,
-            characterCardOnly: false,
-        },
-    });
-
-    assert.match(quietPrompt, /--- SYSTEM PROMPT ---\n\nSystem from chatMetadata/);
-});
-
-test('standard generation falls back to chat_metadata system prompt', async () => {
-    const quietPrompt = await runStandardGeneration({
-        contextOverrides: {
-            chatMetadata: {
-                note_prompt: 'Author note',
-            },
-            chat_metadata: {
-                system_prompt: 'System from chat_metadata',
-            },
-        },
-        threadSettings: {
-            includeSystemPrompt: true,
-            includeAuthorsNote: true,
-            includeCharacterCard: false,
-            characterCardOnly: false,
-        },
-    });
-
-    assert.match(quietPrompt, /--- SYSTEM PROMPT ---\n\nSystem from chat_metadata/);
-});
-
-test('standard generation honors characterCardOnly by excluding chat and thread history', async () => {
-    const quietPrompt = await runStandardGeneration({
-        contextOverrides: {
-            chat: [
-                { is_user: true, mes: 'chat-1' },
-                { is_user: false, name: 'Char', mes: 'chat-2' },
-            ],
-            characters: [
-                {
-                    name: 'Aster',
-                    description: 'Test character',
-                },
-            ],
-            characterId: 0,
-        },
-        threadSettings: {
-            includeCharacterCard: true,
-            characterCardOnly: true,
-            includeAuthorsNote: true,
-        },
         seedMessages: [
             { role: 'user', content: 'Older thread question' },
             { role: 'assistant', content: 'Older thread answer' },
         ],
     });
 
-    assert.match(quietPrompt, /--- CHARACTER INFORMATION ---/);
+    // Should include OOC prompt, thread history, and user question
+    assert.match(quietPrompt, /OOC PROMPT/);
+    assert.match(quietPrompt, /--- PREVIOUS SCRATCH PAD DISCUSSION ---/);
+    assert.match(quietPrompt, /--- USER QUESTION ---/);
+
+    // Should NOT include context that ST's generateQuietPrompt already provides
+    assert.doesNotMatch(quietPrompt, /--- SYSTEM PROMPT ---/);
+    assert.doesNotMatch(quietPrompt, /--- CHARACTER INFORMATION ---/);
     assert.doesNotMatch(quietPrompt, /--- ROLEPLAY CHAT HISTORY ---/);
-    assert.doesNotMatch(quietPrompt, /--- PREVIOUS SCRATCH PAD DISCUSSION ---/);
-});
-
-test('standard generation honors chat history range selection', async () => {
-    const quietPrompt = await runStandardGeneration({
-        contextOverrides: {
-            chat: [
-                { is_user: true, mes: 'm1' },
-                { is_user: true, mes: 'm2' },
-                { is_user: true, mes: 'm3' },
-            ],
-        },
-        threadSettings: {
-            includeCharacterCard: false,
-            characterCardOnly: false,
-            includeAuthorsNote: true,
-            chatHistoryRangeMode: 'between',
-            chatHistoryRangeStart: 2,
-            chatHistoryRangeEnd: 2,
-        },
-    });
-
-    assert.match(quietPrompt, /User: m2/);
-    assert.doesNotMatch(quietPrompt, /User: m1/);
-    assert.doesNotMatch(quietPrompt, /User: m3/);
+    assert.doesNotMatch(quietPrompt, /--- AUTHOR'S NOTE ---/);
 });
