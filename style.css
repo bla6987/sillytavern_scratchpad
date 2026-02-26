@@ -518,7 +518,7 @@ body.sp-fullscreen-open {
     background: var(--sp-bg-secondary);
     border-radius: var(--sp-radius);
     border: 1px solid var(--sp-border);
-    transition: all var(--sp-transition);
+    transition: border-color var(--sp-transition), background-color var(--sp-transition);
     position: relative;
     overflow: hidden;
 }
@@ -1455,7 +1455,7 @@ body.sp-fullscreen-open {
     color: var(--sp-text-muted);
     border-radius: var(--sp-radius);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
     animation: none;
 }
 

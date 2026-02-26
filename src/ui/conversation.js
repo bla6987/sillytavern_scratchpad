@@ -1034,6 +1034,8 @@ async function handleGenerateSwipe(messageId) {
     let streamingContentEl = null;
 
     try {
+        let _lastSwipeRender = 0;
+        let _pendingSwipeUpdate = null;
         const result = await generateSwipe(currentThreadId, messageId, (partialResponse, isComplete) => {
             if (!streamingContentEl) {
                 // Refresh to show the pending state
@@ -1044,10 +1046,30 @@ async function handleGenerateSwipe(messageId) {
                 }
             }
 
-            if (streamingContentEl && streamingContentEl.isConnected && !isComplete) {
-                const { cleanedResponse } = parseThinking(partialResponse);
-                streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
-                scrollToBottom();
+            if (streamingContentEl && streamingContentEl.isConnected) {
+                if (isComplete) {
+                    clearTimeout(_pendingSwipeUpdate);
+                    const { cleanedResponse } = parseThinking(partialResponse);
+                    streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
+                    scrollToBottom();
+                } else {
+                    const now = performance.now();
+                    if (now - _lastSwipeRender >= 100) {
+                        _lastSwipeRender = now;
+                        clearTimeout(_pendingSwipeUpdate);
+                        const { cleanedResponse } = parseThinking(partialResponse);
+                        streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
+                        scrollToBottom();
+                    } else if (!_pendingSwipeUpdate) {
+                        _pendingSwipeUpdate = setTimeout(() => {
+                            _pendingSwipeUpdate = null;
+                            _lastSwipeRender = performance.now();
+                            const { cleanedResponse } = parseThinking(partialResponse);
+                            streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
+                            scrollToBottom();
+                        }, 100 - (now - _lastSwipeRender));
+                    }
+                }
             }
         });
 
@@ -1152,6 +1174,8 @@ async function handleSendMessage() {
         // Generate response with streaming
         let streamingMsgEl = null;
 
+        let _lastStreamRender = 0;
+        let _pendingStreamUpdate = null;
         const result = await generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
             // Update streaming message element
             if (!streamingMsgEl) {
@@ -1161,12 +1185,32 @@ async function handleSendMessage() {
             }
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
-                if (!isComplete) {
-                    // Parse out thinking tags during streaming so they don't appear as raw markdown
+                if (isComplete) {
+                    // Always render final state immediately
+                    clearTimeout(_pendingStreamUpdate);
                     const { cleanedResponse } = parseThinking(partialResponse);
                     streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                    scrollToBottom();
+                } else {
+                    // Throttle: render at most every 100ms during streaming
+                    const now = performance.now();
+                    if (now - _lastStreamRender >= 100) {
+                        _lastStreamRender = now;
+                        clearTimeout(_pendingStreamUpdate);
+                        const { cleanedResponse } = parseThinking(partialResponse);
+                        streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                        scrollToBottom();
+                    } else if (!_pendingStreamUpdate) {
+                        // Schedule a trailing update to ensure we don't miss the latest content
+                        _pendingStreamUpdate = setTimeout(() => {
+                            _pendingStreamUpdate = null;
+                            _lastStreamRender = performance.now();
+                            const { cleanedResponse } = parseThinking(partialResponse);
+                            streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                            scrollToBottom();
+                        }, 100 - (now - _lastStreamRender));
+                    }
                 }
-                scrollToBottom();
             }
         });
 
@@ -1236,6 +1280,8 @@ async function handleRetry(messageId) {
     let streamingMsgEl = null;
 
     try {
+        let _lastRetryRender = 0;
+        let _pendingRetryUpdate = null;
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
             // On first callback, refresh to show new pending message
             if (!streamingMsgEl) {
@@ -1243,12 +1289,31 @@ async function handleRetry(messageId) {
                 streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
             }
 
-            if (streamingMsgEl && streamingMsgEl.isConnected && !isComplete) {
-                // Parse out thinking tags during streaming so they don't appear as raw markdown
-                const { cleanedResponse } = parseThinking(partialResponse);
-                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+            if (streamingMsgEl && streamingMsgEl.isConnected) {
+                if (isComplete) {
+                    clearTimeout(_pendingRetryUpdate);
+                    const { cleanedResponse } = parseThinking(partialResponse);
+                    streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                    scrollToBottom();
+                } else {
+                    const now = performance.now();
+                    if (now - _lastRetryRender >= 100) {
+                        _lastRetryRender = now;
+                        clearTimeout(_pendingRetryUpdate);
+                        const { cleanedResponse } = parseThinking(partialResponse);
+                        streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                        scrollToBottom();
+                    } else if (!_pendingRetryUpdate) {
+                        _pendingRetryUpdate = setTimeout(() => {
+                            _pendingRetryUpdate = null;
+                            _lastRetryRender = performance.now();
+                            const { cleanedResponse } = parseThinking(partialResponse);
+                            streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                            scrollToBottom();
+                        }, 100 - (now - _lastRetryRender));
+                    }
+                }
             }
-            scrollToBottom();
         });
 
         if (!result.success && !result.cancelled) {
@@ -1438,22 +1503,19 @@ function loadAllMessages(thread) {
  * Scroll messages to bottom
  * Uses multiple techniques for reliable mobile scrolling
  */
+let _scrollPending = false;
+let _scrollContainer = null;
 function scrollToBottom() {
-    // Use requestAnimationFrame + setTimeout to ensure DOM has fully laid out
+    if (_scrollPending) return;
+    _scrollPending = true;
     requestAnimationFrame(() => {
-        setTimeout(() => {
-            const messagesContainer = document.getElementById('sp-messages');
-            if (messagesContainer) {
-                // Try scrollIntoView on last message for better mobile support
-                const lastMessage = messagesContainer.querySelector('.sp-message:last-child');
-                if (lastMessage) {
-                    lastMessage.scrollIntoView({ behavior: 'auto', block: 'end' });
-                } else {
-                    // Fallback to scrollTop
-                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                }
-            }
-        }, 50); // Small delay to ensure layout is complete
+        _scrollPending = false;
+        if (!_scrollContainer || !_scrollContainer.isConnected) {
+            _scrollContainer = document.getElementById('sp-messages');
+        }
+        if (_scrollContainer) {
+            _scrollContainer.scrollTop = _scrollContainer.scrollHeight;
+        }
     });
 }
 
@@ -1493,27 +1555,34 @@ function setupViewportHandlers() {
         // Cache container reference and last height to avoid redundant DOM updates
         let cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
         let lastHeight = 0;
+        let viewportRafPending = false;
 
-        // Create and store new handler with increased debounce for mobile keyboard open/close
-        currentViewportHandler = debounce(() => {
-            const viewportHeight = window.visualViewport.height;
+        // Create and store new handler - coalesce with rAF instead of debounce
+        // to avoid firing multiple times during keyboard animation
+        currentViewportHandler = () => {
+            if (viewportRafPending) return;
+            viewportRafPending = true;
+            requestAnimationFrame(() => {
+                viewportRafPending = false;
+                const viewportHeight = window.visualViewport.height;
 
-            // Only update DOM if height actually changed
-            if (viewportHeight === lastHeight) return;
-            lastHeight = viewportHeight;
+                // Only update DOM if height changed significantly (>10px avoids sub-pixel noise)
+                if (Math.abs(viewportHeight - lastHeight) <= 10) return;
+                lastHeight = viewportHeight;
 
-            // Re-query only if cached reference is stale
-            if (!cachedContainer || !cachedContainer.isConnected) {
-                cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
-            }
+                // Re-query only if cached reference is stale
+                if (!cachedContainer || !cachedContainer.isConnected) {
+                    cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+                }
 
-            // Resize the drawer/fullscreen container to match the visual viewport,
-            // so the flex layout naturally adjusts the messages area for the keyboard
-            if (cachedContainer) {
-                cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
-            }
-            scrollToBottom();
-        }, 150);
+                // Resize the drawer/fullscreen container to match the visual viewport,
+                // so the flex layout naturally adjusts the messages area for the keyboard
+                if (cachedContainer) {
+                    cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
+                }
+                scrollToBottom();
+            });
+        };
 
         window.visualViewport.addEventListener('resize', currentViewportHandler);
     }

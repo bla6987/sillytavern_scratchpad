@@ -316,19 +316,36 @@ async function generatePopupResponse(message) {
     updatePopupActionButtons(true);
 
     try {
+        let _lastPopupRender = 0;
+        let _pendingPopupUpdate = null;
         const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
-            // Parse out thinking tags during streaming so they don't appear as raw markdown
-            const { cleanedResponse } = parseThinking(partialResponse);
+            const renderPopupContent = () => {
+                const { cleanedResponse } = parseThinking(partialResponse);
+                contentEl.innerHTML = `
+                    <div class="sp-popup-response">
+                        ${renderMarkdown(cleanedResponse)}
+                    </div>
+                `;
+                contentEl.scrollTop = contentEl.scrollHeight;
+            };
 
-            // Update content with streaming response
-            contentEl.innerHTML = `
-                <div class="sp-popup-response">
-                    ${renderMarkdown(cleanedResponse)}
-                </div>
-            `;
-
-            // Scroll to follow streaming
-            contentEl.scrollTop = contentEl.scrollHeight;
+            if (isComplete) {
+                clearTimeout(_pendingPopupUpdate);
+                renderPopupContent();
+            } else {
+                const now = performance.now();
+                if (now - _lastPopupRender >= 100) {
+                    _lastPopupRender = now;
+                    clearTimeout(_pendingPopupUpdate);
+                    renderPopupContent();
+                } else if (!_pendingPopupUpdate) {
+                    _pendingPopupUpdate = setTimeout(() => {
+                        _pendingPopupUpdate = null;
+                        _lastPopupRender = performance.now();
+                        renderPopupContent();
+                    }, 100 - (now - _lastPopupRender));
+                }
+            }
         });
 
         if (!result.success && !result.cancelled) {
@@ -399,16 +416,31 @@ async function generatePopupRawResponse(message) {
     updatePopupActionButtons(true);
 
     try {
+        let _lastRawRender = 0;
+        let _pendingRawUpdate = null;
         const result = await generateRawPromptResponse(message, currentPopupThreadId, (partialResponse) => {
-            const { cleanedResponse } = parseThinking(partialResponse);
+            const renderRawContent = () => {
+                const { cleanedResponse } = parseThinking(partialResponse);
+                contentEl.innerHTML = `
+                    <div class="sp-popup-response">
+                        ${renderMarkdown(cleanedResponse)}
+                    </div>
+                `;
+                contentEl.scrollTop = contentEl.scrollHeight;
+            };
 
-            contentEl.innerHTML = `
-                <div class="sp-popup-response">
-                    ${renderMarkdown(cleanedResponse)}
-                </div>
-            `;
-
-            contentEl.scrollTop = contentEl.scrollHeight;
+            const now = performance.now();
+            if (now - _lastRawRender >= 100) {
+                _lastRawRender = now;
+                clearTimeout(_pendingRawUpdate);
+                renderRawContent();
+            } else if (!_pendingRawUpdate) {
+                _pendingRawUpdate = setTimeout(() => {
+                    _pendingRawUpdate = null;
+                    _lastRawRender = performance.now();
+                    renderRawContent();
+                }, 100 - (now - _lastRawRender));
+            }
         });
 
         if (!result.success && !result.cancelled) {

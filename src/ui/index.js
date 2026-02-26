@@ -520,14 +520,21 @@ export function initUI() {
 
     // Handle resize - force overlay mode on mobile even if pinned/fullscreen
     // Debounced with rAF to avoid layout thrashing on rapid resize events
+    // Guarded against keyboard-only resizes (height change without width change)
     if (resizeHandler) window.removeEventListener('resize', resizeHandler);
     let resizeRafId = null;
     let cachedIsMobile = isMobileViewport();
+    let lastResizeWidth = window.innerWidth;
     resizeHandler = () => {
         if (resizeRafId !== null) return;
         resizeRafId = requestAnimationFrame(() => {
             resizeRafId = null;
             if (!isScratchPadOpen()) return;
+
+            // Skip mode-switching on keyboard open/close (height-only change)
+            const currentWidth = window.innerWidth;
+            if (Math.abs(currentWidth - lastResizeWidth) < 20) return;
+            lastResizeWidth = currentWidth;
 
             const nowMobile = isMobileViewport();
             // Only proceed if viewport mobile-ness actually changed or we need to check mode
