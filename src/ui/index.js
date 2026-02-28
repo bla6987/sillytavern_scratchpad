@@ -20,6 +20,7 @@ let isPinned = false;
 let keydownHandler = null;
 let popstateHandler = null;
 let resizeHandler = null;
+let resizeBusUnsubscribe = null;
 let overlayElement = null;
 let fullscreenElement = null;
 let currentDisplayMode = null; // tracks active mode: 'drawer' | 'pinned' | 'fullscreen'
@@ -521,6 +522,10 @@ export function initUI() {
     // Handle resize - force overlay mode on mobile even if pinned/fullscreen
     // Debounced with rAF to avoid layout thrashing on rapid resize events
     // Guarded against keyboard-only resizes (height change without width change)
+    if (resizeBusUnsubscribe) {
+        resizeBusUnsubscribe();
+        resizeBusUnsubscribe = null;
+    }
     if (resizeHandler) window.removeEventListener('resize', resizeHandler);
     let resizeRafId = null;
     let cachedIsMobile = isMobileViewport();
@@ -573,7 +578,12 @@ export function initUI() {
             }
         });
     };
-    window.addEventListener('resize', resizeHandler);
+    const runtimeBus = window.STRuntimeBus;
+    if (runtimeBus?.viewport?.subscribe) {
+        resizeBusUnsubscribe = runtimeBus.viewport.subscribe('layout', () => resizeHandler());
+    } else {
+        window.addEventListener('resize', resizeHandler);
+    }
 }
 
 /**
@@ -608,6 +618,10 @@ export function disposeUI() {
     if (resizeHandler) {
         window.removeEventListener('resize', resizeHandler);
         resizeHandler = null;
+    }
+    if (resizeBusUnsubscribe) {
+        resizeBusUnsubscribe();
+        resizeBusUnsubscribe = null;
     }
 
     // Clean up body classes

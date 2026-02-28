@@ -16,6 +16,7 @@ let activeGenerationId = null;
 let pendingMessage = null;
 let cleanupFunctions = [];
 let currentViewportHandler = null;
+let currentViewportBusUnsubscribe = null;
 let lastRenderedThreadId = null;
 let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
@@ -1523,10 +1524,14 @@ function scrollToBottom() {
  * Remove viewport resize handler if one exists
  */
 function removeViewportHandler() {
+    if (currentViewportBusUnsubscribe) {
+        currentViewportBusUnsubscribe();
+        currentViewportBusUnsubscribe = null;
+    }
     if (currentViewportHandler && window.visualViewport) {
         window.visualViewport.removeEventListener('resize', currentViewportHandler);
-        currentViewportHandler = null;
     }
+    currentViewportHandler = null;
     // Reset container height when keyboard handler is removed
     const container = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
     if (container) {
@@ -1548,42 +1553,49 @@ async function closeScratchPadDrawer() {
  * Setup viewport handlers for keyboard
  */
 function setupViewportHandlers() {
-    if (window.visualViewport) {
-        // Remove old handler if exists
-        removeViewportHandler();
+    // Remove old handler if exists
+    removeViewportHandler();
 
-        // Cache container reference and last height to avoid redundant DOM updates
-        let cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
-        let lastHeight = 0;
-        let viewportRafPending = false;
+    const runtimeBus = window.STRuntimeBus;
+    if (!window.visualViewport && !runtimeBus?.viewport?.subscribe) {
+        return;
+    }
 
-        // Create and store new handler - coalesce with rAF instead of debounce
-        // to avoid firing multiple times during keyboard animation
-        currentViewportHandler = () => {
-            if (viewportRafPending) return;
-            viewportRafPending = true;
-            requestAnimationFrame(() => {
-                viewportRafPending = false;
-                const viewportHeight = window.visualViewport.height;
+    // Cache container reference and last height to avoid redundant DOM updates
+    let cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+    let lastHeight = 0;
+    let viewportRafPending = false;
 
-                // Only update DOM if height changed significantly (>10px avoids sub-pixel noise)
-                if (Math.abs(viewportHeight - lastHeight) <= 10) return;
-                lastHeight = viewportHeight;
+    // Create and store new handler - coalesce with rAF instead of debounce
+    // to avoid firing multiple times during keyboard animation
+    currentViewportHandler = () => {
+        if (viewportRafPending) return;
+        viewportRafPending = true;
+        requestAnimationFrame(() => {
+            viewportRafPending = false;
+            const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
 
-                // Re-query only if cached reference is stale
-                if (!cachedContainer || !cachedContainer.isConnected) {
-                    cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
-                }
+            // Only update DOM if height changed significantly (>10px avoids sub-pixel noise)
+            if (Math.abs(viewportHeight - lastHeight) <= 10) return;
+            lastHeight = viewportHeight;
 
-                // Resize the drawer/fullscreen container to match the visual viewport,
-                // so the flex layout naturally adjusts the messages area for the keyboard
-                if (cachedContainer) {
-                    cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
-                }
-                scrollToBottom();
-            });
-        };
+            // Re-query only if cached reference is stale
+            if (!cachedContainer || !cachedContainer.isConnected) {
+                cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
+            }
 
+            // Resize the drawer/fullscreen container to match the visual viewport,
+            // so the flex layout naturally adjusts the messages area for the keyboard
+            if (cachedContainer) {
+                cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
+            }
+            scrollToBottom();
+        });
+    };
+
+    if (runtimeBus?.viewport?.subscribe) {
+        currentViewportBusUnsubscribe = runtimeBus.viewport.subscribe('keyboard', currentViewportHandler);
+    } else if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', currentViewportHandler);
     }
 }
