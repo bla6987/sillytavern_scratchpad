@@ -8,7 +8,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Threaded Discussions**: Organize different lines of inquiry into separate threads
 - **Full Context**: AI responses are informed by your chat history and character information
 - **Streaming Responses**: Watch AI responses generate in real-time
-- **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats
+- **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
 - **Mobile Friendly**: Full-screen drawer UI with touch support and bottom sheet popups
 - **Persistent Storage**: Threads are saved with your chat and inherit properly when branching
 - **Quick Access**: Use `/sp <question>` for quick popup responses

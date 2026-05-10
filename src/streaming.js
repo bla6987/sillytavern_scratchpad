@@ -35,7 +35,65 @@ const SOURCES = {
     ZAI: 'zai',
     SILICONFLOW: 'siliconflow',
     AI21: 'ai21',
+    WORKERS_AI: 'workers_ai',
+    MINIMAX: 'minimax',
 };
+
+const REASONING_EFFORT = {
+    AUTO: 'auto',
+    MIN: 'min',
+    LOW: 'low',
+    MEDIUM: 'medium',
+    HIGH: 'high',
+    MAX: 'max',
+};
+
+function resolveReasoningEffort(settings, model) {
+    const source = settings.chat_completion_source;
+    const effort = settings.reasoning_effort;
+
+    if (!effort || effort === REASONING_EFFORT.AUTO) {
+        return undefined;
+    }
+
+    if (source === SOURCES.DEEPSEEK) {
+        return effort === REASONING_EFFORT.MAX ? REASONING_EFFORT.MAX : REASONING_EFFORT.HIGH;
+    }
+
+    if (source === SOURCES.CUSTOM && /^koboldcpp\/(.+)$/.test(model || '')) {
+        const map = {
+            [REASONING_EFFORT.MIN]: 'minimal',
+            [REASONING_EFFORT.LOW]: 'low',
+            [REASONING_EFFORT.MEDIUM]: 'medium',
+            [REASONING_EFFORT.HIGH]: 'high',
+            [REASONING_EFFORT.MAX]: 'xhigh',
+        };
+        return map[effort] || effort;
+    }
+
+    if (effort === REASONING_EFFORT.MIN) {
+        if (source === SOURCES.OPENROUTER && !settings.show_thoughts) {
+            return 'none';
+        }
+
+        if ([SOURCES.OPENAI, SOURCES.AZURE_OPENAI].includes(source)) {
+            if (/^gpt-5\.(4|5)/.test(model || '')) {
+                return 'none';
+            }
+            if (/^gpt-5/.test(model || '')) {
+                return REASONING_EFFORT.MIN;
+            }
+        }
+
+        return REASONING_EFFORT.LOW;
+    }
+
+    if (effort === REASONING_EFFORT.MAX) {
+        return REASONING_EFFORT.HIGH;
+    }
+
+    return effort;
+}
 
 /**
  * Check if the current API backend supports streaming
@@ -83,8 +141,9 @@ function buildRequestBody(messages, settings, model) {
     };
 
     // Reasoning effort
-    if (settings.reasoning_effort && settings.reasoning_effort !== 'auto') {
-        body.reasoning_effort = settings.reasoning_effort;
+    const reasoningEffort = resolveReasoningEffort(settings, model);
+    if (reasoningEffort) {
+        body.reasoning_effort = reasoningEffort;
     }
 
     // Proxy support

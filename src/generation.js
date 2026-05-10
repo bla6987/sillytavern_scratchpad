@@ -5,7 +5,7 @@
 
 import { getSettings } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
-import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates } from './reasoning.js';
+import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts, suppressAuthorsNoteForGeneration } from './authorsNote.js';
 
@@ -295,9 +295,9 @@ function getThreadGenerationOptions(threadId) {
     };
 }
 
-function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null) {
+function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null, hiddenReasoning = null) {
     const parsed = parseThinkingFromText(responseText);
-    const merged = mergeReasoningCandidates(streamReasoning, resultReasoning, parsed.reasoning);
+    const merged = mergeReasoningCandidates(streamReasoning, resultReasoning, parsed.reasoning, hiddenReasoning);
     return {
         thinking: merged.text || null,
         reasoningMeta: {
@@ -327,6 +327,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
     let generationResult;
+    const startedAt = Date.now();
 
     /**
      * Build the messages array for the API request.
@@ -425,6 +426,11 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
         }
     }
 
+    const durationMs = Date.now() - startedAt;
+    if (generationResult) {
+        generationResult.hiddenReasoning = createHiddenReasoningCandidate(durationMs, context);
+    }
+
     // Report token usage to Token Usage Tracker
     try {
         const tracker = window['TokenUsageTracker'];
@@ -471,6 +477,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
  */
 async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }) {
     const context = SillyTavern.getContext();
+    const startedAt = Date.now();
 
     // Inject as user-role message instead of system-role quiet prompt.
     // extension_prompt_types.IN_CHAT = 1, extension_prompt_roles.USER = 1
@@ -501,7 +508,12 @@ async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }
             console.warn('[ScratchPad] Token usage reporting failed:', e);
         }
 
-        return { text: text || '', streamReasoning: null, resultReasoning: null };
+        return {
+            text: text || '',
+            streamReasoning: null,
+            resultReasoning: null,
+            hiddenReasoning: createHiddenReasoningCandidate(Date.now() - startedAt, context),
+        };
     } finally {
         context.setExtensionPrompt(INJECT_KEY, '', 1, 0, false, 1);
         restoreAuthorsNote();
@@ -646,7 +658,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
@@ -987,7 +999,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
@@ -1151,7 +1163,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         }
 
         const responseText = result.text || '';
-        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning);
+        const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;

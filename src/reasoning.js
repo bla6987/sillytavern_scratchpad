@@ -22,6 +22,36 @@ function trimString(value) {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+function getSillyTavernReasoningParser() {
+    try {
+        const parser = globalThis.SillyTavern?.getContext?.()?.parseReasoningFromString;
+        return typeof parser === 'function' ? parser : null;
+    } catch {
+        return null;
+    }
+}
+
+function parseReasoningWithSillyTavernTemplate(input, parser = getSillyTavernReasoningParser()) {
+    if (!parser) return null;
+
+    try {
+        const parsed = parser(input);
+        if (!parsed || typeof parsed !== 'object') return null;
+
+        const reasoning = trimString(parsed.reasoning);
+        const rawContent = typeof parsed.content === 'string' ? parsed.content : input;
+        if (!reasoning && rawContent === input) return null;
+
+        return {
+            thinking: reasoning || null,
+            cleanedResponse: rawContent.trim(),
+        };
+    } catch (error) {
+        console.warn('[ScratchPad] SillyTavern reasoning parser failed:', error);
+        return null;
+    }
+}
+
 function isReasoningSource(value) {
     return Object.values(REASONING_SOURCE).includes(value);
 }
@@ -114,6 +144,43 @@ export function normalizeReasoningMeta(meta, fallbackThinking = null) {
     });
 }
 
+export function isHiddenReasoningModel(context = null) {
+    let ctx = context;
+    try {
+        ctx = ctx ?? globalThis.SillyTavern?.getContext?.();
+    } catch {
+        ctx = null;
+    }
+
+    if (ctx?.mainApi !== 'openai') return false;
+
+    const model = trimString(ctx?.getChatCompletionModel?.());
+    if (!model) return false;
+
+    const hiddenReasoningModels = [
+        'gpt-4.5',
+        'o1',
+        'o3',
+        'gemini-2.0-flash-thinking-exp',
+        'gemini-2.0-pro-exp',
+    ];
+
+    return hiddenReasoningModels.some(prefix => model.startsWith(prefix));
+}
+
+export function createHiddenReasoningCandidate(durationMs = null, context = null) {
+    if (!isHiddenReasoningModel(context)) return null;
+
+    return {
+        text: '',
+        ...createReasoningMeta({
+            state: REASONING_STATE.HIDDEN,
+            durationMs,
+            source: REASONING_SOURCE.RESULT,
+        }),
+    };
+}
+
 function dedupeTexts(texts) {
     const seen = new Set();
     const out = [];
@@ -144,7 +211,7 @@ function normalizeReasoningCandidate(candidate, fallbackSource) {
     };
 }
 
-export function parseThinkingFromText(response) {
+export function parseThinkingFromText(response, { parser = getSillyTavernReasoningParser() } = {}) {
     const input = typeof response === 'string' ? response : '';
     if (!input) {
         return {
@@ -157,11 +224,13 @@ export function parseThinkingFromText(response) {
         };
     }
 
-    const matches = [...input.matchAll(THINKING_TAG_REGEX)];
-    const thinking = matches.length > 0
+    const templateParsed = parseReasoningWithSillyTavernTemplate(input, parser);
+    const matches = templateParsed ? [] : [...input.matchAll(THINKING_TAG_REGEX)];
+    const thinking = templateParsed?.thinking ?? (matches.length > 0
         ? matches.map(match => trimString(match[1])).filter(Boolean).join('\n\n')
-        : null;
-    const cleanedResponse = matches.length > 0 ? input.replace(THINKING_TAG_REGEX, '').trim() : input;
+        : null);
+    const cleanedResponse = templateParsed?.cleanedResponse
+        ?? (matches.length > 0 ? input.replace(THINKING_TAG_REGEX, '').trim() : input);
 
     return {
         thinking,
@@ -396,11 +465,12 @@ export function normalizeReasoningEvent(...args) {
     };
 }
 
-export function mergeReasoningCandidates(streamCandidate = null, resultCandidate = null, tagCandidate = null) {
+export function mergeReasoningCandidates(streamCandidate = null, resultCandidate = null, tagCandidate = null, hiddenCandidate = null) {
     const candidates = [
         normalizeReasoningCandidate(streamCandidate, REASONING_SOURCE.STREAM),
         normalizeReasoningCandidate(resultCandidate, REASONING_SOURCE.RESULT),
         normalizeReasoningCandidate(tagCandidate, REASONING_SOURCE.TAG_PARSE),
+        normalizeReasoningCandidate(hiddenCandidate, REASONING_SOURCE.RESULT),
     ];
 
     const visibleTexts = dedupeTexts(
@@ -409,7 +479,7 @@ export function mergeReasoningCandidates(streamCandidate = null, resultCandidate
             .map(candidate => candidate.text),
     );
 
-    const hiddenCandidate = candidates.find(candidate => candidate.state === REASONING_STATE.HIDDEN);
+    const hiddenReasoningCandidate = candidates.find(candidate => candidate.state === REASONING_STATE.HIDDEN);
     const firstUsedCandidate = candidates.find(candidate =>
         candidate.state !== REASONING_STATE.NONE
         || candidate.durationMs !== null
@@ -418,14 +488,14 @@ export function mergeReasoningCandidates(streamCandidate = null, resultCandidate
 
     const state = visibleTexts.length > 0
         ? REASONING_STATE.VISIBLE
-        : (hiddenCandidate ? REASONING_STATE.HIDDEN : REASONING_STATE.NONE);
+        : (hiddenReasoningCandidate ? REASONING_STATE.HIDDEN : REASONING_STATE.NONE);
 
     const text = visibleTexts.length > 0 ? visibleTexts.join('\n\n---\n\n') : '';
     const durationMs = candidates.find(candidate => candidate.durationMs !== null)?.durationMs ?? null;
     const signature = normalizeSignature(...candidates.map(candidate => candidate.signature));
     const source = visibleTexts.length > 0
         ? (candidates.find(candidate => candidate.state === REASONING_STATE.VISIBLE && candidate.text)?.source || REASONING_SOURCE.RESULT)
-        : (hiddenCandidate?.source || firstUsedCandidate?.source || REASONING_SOURCE.RESULT);
+        : (hiddenReasoningCandidate?.source || firstUsedCandidate?.source || REASONING_SOURCE.RESULT);
 
     return {
         text,

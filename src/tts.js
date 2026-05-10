@@ -4,6 +4,7 @@
  */
 
 import { getSettings } from './settings.js';
+import { parseThinkingFromText } from './reasoning.js';
 
 /**
  * Speak text using SillyTavern's TTS system
@@ -75,7 +76,7 @@ export async function speakText(text) {
 function cleanTextForTTS(text) {
     if (!text) return '';
 
-    let cleaned = text;
+    let cleaned = parseThinkingFromText(text).cleanedResponse;
 
     // Remove thinking/reasoning blocks
     cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');

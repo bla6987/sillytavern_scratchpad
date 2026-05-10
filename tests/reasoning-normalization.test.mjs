@@ -17,6 +17,20 @@ const reasoning = await loadReasoningModule();
 }
 
 {
+    const parsed = reasoning.parseThinkingFromText('[reason]custom plan[/reason]Visible answer', {
+        parser: (value) => {
+            const match = String(value).match(/^\[reason\]([\s\S]*?)\[\/reason\]/);
+            return match
+                ? { reasoning: match[1], content: value.slice(match[0].length).trim() }
+                : { reasoning: '', content: value };
+        },
+    });
+    assert.equal(parsed.thinking, 'custom plan');
+    assert.equal(parsed.cleanedResponse, 'Visible answer');
+    assert.equal(parsed.reasoning.state, 'visible');
+}
+
+{
     const extracted = reasoning.extractReasoningFromResult({
         choices: [{ message: { reasoning_content: 'provider reasoning' } }],
     });
@@ -71,6 +85,15 @@ const reasoning = await loadReasoningModule();
     assert.equal(merged.state, 'visible');
     assert.equal(merged.source, 'stream');
     assert.equal(merged.text, 'stream reasoning\n\n---\n\nresult reasoning');
+}
+
+{
+    const hidden = reasoning.createHiddenReasoningCandidate(2500, {
+        mainApi: 'openai',
+        getChatCompletionModel: () => 'o3-mini',
+    });
+    assert.equal(hidden.state, 'hidden');
+    assert.equal(hidden.durationMs, 2500);
 }
 
 console.log('reasoning normalization tests passed');
