@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ReadableStream } from 'node:stream/web';
 
 import { generateScratchPadResponse, isChatActive } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
+import { streamGeneration } from '../src/streaming.js';
 
 function setupHarness(overrides = {}) {
     const calls = [];
@@ -13,18 +15,29 @@ function setupHarness(overrides = {}) {
         characters: [],
         characterId: 0,
         groupId: undefined,
+        mainApi: 'openai',
+        chatCompletionSettings: { stream_openai: false },
         saveMetadata: async () => {},
         saveSettingsDebounced: () => {},
         setExtensionPrompt: (...args) => calls.push(args),
-        generateQuietPrompt: async () => 'Assistant response',
+        substituteParams: (text) => text,
+        sendGenerationRequest: async (type, data) => {
+            calls.push(['sendGenerationRequest', type, data]);
+            return { choices: [{ message: { content: 'Assistant response' } }] };
+        },
+        extractMessageFromData: () => 'Assistant response',
+        generateRaw: async (args) => {
+            calls.push(['generateRaw', args]);
+            return 'Assistant response';
+        },
         ...overrides,
     };
 
     context.extensionSettings.scratchPad = {
-        ...(context.extensionSettings.scratchPad || {}),
         useStandardGeneration: true,
         oocSystemPrompt: 'OOC PROMPT',
         chatHistoryLimit: 0,
+        ...(context.extensionSettings.scratchPad || {}),
     };
 
     globalThis.SillyTavern = {
@@ -56,10 +69,10 @@ async function runStandardGeneration({ contextOverrides = {}, threadSettings = {
     assert.ok(result.gen_started, 'generation result should include start time');
     assert.ok(result.gen_finished, 'generation result should include finish time');
 
-    const injectedCall = calls.find(args => args[0] === 'sp_quiet_inject' && typeof args[1] === 'string' && args[1].length > 0);
-    assert.ok(injectedCall, 'should inject quiet prompt');
+    const rawCall = calls.find(args => args[0] === 'generateRaw');
+    assert.ok(rawCall, 'should generate through generateRaw');
 
-    return injectedCall[1];
+    return rawCall[1];
 }
 
 test('isChatActive allows empty chats for active character/group', () => {
@@ -73,24 +86,78 @@ test('isChatActive allows empty chats for active character/group', () => {
     assert.equal(isChatActive(), false);
 });
 
-test('standard generation builds quiet prompt with OOC prompt and thread history only', async () => {
-    const quietPrompt = await runStandardGeneration({
+test('standard generation uses controlled scratch pad context without duplicating the current question', async () => {
+    const rawArgs = await runStandardGeneration({
+        contextOverrides: {
+            chatMetadata: {
+                system_prompt: 'ST SYSTEM PROMPT',
+                note_prompt: 'AUTHOR NOTE',
+            },
+            chat: [
+                { is_user: true, name: 'User', mes: 'Visible chat history' },
+            ],
+            characters: [
+                { name: 'Seraphina', description: 'Character card text' },
+            ],
+            extensionSettings: {
+                scratchPad: {
+                    useStandardGeneration: true,
+                    oocSystemPrompt: 'OOC PROMPT',
+                    chatHistoryLimit: 0,
+                },
+            },
+        },
+        threadSettings: {
+            includeSystemPrompt: true,
+            includeCharacterCard: true,
+            includeAuthorsNote: true,
+        },
         seedMessages: [
             { role: 'user', content: 'Older thread question' },
             { role: 'assistant', content: 'Older thread answer' },
         ],
     });
 
-    // Should include OOC prompt, thread history, and user question
-    assert.match(quietPrompt, /OOC PROMPT/);
-    assert.match(quietPrompt, /--- PREVIOUS SCRATCH PAD DISCUSSION ---/);
-    assert.match(quietPrompt, /--- USER QUESTION ---/);
+    assert.equal(rawArgs.systemPrompt.includes('OOC PROMPT'), true);
+    assert.match(rawArgs.prompt, /--- SYSTEM PROMPT ---/);
+    assert.match(rawArgs.prompt, /ST SYSTEM PROMPT/);
+    assert.match(rawArgs.prompt, /--- CHARACTER INFORMATION ---/);
+    assert.match(rawArgs.prompt, /Character card text/);
+    assert.match(rawArgs.prompt, /--- AUTHOR'S NOTE ---/);
+    assert.match(rawArgs.prompt, /AUTHOR NOTE/);
+    assert.match(rawArgs.prompt, /--- ROLEPLAY CHAT HISTORY ---/);
+    assert.match(rawArgs.prompt, /Visible chat history/);
+    assert.match(rawArgs.prompt, /--- PREVIOUS SCRATCH PAD DISCUSSION ---/);
+    assert.match(rawArgs.prompt, /Older thread question/);
+    assert.match(rawArgs.prompt, /Older thread answer/);
+    assert.match(rawArgs.prompt, /--- USER QUESTION ---/);
 
-    // Should NOT include context that ST's generateQuietPrompt already provides
-    assert.doesNotMatch(quietPrompt, /--- SYSTEM PROMPT ---/);
-    assert.doesNotMatch(quietPrompt, /--- CHARACTER INFORMATION ---/);
-    assert.doesNotMatch(quietPrompt, /--- ROLEPLAY CHAT HISTORY ---/);
-    assert.doesNotMatch(quietPrompt, /--- AUTHOR'S NOTE ---/);
+    const occurrences = rawArgs.prompt.match(/New question/g) || [];
+    assert.equal(occurrences.length, 1);
+});
+
+test('custom generation does not duplicate the current question in thread history', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            scratchPad: {
+                useStandardGeneration: false,
+                oocSystemPrompt: 'OOC PROMPT',
+                chatHistoryLimit: 0,
+            },
+        },
+    });
+
+    const thread = createThread('Custom Thread');
+    assert.ok(thread, 'thread should be created');
+
+    const result = await generateScratchPadResponse('Unique custom question', thread.id);
+    assert.equal(result.success, true);
+
+    const requestCall = calls.find(args => args[0] === 'sendGenerationRequest');
+    assert.ok(requestCall, 'should generate through sendGenerationRequest');
+    const userPrompt = requestCall[2].prompt.find(message => message.role === 'user').content;
+    const occurrences = userPrompt.match(/Unique custom question/g) || [];
+    assert.equal(occurrences.length, 1);
 });
 
 test('standard generation stores response timing on assistant messages', async () => {
@@ -108,4 +175,52 @@ test('standard generation stores response timing on assistant messages', async (
     assert.ok(assistantMessage.gen_started);
     assert.ok(assistantMessage.gen_finished);
     assert.ok(Date.parse(assistantMessage.gen_started) <= Date.parse(assistantMessage.gen_finished));
+});
+
+test('streaming parser emits CRLF-delimited SSE events before stream close', async () => {
+    setupHarness({
+        chatCompletionSettings: {
+            stream_openai: true,
+            chat_completion_source: 'openai',
+            temp_openai: 1,
+            freq_pen_openai: 0,
+            pres_pen_openai: 0,
+            top_p_openai: 1,
+            openai_max_tokens: 100,
+            show_thoughts: false,
+            reasoning_effort: 'auto',
+            seed: -1,
+        },
+        getChatCompletionModel: () => 'test-model',
+        getRequestHeaders: () => ({}),
+    });
+
+    let controller;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        body: new ReadableStream({
+            start(streamController) {
+                controller = streamController;
+            },
+        }),
+    });
+
+    try {
+        const iterator = streamGeneration({ messages: [{ role: 'user', content: 'Hi' }] });
+        const nextToken = iterator.next();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\r\n\r\n'));
+
+        const result = await Promise.race([
+            nextToken,
+            new Promise(resolve => setTimeout(() => resolve(null), 100)),
+        ]);
+
+        assert.deepEqual(result, { value: { text: 'Hello', reasoning: '' }, done: false });
+        controller.close();
+    } finally {
+        globalThis.fetch = previousFetch;
+    }
 });

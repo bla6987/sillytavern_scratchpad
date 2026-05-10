@@ -344,8 +344,8 @@ export async function* streamGeneration({ messages, signal }) {
 
             buffer += decoder.decode(value, { stream: true });
 
-            // Split on SSE double-newline boundaries
-            const events = buffer.split(/\n\n/);
+            // Split on SSE double-newline boundaries; servers may use LF or CRLF.
+            const events = buffer.split(/\r?\n\r?\n/);
             // Keep the last (potentially incomplete) chunk
             buffer = events.pop() || '';
 

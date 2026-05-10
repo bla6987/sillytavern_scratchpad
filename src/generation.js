@@ -7,7 +7,7 @@ import { getSettings } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
-import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts, suppressAuthorsNoteForGeneration } from './authorsNote.js';
+import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -283,18 +283,6 @@ export function getEffectiveProfileForThread(threadId) {
     return null;
 }
 
-/**
- * Resolve generation options that must be consistent across generation paths.
- * @param {string} threadId Thread ID
- * @returns {{includeAuthorsNote: boolean}}
- */
-function getThreadGenerationOptions(threadId) {
-    const threadSettings = getThreadContextSettings(threadId);
-    return {
-        includeAuthorsNote: Boolean(threadSettings.includeAuthorsNote),
-    };
-}
-
 function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null, hiddenReasoning = null) {
     const parsed = parseThinkingFromText(responseText);
     const merged = mergeReasoningCandidates(streamReasoning, resultReasoning, parsed.reasoning, hiddenReasoning);
@@ -463,41 +451,50 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
 }
 
 /**
- * Standard generation using SillyTavern's full pipeline (generateQuietPrompt).
- * Injects the prompt as a user-role extension prompt instead of passing it as
- * the quietPrompt parameter, because the quiet prompt mechanism creates a
- * trailing system message which violates Claude's "conversation must end with
- * user message" constraint on many aggregator APIs.
+ * Compatibility generation using SillyTavern's generateRaw helper.
+ * This keeps Scratch Pad in control of the context payload while still routing
+ * through SillyTavern's API abstraction for providers that dislike the direct
+ * request path.
  *
  * Returns the same shape as callGeneration() for downstream compatibility.
  * @param {Object} options
- * @param {string} options.quietPrompt Prompt injected into ST's pipeline
- * @param {boolean} [options.includeAuthorsNote=true] Whether to keep ST's Author's Note in the pipeline
+ * @param {string} [options.systemPrompt] System prompt
+ * @param {string} [options.prompt] User prompt (concatenated format)
+ * @param {Array} [options.messages] Pre-built messages array (multi-message format)
  * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: null}>}
  */
-async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }) {
+async function callStandardGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null }) {
     const context = SillyTavern.getContext();
     const startedAt = Date.now();
 
-    // Inject as user-role message instead of system-role quiet prompt.
-    // extension_prompt_types.IN_CHAT = 1, extension_prompt_roles.USER = 1
-    const INJECT_KEY = 'sp_quiet_inject';
-    context.setExtensionPrompt(INJECT_KEY, quietPrompt, 1 /* IN_CHAT */, 0, false, 1 /* USER */);
-
-    // Suppress Author's Note for this run when disabled.
-    const restoreAuthorsNote = suppressAuthorsNoteForGeneration(context, includeAuthorsNote);
+    function buildMessages() {
+        const substitute = context.substituteParams || ((text) => text);
+        const msgs = [];
+        if (systemPrompt) {
+            msgs.push({ role: 'system', content: substitute(systemPrompt) });
+        }
+        for (const msg of prebuiltMessages || []) {
+            msgs.push({ role: msg.role, content: substitute(msg.content) });
+        }
+        return msgs;
+    }
 
     try {
-        const text = await context.generateQuietPrompt({
-            quietPrompt: '',          // empty → no trailing system message
-            removeReasoning: false,   // we parse reasoning ourselves
-        });
+        let text;
+        if (prebuiltMessages) {
+            text = await context.generateRaw({ prompt: buildMessages() });
+        } else {
+            text = await context.generateRaw({ systemPrompt, prompt });
+        }
 
-        // Report token usage (approximate — only our quiet prompt, not ST's full constructed prompt)
+        // Report token usage (approximate, mirrors the custom generation path)
         try {
             const tracker = window['TokenUsageTracker'];
             if (tracker) {
-                const inputTokens = await tracker.countTokens(quietPrompt || '');
+                const inputText = prebuiltMessages
+                    ? (systemPrompt || '') + '\n' + prebuiltMessages.map(m => m.content).join('\n')
+                    : (systemPrompt || '') + '\n' + (prompt || '');
+                const inputTokens = await tracker.countTokens(inputText);
                 const outputTokens = await tracker.countTokens(text || '');
                 const modelId = tracker.getCurrentModelId();
                 const sourceId = tracker.getCurrentSourceId();
@@ -514,46 +511,12 @@ async function callStandardGeneration({ quietPrompt, includeAuthorsNote = true }
             resultReasoning: null,
             hiddenReasoning: createHiddenReasoningCandidate(Date.now() - startedAt, context),
         };
-    } finally {
-        context.setExtensionPrompt(INJECT_KEY, '', 1, 0, false, 1);
-        restoreAuthorsNote();
-    }
-}
-
-/**
- * Build the quiet prompt string for standard generation mode.
- * Keeps context controls aligned with the non-standard prompt path.
- * @param {string} userQuestion User's question
- * @param {Object} thread Thread object (for previous discussion history)
- * @param {boolean} isFirstMessage Whether to request a title
- * @returns {string} Combined quiet prompt
- */
-function buildQuietPrompt(userQuestion, thread, isFirstMessage) {
-    const settings = getSettings();
-    const parts = [];
-
-    // OOC system instruction
-    parts.push(settings.oocSystemPrompt);
-
-    // Title instruction for first message
-    if (isFirstMessage) {
-        parts.push('At the very beginning of your response, provide a brief title (3-6 words) formatted as: **Title: [Your Title Here]**\nThen provide your response.');
-    }
-
-    // Thread history (previous scratch pad discussion)
-    if (thread?.messages?.length > 0) {
-        const threadHistory = formatThreadHistory(thread.messages);
-        if (threadHistory) {
-            parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
-            parts.push(threadHistory);
+    } catch (err) {
+        if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
+            throw err;
         }
+        throw err;
     }
-
-    // User question
-    parts.push('--- USER QUESTION ---');
-    parts.push(userQuestion);
-
-    return parts.join('\n\n');
 }
 
 /**
@@ -596,6 +559,14 @@ function getSwipeContext(threadId, messageId) {
     return { userQuestion, contextThread };
 }
 
+function excludeMessagesFromThread(thread, messageIds) {
+    const excluded = new Set(messageIds.filter(Boolean));
+    return {
+        ...thread,
+        messages: (thread?.messages || []).filter(message => !excluded.has(message.id)),
+    };
+}
+
 export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
     const context = SillyTavern.getContext();
 
@@ -632,7 +603,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
-                    const result = await callStandardGeneration({ quietPrompt: userPrompt });
+                    const result = await callStandardGeneration({ systemPrompt: '', prompt: userPrompt });
                     if (onStream) onStream(result.text, true);
                     return result;
                 } finally {
@@ -964,20 +935,17 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         if (!currentThread) {
             return { success: false, error: 'Thread not found' };
         }
+        const promptThread = excludeMessagesFromThread(currentThread, [userMessage.id, assistantMessage.id]);
         const isFirstMessage = !currentThread.titled;
         const globalSettings = getSettings();
-        const generationOptions = getThreadGenerationOptions(threadId);
 
         const doGenerate = globalSettings.useStandardGeneration
             ? async () => {
-                const quietPrompt = buildQuietPrompt(userQuestion, currentThread, isFirstMessage);
+                const promptData = buildPrompt(userQuestion, promptThread, isFirstMessage);
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
-                    const result = await callStandardGeneration({
-                        quietPrompt,
-                        includeAuthorsNote: generationOptions.includeAuthorsNote,
-                    });
+                    const result = await callStandardGeneration(promptData);
                     if (onStream) onStream(result.text, true);
                     return result;
                 } finally {
@@ -985,7 +953,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 }
             }
             : async () => {
-                const promptData = buildPrompt(userQuestion, currentThread, isFirstMessage);
+                const promptData = buildPrompt(userQuestion, promptThread, isFirstMessage);
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
@@ -1120,7 +1088,6 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     }
 
     const globalSettings = getSettings();
-    const generationOptions = getThreadGenerationOptions(threadId);
 
     // Build prompt / context for swipe
     let swipeCtx = null;
@@ -1128,6 +1095,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     if (globalSettings.useStandardGeneration) {
         swipeCtx = getSwipeContext(threadId, messageId);
         if (!swipeCtx) return { success: false, error: 'Could not build prompt for swipe' };
+        promptData = buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
     } else {
         promptData = buildPromptForSwipe(threadId, messageId);
         if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
@@ -1150,14 +1118,10 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     try {
         const doGenerate = globalSettings.useStandardGeneration
             ? async () => {
-                const quietPrompt = buildQuietPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
-                    const result = await callStandardGeneration({
-                        quietPrompt,
-                        includeAuthorsNote: generationOptions.includeAuthorsNote,
-                    });
+                    const result = await callStandardGeneration(promptData);
                     if (onStream) onStream(result.text, true);
                     return result;
                 } finally {
@@ -1432,8 +1396,7 @@ Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
 
         const doGenerate = getSettings().useStandardGeneration
             ? async () => {
-                const titleQuiet = `${systemPrompt}\n\n${prompt}`;
-                const { text } = await callStandardGeneration({ quietPrompt: titleQuiet });
+                const { text } = await callStandardGeneration({ systemPrompt, prompt });
                 return text;
             }
             : async () => {

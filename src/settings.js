@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     soundOnComplete: false, // Play notification sound when generation finishes
     displayMode: 'drawer', // Display mode: 'drawer' (overlay), 'pinned' (sidebar), 'fullscreen'
     useMultiMessageFormat: false, // Send structured multi-message array instead of concatenated prompt
-    useStandardGeneration: false // Use ST's full generation pipeline (emergency compatibility mode)
+    useStandardGeneration: false // Use ST's generateRaw helper for compatibility mode
 });
 
 /**
