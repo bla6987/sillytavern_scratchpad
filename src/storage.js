@@ -399,6 +399,26 @@ export function ensureSwipeFields(message) {
         message.swipeTimestamps = message.swipeTimestamps.slice(0, message.swipes.length);
     }
 
+    if (!Array.isArray(message.swipeGenStarted)) {
+        message.swipeGenStarted = message.swipes.map(() => message.gen_started || null);
+    }
+    while (message.swipeGenStarted.length < message.swipes.length) {
+        message.swipeGenStarted.push(null);
+    }
+    if (message.swipeGenStarted.length > message.swipes.length) {
+        message.swipeGenStarted = message.swipeGenStarted.slice(0, message.swipes.length);
+    }
+
+    if (!Array.isArray(message.swipeGenFinished)) {
+        message.swipeGenFinished = message.swipes.map(() => message.gen_finished || null);
+    }
+    while (message.swipeGenFinished.length < message.swipes.length) {
+        message.swipeGenFinished.push(null);
+    }
+    if (message.swipeGenFinished.length > message.swipes.length) {
+        message.swipeGenFinished = message.swipeGenFinished.slice(0, message.swipes.length);
+    }
+
     if (!Number.isInteger(message.swipeId)) {
         message.swipeId = 0;
     }
@@ -446,6 +466,8 @@ export function syncSwipeToMessage(message) {
     message.thinking = message.swipeThinking?.[idx] ?? null;
     message.reasoningMeta = normalizeReasoningMeta(message.swipeReasoningMeta?.[idx], message.thinking);
     message.timestamp = message.swipeTimestamps?.[idx] ?? message.timestamp;
+    message.gen_started = message.swipeGenStarted?.[idx] ?? message.gen_started ?? null;
+    message.gen_finished = message.swipeGenFinished?.[idx] ?? message.gen_finished ?? null;
 }
 
 /**
@@ -469,6 +491,8 @@ export function addSwipe(threadId, messageId, content, thinking = null, timestam
     message.swipeThinking.push(thinking);
     message.swipeReasoningMeta.push(normalizeReasoningMeta(reasoningMeta, thinking));
     message.swipeTimestamps.push(ts);
+    message.swipeGenStarted.push(null);
+    message.swipeGenFinished.push(null);
     message.swipeId = message.swipes.length - 1;
 
     syncSwipeToMessage(message);
@@ -521,6 +545,12 @@ export function deleteSwipe(threadId, messageId, index) {
     message.swipeThinking.splice(index, 1);
     if (Array.isArray(message.swipeReasoningMeta)) {
         message.swipeReasoningMeta.splice(index, 1);
+    }
+    if (Array.isArray(message.swipeGenStarted)) {
+        message.swipeGenStarted.splice(index, 1);
+    }
+    if (Array.isArray(message.swipeGenFinished)) {
+        message.swipeGenFinished.splice(index, 1);
     }
     message.swipeTimestamps.splice(index, 1);
 

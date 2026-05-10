@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { generateScratchPadResponse, isChatActive } from '../src/generation.js';
-import { createThread, updateThreadContextSettings, addMessage } from '../src/storage.js';
+import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
 
 function setupHarness(overrides = {}) {
     const calls = [];
@@ -53,6 +53,8 @@ async function runStandardGeneration({ contextOverrides = {}, threadSettings = {
 
     const result = await generateScratchPadResponse('New question', thread.id);
     assert.equal(result.success, true, 'generation should succeed in test harness');
+    assert.ok(result.gen_started, 'generation result should include start time');
+    assert.ok(result.gen_finished, 'generation result should include finish time');
 
     const injectedCall = calls.find(args => args[0] === 'sp_quiet_inject' && typeof args[1] === 'string' && args[1].length > 0);
     assert.ok(injectedCall, 'should inject quiet prompt');
@@ -89,4 +91,21 @@ test('standard generation builds quiet prompt with OOC prompt and thread history
     assert.doesNotMatch(quietPrompt, /--- CHARACTER INFORMATION ---/);
     assert.doesNotMatch(quietPrompt, /--- ROLEPLAY CHAT HISTORY ---/);
     assert.doesNotMatch(quietPrompt, /--- AUTHOR'S NOTE ---/);
+});
+
+test('standard generation stores response timing on assistant messages', async () => {
+    setupHarness();
+
+    const thread = createThread('Timing Thread');
+    assert.ok(thread, 'thread should be created');
+
+    const result = await generateScratchPadResponse('Timed question', thread.id);
+    assert.equal(result.success, true);
+
+    const updatedThread = getThread(thread.id);
+    const assistantMessage = updatedThread.messages.find(msg => msg.role === 'assistant');
+
+    assert.ok(assistantMessage.gen_started);
+    assert.ok(assistantMessage.gen_finished);
+    assert.ok(Date.parse(assistantMessage.gen_started) <= Date.parse(assistantMessage.gen_finished));
 });

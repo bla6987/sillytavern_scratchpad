@@ -618,9 +618,12 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         return { success: false, error: 'Failed to add assistant message' };
     }
     assistantMessage.noContext = true;
+    assistantMessage.gen_started = new Date().toISOString();
+    assistantMessage.gen_finished = null;
 
     await saveMetadata();
 
+    let genFinished = null;
     try {
         const globalSettings = getSettings();
 
@@ -657,6 +660,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             result = await doGenerate();
         }
 
+        genFinished = new Date().toISOString();
         const responseText = result.text || '';
         const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
@@ -670,10 +674,12 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
                 thinking: combinedThinking,
                 reasoningMeta,
                 noContext: true,
+                gen_started: assistantMessage.gen_started,
+                gen_finished: genFinished,
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '' };
+            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished };
         }
 
         updateMessage(threadId, assistantMessage.id, {
@@ -681,6 +687,8 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
             thinking: combinedThinking,
             reasoningMeta,
             noContext: true,
+            gen_started: assistantMessage.gen_started,
+            gen_finished: genFinished,
             status: 'complete'
         });
 
@@ -690,9 +698,10 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
 
         await saveMetadata();
 
-        return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta };
+        return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished };
 
     } catch (error) {
+        genFinished = genFinished || new Date().toISOString();
         // Check if this was a cancellation
         if (checkAndResetCancellation()) {
             const thread = getThread(threadId);
@@ -711,6 +720,8 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         updateMessage(threadId, assistantMessage.id, {
             content: '',
             noContext: true,
+            gen_started: assistantMessage.gen_started,
+            gen_finished: genFinished,
             status: 'failed',
             error: error.message
         });
@@ -942,9 +953,12 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
     if (!assistantMessage) {
         return { success: false, error: 'Failed to add assistant message' };
     }
+    assistantMessage.gen_started = new Date().toISOString();
+    assistantMessage.gen_finished = null;
 
     await saveMetadata();
 
+    let genFinished = null;
     try {
         const currentThread = getThread(threadId);  // Re-fetch to get latest messages
         if (!currentThread) {
@@ -998,6 +1012,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             result = await doGenerate();
         }
 
+        genFinished = new Date().toISOString();
         const responseText = result.text || '';
         const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
@@ -1021,10 +1036,12 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 content: responseText || '',
                 thinking: combinedThinking,
                 reasoningMeta,
+                gen_started: assistantMessage.gen_started,
+                gen_finished: genFinished,
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '' };
+            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished };
         }
 
         // Update assistant message with content and thinking
@@ -1032,14 +1049,17 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             content: finalResponse,
             thinking: combinedThinking,
             reasoningMeta,
+            gen_started: assistantMessage.gen_started,
+            gen_finished: genFinished,
             status: 'complete'
         });
 
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished };
 
     } catch (error) {
+        genFinished = genFinished || new Date().toISOString();
         if (checkAndResetCancellation()) {
             const thread = getThread(threadId);
             if (thread) {
@@ -1057,6 +1077,8 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         // Mark message as failed
         updateMessage(threadId, assistantMessage.id, {
             content: '',
+            gen_started: assistantMessage.gen_started,
+            gen_finished: genFinished,
             status: 'failed',
             error: error.message
         });
@@ -1116,9 +1138,15 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     const previousSwipeId = message.swipeId;
     addSwipe(threadId, messageId, '', null, null, null);
     const newSwipeIndex = message.swipeId;
+    const genStarted = new Date().toISOString();
+    message.swipeGenStarted[newSwipeIndex] = genStarted;
+    message.swipeGenFinished[newSwipeIndex] = null;
+    message.gen_started = genStarted;
+    message.gen_finished = null;
     message.status = 'pending';
     await saveMetadata();
 
+    let genFinished = null;
     try {
         const doGenerate = globalSettings.useStandardGeneration
             ? async () => {
@@ -1162,6 +1190,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             result = await doGenerate();
         }
 
+        genFinished = new Date().toISOString();
         const responseText = result.text || '';
         const reasoningPayload = buildReasoningPayload(responseText, result.streamReasoning, result.resultReasoning, result.hiddenReasoning);
         const combinedThinking = reasoningPayload.thinking;
@@ -1190,13 +1219,16 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         message.swipeThinking[newSwipeIndex] = combinedThinking;
         message.swipeReasoningMeta[newSwipeIndex] = reasoningMeta;
         message.swipeTimestamps[newSwipeIndex] = new Date().toISOString();
+        message.swipeGenStarted[newSwipeIndex] = genStarted;
+        message.swipeGenFinished[newSwipeIndex] = genFinished;
         message.status = 'complete';
         syncSwipeToMessage(message);
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex, gen_started: genStarted, gen_finished: genFinished };
 
     } catch (error) {
+        genFinished = genFinished || new Date().toISOString();
         if (checkAndResetCancellation()) {
             deleteSwipe(threadId, messageId, newSwipeIndex);
             setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));

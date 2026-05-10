@@ -781,6 +781,23 @@ body.sp-fullscreen-open {
     text-align: right;
 }
 
+.sp-message-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.125rem;
+}
+
+.sp-message-user .sp-message-meta {
+    align-items: flex-end;
+    margin-left: auto;
+}
+
+.sp-message-generation-time {
+    font-size: 0.625rem;
+    color: var(--sp-text-muted);
+}
+
 .sp-message-user .sp-message-time {
     color: var(--sp-text-muted);
 }

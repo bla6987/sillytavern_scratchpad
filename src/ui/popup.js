@@ -280,6 +280,22 @@ function formatReasoningDuration(durationMs) {
     return `${(duration / 1000).toFixed(1)}s`;
 }
 
+function formatGenerationDuration(genStarted, genFinished) {
+    const start = Date.parse(genStarted);
+    const finish = Date.parse(genFinished);
+    if (!Number.isFinite(start) || !Number.isFinite(finish) || finish < start) return '';
+
+    const seconds = (finish - start) / 1000;
+    if (seconds >= 100) return `${Math.round(seconds)}s`;
+    if (seconds >= 10) return `${seconds.toFixed(1)}s`;
+    return `${seconds.toFixed(2)}s`;
+}
+
+function renderGenerationTimingHtml(result) {
+    const duration = formatGenerationDuration(result?.gen_started, result?.gen_finished);
+    return duration ? `<div class="sp-message-generation-time">Generated in ${duration}</div>` : '';
+}
+
 function renderReasoningHtml(thinking, reasoningMeta) {
     if (thinking) {
         return `
@@ -369,10 +385,12 @@ async function generatePopupResponse(message) {
         } else {
             // Render final response with thinking if present
             const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
+            const timingHtml = renderGenerationTimingHtml(result);
             contentEl.innerHTML = `
                 <div class="sp-popup-response">
                     ${thinkingHtml}
                     ${renderMarkdown(result.response)}
+                    ${timingHtml}
                 </div>
             `;
             // Store response for TTS
@@ -463,10 +481,12 @@ async function generatePopupRawResponse(message) {
             `;
         } else {
             const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
+            const timingHtml = renderGenerationTimingHtml(result);
             contentEl.innerHTML = `
                 <div class="sp-popup-response">
                     ${thinkingHtml}
                     ${renderMarkdown(result.response)}
+                    ${timingHtml}
                 </div>
             `;
             // Store response for TTS

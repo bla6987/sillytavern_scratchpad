@@ -690,6 +690,17 @@ function formatReasoningDuration(durationMs) {
     return `${(duration / 1000).toFixed(1)}s`;
 }
 
+function formatGenerationDuration(genStarted, genFinished) {
+    const start = Date.parse(genStarted);
+    const finish = Date.parse(genFinished);
+    if (!Number.isFinite(start) || !Number.isFinite(finish) || finish < start) return '';
+
+    const seconds = (finish - start) / 1000;
+    if (seconds >= 100) return `${Math.round(seconds)}s`;
+    if (seconds >= 10) return `${seconds.toFixed(1)}s`;
+    return `${seconds.toFixed(2)}s`;
+}
+
 function appendReasoningSection(container, thinking, reasoningMeta) {
     const normalizedMeta = normalizeReasoningMeta(reasoningMeta, thinking);
 
@@ -852,11 +863,26 @@ function createMessageElement(message) {
     const footerEl = document.createElement('div');
     footerEl.className = 'sp-message-footer';
 
+    const metaEl = document.createElement('div');
+    metaEl.className = 'sp-message-meta';
+
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-message-time';
     timeEl.textContent = formatTimestamp(message.timestamp);
-    footerEl.appendChild(timeEl);
+    metaEl.appendChild(timeEl);
+
+    if (isAssistant) {
+        const generationDuration = formatGenerationDuration(message.gen_started, message.gen_finished);
+        if (generationDuration) {
+            const durationEl = document.createElement('div');
+            durationEl.className = 'sp-message-generation-time';
+            durationEl.textContent = `Generated in ${generationDuration}`;
+            metaEl.appendChild(durationEl);
+        }
+    }
+
+    footerEl.appendChild(metaEl);
 
     // Actions for assistant messages
     if (isAssistant && message.status === 'complete' && message.content) {
