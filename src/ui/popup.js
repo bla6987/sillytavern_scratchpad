@@ -334,9 +334,12 @@ async function generatePopupResponse(message) {
     try {
         let _lastPopupRender = 0;
         let _pendingPopupUpdate = null;
+        let _latestPopupResponse = '';
         const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
-            const renderPopupContent = () => {
-                const { cleanedResponse } = parseThinking(partialResponse);
+            _latestPopupResponse = partialResponse;
+
+            const renderPopupContent = (responseText = _latestPopupResponse) => {
+                const { cleanedResponse } = parseThinking(responseText);
                 contentEl.innerHTML = `
                     <div class="sp-popup-response">
                         ${renderMarkdown(cleanedResponse)}
@@ -347,7 +350,7 @@ async function generatePopupResponse(message) {
 
             if (isComplete) {
                 clearTimeout(_pendingPopupUpdate);
-                renderPopupContent();
+                renderPopupContent(partialResponse);
             } else {
                 const now = performance.now();
                 if (now - _lastPopupRender >= 100) {
@@ -436,9 +439,12 @@ async function generatePopupRawResponse(message) {
     try {
         let _lastRawRender = 0;
         let _pendingRawUpdate = null;
+        let _latestRawResponse = '';
         const result = await generateRawPromptResponse(message, currentPopupThreadId, (partialResponse) => {
-            const renderRawContent = () => {
-                const { cleanedResponse } = parseThinking(partialResponse);
+            _latestRawResponse = partialResponse;
+
+            const renderRawContent = (responseText = _latestRawResponse) => {
+                const { cleanedResponse } = parseThinking(responseText);
                 contentEl.innerHTML = `
                     <div class="sp-popup-response">
                         ${renderMarkdown(cleanedResponse)}

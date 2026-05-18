@@ -1063,7 +1063,16 @@ async function handleGenerateSwipe(messageId) {
     try {
         let _lastSwipeRender = 0;
         let _pendingSwipeUpdate = null;
+        let _latestSwipeResponse = '';
         const result = await generateSwipe(currentThreadId, messageId, (partialResponse, isComplete) => {
+            _latestSwipeResponse = partialResponse;
+
+            const renderSwipeContent = (responseText = _latestSwipeResponse) => {
+                const { cleanedResponse } = parseThinking(responseText);
+                streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
+                scrollToBottom();
+            };
+
             if (!streamingContentEl) {
                 // Refresh to show the pending state
                 updateSwipeDisplay(messageId);
@@ -1076,24 +1085,18 @@ async function handleGenerateSwipe(messageId) {
             if (streamingContentEl && streamingContentEl.isConnected) {
                 if (isComplete) {
                     clearTimeout(_pendingSwipeUpdate);
-                    const { cleanedResponse } = parseThinking(partialResponse);
-                    streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
-                    scrollToBottom();
+                    renderSwipeContent(partialResponse);
                 } else {
                     const now = performance.now();
                     if (now - _lastSwipeRender >= 100) {
                         _lastSwipeRender = now;
                         clearTimeout(_pendingSwipeUpdate);
-                        const { cleanedResponse } = parseThinking(partialResponse);
-                        streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
-                        scrollToBottom();
+                        renderSwipeContent();
                     } else if (!_pendingSwipeUpdate) {
                         _pendingSwipeUpdate = setTimeout(() => {
                             _pendingSwipeUpdate = null;
                             _lastSwipeRender = performance.now();
-                            const { cleanedResponse } = parseThinking(partialResponse);
-                            streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
-                            scrollToBottom();
+                            renderSwipeContent();
                         }, 100 - (now - _lastSwipeRender));
                     }
                 }
@@ -1203,7 +1206,16 @@ async function handleSendMessage() {
 
         let _lastStreamRender = 0;
         let _pendingStreamUpdate = null;
+        let _latestStreamResponse = '';
         const result = await generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
+            _latestStreamResponse = partialResponse;
+
+            const renderStreamContent = (responseText = _latestStreamResponse) => {
+                const { cleanedResponse } = parseThinking(responseText);
+                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                scrollToBottom();
+            };
+
             // Update streaming message element
             if (!streamingMsgEl) {
                 // Refresh to show user message and pending assistant message
@@ -1215,26 +1227,20 @@ async function handleSendMessage() {
                 if (isComplete) {
                     // Always render final state immediately
                     clearTimeout(_pendingStreamUpdate);
-                    const { cleanedResponse } = parseThinking(partialResponse);
-                    streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                    scrollToBottom();
+                    renderStreamContent(partialResponse);
                 } else {
                     // Throttle: render at most every 100ms during streaming
                     const now = performance.now();
                     if (now - _lastStreamRender >= 100) {
                         _lastStreamRender = now;
                         clearTimeout(_pendingStreamUpdate);
-                        const { cleanedResponse } = parseThinking(partialResponse);
-                        streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                        scrollToBottom();
+                        renderStreamContent();
                     } else if (!_pendingStreamUpdate) {
                         // Schedule a trailing update to ensure we don't miss the latest content
                         _pendingStreamUpdate = setTimeout(() => {
                             _pendingStreamUpdate = null;
                             _lastStreamRender = performance.now();
-                            const { cleanedResponse } = parseThinking(partialResponse);
-                            streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                            scrollToBottom();
+                            renderStreamContent();
                         }, 100 - (now - _lastStreamRender));
                     }
                 }
@@ -1309,7 +1315,16 @@ async function handleRetry(messageId) {
     try {
         let _lastRetryRender = 0;
         let _pendingRetryUpdate = null;
+        let _latestRetryResponse = '';
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
+            _latestRetryResponse = partialResponse;
+
+            const renderRetryContent = (responseText = _latestRetryResponse) => {
+                const { cleanedResponse } = parseThinking(responseText);
+                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
+                scrollToBottom();
+            };
+
             // On first callback, refresh to show new pending message
             if (!streamingMsgEl) {
                 refreshConversation();
@@ -1319,24 +1334,18 @@ async function handleRetry(messageId) {
             if (streamingMsgEl && streamingMsgEl.isConnected) {
                 if (isComplete) {
                     clearTimeout(_pendingRetryUpdate);
-                    const { cleanedResponse } = parseThinking(partialResponse);
-                    streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                    scrollToBottom();
+                    renderRetryContent(partialResponse);
                 } else {
                     const now = performance.now();
                     if (now - _lastRetryRender >= 100) {
                         _lastRetryRender = now;
                         clearTimeout(_pendingRetryUpdate);
-                        const { cleanedResponse } = parseThinking(partialResponse);
-                        streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                        scrollToBottom();
+                        renderRetryContent();
                     } else if (!_pendingRetryUpdate) {
                         _pendingRetryUpdate = setTimeout(() => {
                             _pendingRetryUpdate = null;
                             _lastRetryRender = performance.now();
-                            const { cleanedResponse } = parseThinking(partialResponse);
-                            streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                            scrollToBottom();
+                            renderRetryContent();
                         }, 100 - (now - _lastRetryRender));
                     }
                 }

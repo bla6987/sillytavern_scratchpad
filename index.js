@@ -7,7 +7,7 @@ import { ensureScratchPadExists } from './src/storage.js';
 import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize, getDisplayMode } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
 import { isChatActive } from './src/generation.js';
-import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen } from './src/ui/index.js';
+import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen, resetScratchPadUIState } from './src/ui/index.js';
 
 const MODULE_NAME = 'scratchPad';
 const EXTENSION_NAME = 'Scratch Pad';
@@ -168,6 +168,7 @@ function addScratchPadButton(retries = 10) {
 function handleChatChanged() {
     // Ensure scratch pad data exists for new chat
     ensureScratchPadExists();
+    resetScratchPadUIState();
 
     // Refresh UI if open
     if (isScratchPadOpen()) {

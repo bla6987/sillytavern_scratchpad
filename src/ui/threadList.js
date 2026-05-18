@@ -25,6 +25,16 @@ const MAX_SEARCH_RESULTS = 50;
 const SNIPPET_RADIUS = 42;
 
 /**
+ * Reset transient thread-list state when closing Scratch Pad or changing chats.
+ */
+export function resetThreadListState() {
+    currentSearchQuery = '';
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+    searchIndexCache.clear();
+}
+
+/**
  * Render the thread list view
  * @param {HTMLElement} container Container element
  */

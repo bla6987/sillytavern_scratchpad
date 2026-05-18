@@ -3,16 +3,16 @@
  * Exports all UI components and manages the drawer
  */
 
-import { renderThreadList, refreshThreadList } from './threadList.js';
+import { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
 import { openThread, startNewThread, getCurrentThreadId, renderConversation } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
 import { getSettings, updateSettings, getDisplayMode, setDisplayMode } from '../settings.js';
 import { Icons, createButton } from './components.js';
 
-export { renderThreadList, refreshThreadList } from './threadList.js';
+export { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
 export { openThread, startNewThread, getCurrentThreadId } from './conversation.js';
 export { showQuickPopup, showQuickPopupRaw, dismissPopup, isPopupVisible } from './popup.js';
-export { isFullscreenMode, getConversationContainer };
+export { isFullscreenMode, getConversationContainer, resetScratchPadUIState };
 
 let drawerElement = null;
 let backdropElement = null;
@@ -375,6 +375,7 @@ function showFullscreenEmptyState(container) {
 function closeFullscreen() {
     if (!overlayElement) return;
 
+    resetThreadListState();
     overlayElement.classList.remove('visible');
     document.body.classList.remove('sp-fullscreen-open');
     currentDisplayMode = null;
@@ -402,6 +403,7 @@ export function closeScratchPad() {
         return;
     }
 
+    resetThreadListState();
     drawerElement.classList.remove('open');
     drawerElement.classList.remove('sp-pinned');
     drawerElement.style.transform = '';
@@ -418,6 +420,13 @@ export function closeScratchPad() {
             drawerElement = null;
         }
     }, 350);
+}
+
+/**
+ * Reset transient UI state that should not cross chats.
+ */
+function resetScratchPadUIState() {
+    resetThreadListState();
 }
 
 /**
