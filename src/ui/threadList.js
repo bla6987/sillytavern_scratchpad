@@ -2,7 +2,7 @@
  * Thread List View component for Scratch Pad extension
  */
 
-import { getThreads, getThreadsForCurrentBranch, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
+import { getThreads, getThreadsForCurrentBranch, getCurrentChatLength, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
 import { getCurrentContextSettings } from '../settings.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
@@ -17,6 +17,12 @@ async function getConversationModule() {
 }
 
 let threadListContainer = null;
+let currentSearchQuery = '';
+let searchDebounceTimer = null;
+const searchIndexCache = new Map();
+const SEARCH_DEBOUNCE_MS = 180;
+const MAX_SEARCH_RESULTS = 50;
+const SNIPPET_RADIUS = 42;
 
 /**
  * Render the thread list view
@@ -83,10 +89,93 @@ export function renderThreadList(container) {
     actionBar.appendChild(newThreadBtn);
     container.appendChild(actionBar);
 
+    // Search
+    const searchContainer = document.createElement('div');
+    searchContainer.className = 'sp-thread-search-container';
+
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'sp-thread-search-input';
+    searchInput.placeholder = 'Search threads...';
+    searchInput.value = currentSearchQuery;
+    searchInput.setAttribute('aria-label', 'Search scratch pad threads');
+
+    const searchMeta = document.createElement('div');
+    searchMeta.className = 'sp-thread-search-meta';
+    searchMeta.setAttribute('aria-live', 'polite');
+
+    searchInput.addEventListener('input', (e) => {
+        const nextQuery = e.target.value;
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            currentSearchQuery = nextQuery;
+            renderThreadContent(listContainer, searchMeta, currentSearchQuery);
+        }, SEARCH_DEBOUNCE_MS);
+    });
+
+    searchContainer.appendChild(searchInput);
+    searchContainer.appendChild(searchMeta);
+    container.appendChild(searchContainer);
+
     // Thread list
     const listContainer = document.createElement('div');
     listContainer.className = 'sp-thread-list';
     listContainer.id = 'sp-thread-list';
+    container.appendChild(listContainer);
+
+    renderThreadContent(listContainer, searchMeta, currentSearchQuery);
+
+    if (currentSearchQuery) {
+        searchInput.focus();
+        searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    }
+
+    // Quick input at bottom
+    const inputContainer = document.createElement('div');
+    inputContainer.className = 'sp-quick-input-container';
+
+    const quickInput = document.createElement('textarea');
+    quickInput.className = 'sp-quick-input';
+    quickInput.placeholder = 'Ask a question to start a new thread...';
+    quickInput.rows = 2;
+
+    const sendBtn = createButton({
+        icon: Icons.send,
+        text: 'Send',
+        className: 'sp-send-btn',
+        onClick: () => handleQuickSend(quickInput.value)
+    });
+
+    quickInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleQuickSend(quickInput.value).catch(err => {
+                console.error('[ScratchPad] Quick send error:', err);
+            });
+        }
+    });
+
+    inputContainer.appendChild(quickInput);
+    inputContainer.appendChild(sendBtn);
+    container.appendChild(inputContainer);
+}
+
+/**
+ * Render either the default branch-aware thread list or active search results.
+ * @param {HTMLElement} listContainer Thread list container
+ * @param {HTMLElement} searchMeta Search status element
+ * @param {string} query Current search query
+ */
+function renderThreadContent(listContainer, searchMeta, query = '') {
+    listContainer.innerHTML = '';
+    const trimmedQuery = query.trim();
+
+    if (trimmedQuery) {
+        renderSearchResults(listContainer, searchMeta, trimmedQuery);
+        return;
+    }
+
+    searchMeta.textContent = '';
 
     const threads = getThreadsForCurrentBranch();
 
@@ -143,47 +232,252 @@ export function renderThreadList(container) {
             listContainer.appendChild(details);
         }
     }
+}
 
-    container.appendChild(listContainer);
+/**
+ * Render search results across all stored threads for the current chat.
+ * @param {HTMLElement} listContainer Thread list container
+ * @param {HTMLElement} searchMeta Search status element
+ * @param {string} query Search query
+ */
+function renderSearchResults(listContainer, searchMeta, query) {
+    const threads = getThreads();
+    const results = searchThreads(threads, query);
+    const visibleResults = results.slice(0, MAX_SEARCH_RESULTS);
 
-    // Quick input at bottom
-    const inputContainer = document.createElement('div');
-    inputContainer.className = 'sp-quick-input-container';
+    searchMeta.textContent = `${results.length} result${results.length !== 1 ? 's' : ''}${results.length > MAX_SEARCH_RESULTS ? `, showing ${MAX_SEARCH_RESULTS}` : ''}`;
 
-    const quickInput = document.createElement('textarea');
-    quickInput.className = 'sp-quick-input';
-    quickInput.placeholder = 'Ask a question to start a new thread...';
-    quickInput.rows = 2;
+    if (visibleResults.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'sp-empty-state';
+        emptyState.innerHTML = `
+            <div class="sp-empty-icon">${Icons.thread}</div>
+            <p>No matching threads.</p>
+            <p>Try a different word or phrase.</p>
+        `;
+        listContainer.appendChild(emptyState);
+        return;
+    }
 
-    const sendBtn = createButton({
-        icon: Icons.send,
-        text: 'Send',
-        className: 'sp-send-btn',
-        onClick: () => handleQuickSend(quickInput.value)
+    for (const result of visibleResults) {
+        listContainer.appendChild(createThreadItem(result.thread, {
+            query,
+            previewText: result.snippet,
+            matchType: result.matchType,
+            branchLabel: result.branchLabel,
+            isSearchResult: true
+        }));
+    }
+}
+
+/**
+ * Search all threads by title, active content, and swipe variants.
+ * @param {Array} threads Threads to search
+ * @param {string} query Search query
+ * @returns {Array} Ranked search results
+ */
+function searchThreads(threads, query) {
+    const normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) return [];
+
+    const currentLength = getCurrentChatLength();
+    const fuzzyTitleIds = getFuzzyTitleMatchIds(threads, query);
+    const results = [];
+
+    for (const thread of threads) {
+        const index = getThreadSearchIndex(thread, currentLength);
+        const titleIndex = index.title.indexOf(normalizedQuery);
+        const contentMatch = findContentMatch(index.entries, normalizedQuery);
+        const fuzzyTitleMatch = !contentMatch && titleIndex < 0 && fuzzyTitleIds.has(thread.id);
+
+        if (titleIndex < 0 && !contentMatch && !fuzzyTitleMatch) continue;
+
+        const matchType = titleIndex >= 0 || fuzzyTitleMatch ? 'Title' : 'Message';
+        const branchLabel = contentMatch?.branchLabel || index.defaultBranchLabel;
+        const snippet = contentMatch
+            ? createSnippet(contentMatch.text, normalizedQuery, contentMatch.index)
+            : (fuzzyTitleMatch ? 'Fuzzy title match' : 'Thread title match');
+        const rank = getSearchRank({ titleIndex, contentMatch, fuzzyTitleMatch, branchLabel });
+
+        results.push({ thread, snippet, matchType, branchLabel, rank });
+    }
+
+    return results.sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return new Date(b.thread.updatedAt) - new Date(a.thread.updatedAt);
     });
+}
 
-    quickInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleQuickSend(quickInput.value).catch(err => {
-                console.error('[ScratchPad] Quick send error:', err);
+/**
+ * Build or retrieve cached searchable text for a thread.
+ * @param {Object} thread Thread object
+ * @param {number|null} currentLength Current chat length
+ * @returns {Object} Search index
+ */
+function getThreadSearchIndex(thread, currentLength) {
+    const cacheKey = `${thread.id}:${thread.updatedAt}:${currentLength ?? 'all'}`;
+    const cached = searchIndexCache.get(cacheKey);
+    if (cached) return cached;
+
+    const entries = [];
+    let hasCurrentBranchMessage = false;
+    let hasOffBranchMessage = false;
+
+    for (const msg of thread.messages || []) {
+        const branchLabel = getMessageBranchLabel(msg, currentLength);
+        if (branchLabel === 'Other branch') {
+            hasOffBranchMessage = true;
+        } else {
+            hasCurrentBranchMessage = true;
+        }
+
+        for (const text of getMessageSearchTexts(msg)) {
+            entries.push({
+                text,
+                normalized: normalizeSearchText(text),
+                branchLabel
             });
         }
+    }
+
+    const index = {
+        title: normalizeSearchText(thread.name),
+        entries,
+        defaultBranchLabel: hasCurrentBranchMessage || !hasOffBranchMessage ? 'Current branch' : 'Other branch'
+    };
+
+    for (const key of searchIndexCache.keys()) {
+        if (key.startsWith(`${thread.id}:`) && key !== cacheKey) {
+            searchIndexCache.delete(key);
+        }
+    }
+    searchIndexCache.set(cacheKey, index);
+
+    return index;
+}
+
+/**
+ * Get searchable text variants for a message, including assistant swipes.
+ * @param {Object} message Message object
+ * @returns {Array<string>} Searchable text values
+ */
+function getMessageSearchTexts(message) {
+    const texts = [];
+    const seen = new Set();
+
+    for (const text of [message?.content, ...(Array.isArray(message?.swipes) ? message.swipes : [])]) {
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        texts.push(text);
+    }
+
+    return texts;
+}
+
+/**
+ * Get branch label for a stored message.
+ * @param {Object} message Message object
+ * @param {number|null} currentLength Current chat length
+ * @returns {string} Branch label
+ */
+function getMessageBranchLabel(message, currentLength) {
+    if (currentLength === null || message.chatMessageIndex === undefined || message.chatMessageIndex === null) {
+        return 'Current branch';
+    }
+
+    return message.chatMessageIndex <= currentLength ? 'Current branch' : 'Other branch';
+}
+
+/**
+ * Find the first content entry matching the query.
+ * @param {Array} entries Search entries
+ * @param {string} normalizedQuery Normalized query
+ * @returns {Object|null} Match metadata
+ */
+function findContentMatch(entries, normalizedQuery) {
+    let fallbackMatch = null;
+
+    for (const entry of entries) {
+        const index = entry.normalized.indexOf(normalizedQuery);
+        if (index < 0) continue;
+
+        const match = { ...entry, index };
+        if (entry.branchLabel === 'Current branch') return match;
+        if (!fallbackMatch) fallbackMatch = match;
+    }
+
+    return fallbackMatch;
+}
+
+/**
+ * Get fuzzy title matches using SillyTavern's Fuse library when available.
+ * @param {Array} threads Threads to search
+ * @param {string} query Raw query
+ * @returns {Set<string>} Matching thread IDs
+ */
+function getFuzzyTitleMatchIds(threads, query) {
+    const { Fuse } = SillyTavern.libs;
+    if (!Fuse || threads.length === 0) return new Set();
+
+    const fuse = new Fuse(threads, {
+        keys: ['name'],
+        threshold: 0.4,
+        ignoreLocation: true
     });
 
-    inputContainer.appendChild(quickInput);
-    inputContainer.appendChild(sendBtn);
-    container.appendChild(inputContainer);
+    return new Set(fuse.search(query).map(result => result.item.id));
+}
+
+/**
+ * Rank title/current-branch matches above off-branch body matches.
+ * @param {Object} match Match metadata
+ * @returns {number} Sort rank
+ */
+function getSearchRank({ titleIndex, contentMatch, fuzzyTitleMatch, branchLabel }) {
+    if (titleIndex === 0) return 0;
+    if (titleIndex > 0) return 1;
+    if (fuzzyTitleMatch) return 2;
+    if (contentMatch && branchLabel === 'Current branch') return 3;
+    return 4;
+}
+
+/**
+ * Create a compact result snippet around a match.
+ * @param {string} text Source text
+ * @param {string} normalizedQuery Normalized query
+ * @param {number} normalizedIndex Match index in normalized text
+ * @returns {string} Snippet text
+ */
+function createSnippet(text, normalizedQuery, normalizedIndex) {
+    const start = Math.max(0, normalizedIndex - SNIPPET_RADIUS);
+    const end = Math.min(text.length, normalizedIndex + normalizedQuery.length + SNIPPET_RADIUS);
+    const prefix = start > 0 ? '...' : '';
+    const suffix = end < text.length ? '...' : '';
+
+    return `${prefix}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
+}
+
+/**
+ * Normalize text for case-insensitive searching.
+ * @param {string} text Text to normalize
+ * @returns {string} Normalized text
+ */
+function normalizeSearchText(text) {
+    return (text || '').toString().toLowerCase();
 }
 
 /**
  * Create a thread list item element
  * @param {Object} thread Thread object
+ * @param {Object} [options] Rendering options
  * @returns {HTMLElement} Thread item element
  */
-function createThreadItem(thread) {
+function createThreadItem(thread, options = {}) {
     const item = document.createElement('div');
     item.className = 'sp-thread-item';
+    if (options.isSearchResult) {
+        item.classList.add('sp-thread-search-result');
+    }
     item.dataset.threadId = thread.id;
 
     const hasNoContextMessages = Array.isArray(thread.messages) && thread.messages.some(m => m && m.noContext);
@@ -243,11 +537,23 @@ function createThreadItem(thread) {
         nameRowEl.appendChild(badgeEl);
     }
 
+    if (options.isSearchResult) {
+        const branchBadgeEl = document.createElement('span');
+        branchBadgeEl.className = `sp-thread-branch-badge ${options.branchLabel === 'Other branch' ? 'sp-thread-branch-badge-other' : ''}`;
+        branchBadgeEl.textContent = options.branchLabel || 'Current branch';
+        nameRowEl.appendChild(branchBadgeEl);
+    }
+
     mainContent.appendChild(nameRowEl);
 
     // Preview of last message
-    const lastMessage = thread.messages[thread.messages.length - 1];
-    if (lastMessage) {
+    const lastMessage = thread.messages?.[thread.messages.length - 1];
+    if (options.previewText) {
+        const previewEl = document.createElement('div');
+        previewEl.className = 'sp-thread-preview sp-thread-search-snippet';
+        previewEl.textContent = truncateText(options.previewText, 110);
+        mainContent.appendChild(previewEl);
+    } else if (lastMessage) {
         const previewEl = document.createElement('div');
         previewEl.className = 'sp-thread-preview';
         previewEl.textContent = truncateText(lastMessage.content, 60);
@@ -270,7 +576,9 @@ function createThreadItem(thread) {
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-thread-time';
-    timeEl.textContent = formatTimestamp(thread.updatedAt);
+    timeEl.textContent = options.matchType
+        ? `${options.matchType} match · ${formatTimestamp(thread.updatedAt)}`
+        : formatTimestamp(thread.updatedAt);
     mainContent.appendChild(timeEl);
 
     item.appendChild(mainContent);
