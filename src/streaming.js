@@ -242,7 +242,60 @@ function buildRequestBody(messages, settings, model) {
         body.seed = settings.seed;
     }
 
+    applyModelParameterCompatibility(body, source, model);
+
     return body;
+}
+
+/**
+ * Keep the direct streaming request aligned with SillyTavern's OpenAI request
+ * compatibility rules for model families that reject legacy sampling fields.
+ * @param {Object} body Request body to mutate
+ * @param {string} source chat_completion_source value
+ * @param {string} model Model name
+ */
+function applyModelParameterCompatibility(body, source, model) {
+    const modelName = model || '';
+    const openAiLikeSources = [SOURCES.OPENAI, SOURCES.AZURE_OPENAI, SOURCES.OPENROUTER];
+    const isOpenAiLike = openAiLikeSources.includes(source);
+
+    if (source === SOURCES.AZURE_OPENAI && /^gpt-[34]/.test(modelName)) {
+        delete body.reasoning_effort;
+    }
+
+    if (source === SOURCES.XAI) {
+        if (modelName.includes('grok-3-mini')) {
+            delete body.presence_penalty;
+            delete body.frequency_penalty;
+        } else {
+            delete body.reasoning_effort;
+        }
+
+        if (modelName.includes('grok-4') || modelName.includes('grok-code')) {
+            delete body.presence_penalty;
+            delete body.frequency_penalty;
+        }
+    }
+
+    const isOpenAiReasoningModel = isOpenAiLike && (/^(o1|o3|o4)/.test(modelName)
+        || (source === SOURCES.OPENROUTER && /^openai\/(o1|o3|o4)/.test(modelName)));
+
+    if (isOpenAiReasoningModel || (isOpenAiLike && /gpt-5/.test(modelName))) {
+        body.max_completion_tokens = body.max_tokens;
+        delete body.max_tokens;
+        delete body.temperature;
+        delete body.top_p;
+        delete body.frequency_penalty;
+        delete body.presence_penalty;
+    }
+
+    if (isOpenAiReasoningModel && /^(openai\/)?o1/.test(modelName)) {
+        for (const msg of body.messages || []) {
+            if (msg.role === 'system') {
+                msg.role = 'user';
+            }
+        }
+    }
 }
 
 /**

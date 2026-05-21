@@ -224,3 +224,54 @@ test('streaming parser emits CRLF-delimited SSE events before stream close', asy
         globalThis.fetch = previousFetch;
     }
 });
+
+test('streaming request uses GPT-5 compatible token and sampling parameters', async () => {
+    setupHarness({
+        chatCompletionSettings: {
+            stream_openai: true,
+            chat_completion_source: 'openai',
+            temp_openai: 1,
+            freq_pen_openai: 0,
+            pres_pen_openai: 0,
+            top_p_openai: 1,
+            openai_max_tokens: 100,
+            show_thoughts: false,
+            reasoning_effort: 'auto',
+            seed: -1,
+        },
+        getChatCompletionModel: () => 'gpt-5.4',
+        getRequestHeaders: () => ({}),
+    });
+
+    let requestBody;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, options) => {
+        requestBody = JSON.parse(options.body);
+        return {
+            ok: true,
+            body: new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+                    controller.close();
+                },
+            }),
+        };
+    };
+
+    try {
+        const chunks = [];
+        for await (const chunk of streamGeneration({ messages: [{ role: 'user', content: 'Hi' }] })) {
+            chunks.push(chunk);
+        }
+
+        assert.deepEqual(chunks, []);
+        assert.equal(requestBody.max_tokens, undefined);
+        assert.equal(requestBody.max_completion_tokens, 100);
+        assert.equal(requestBody.temperature, undefined);
+        assert.equal(requestBody.top_p, undefined);
+        assert.equal(requestBody.frequency_penalty, undefined);
+        assert.equal(requestBody.presence_penalty, undefined);
+    } finally {
+        globalThis.fetch = previousFetch;
+    }
+});
