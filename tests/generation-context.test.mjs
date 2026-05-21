@@ -136,6 +136,41 @@ test('standard generation uses controlled scratch pad context without duplicatin
     assert.equal(occurrences.length, 1);
 });
 
+test('standard generation trims oldest context to fit SillyTavern prompt budget', async () => {
+    const countWords = (text) => String(text || '').split(/\s+/).filter(Boolean).length;
+    const rawArgs = await runStandardGeneration({
+        contextOverrides: {
+            chatCompletionSettings: {
+                stream_openai: false,
+                openai_max_context: 70,
+                openai_max_tokens: 10,
+            },
+            getTokenCountAsync: async (text) => countWords(text),
+            chat: [
+                {
+                    is_user: true,
+                    name: 'User',
+                    mes: 'old chat marker alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron',
+                },
+                { is_user: false, name: 'Bot', mes: 'middle chat marker' },
+                { is_user: true, name: 'User', mes: 'recent chat marker' },
+            ],
+            extensionSettings: {
+                scratchPad: {
+                    useStandardGeneration: true,
+                    oocSystemPrompt: 'OOC',
+                    chatHistoryLimit: 0,
+                },
+            },
+        },
+    });
+
+    assert.equal(rawArgs.prompt.includes('old chat marker'), false);
+    assert.equal(rawArgs.prompt.includes('middle chat marker'), true);
+    assert.equal(rawArgs.prompt.includes('recent chat marker'), true);
+    assert.ok(countWords(`${rawArgs.systemPrompt}\n\n${rawArgs.prompt}`) <= 60);
+});
+
 test('custom generation does not duplicate the current question in thread history', async () => {
     const { calls } = setupHarness({
         extensionSettings: {

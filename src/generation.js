@@ -154,6 +154,91 @@ function buildThreadMessages(messages) {
 }
 
 /**
+ * Get the usable prompt budget from SillyTavern's active context settings.
+ * Mirrors ST's max prompt budget by subtracting the configured response length.
+ * @param {Object} context SillyTavern context
+ * @returns {number|null} Prompt token budget, or null if unavailable
+ */
+function getPromptTokenBudget(context) {
+    const chatSettings = context?.chatCompletionSettings || {};
+    const textSettings = context?.textCompletionSettings || {};
+
+    const maxContext = context?.mainApi === 'openai'
+        ? Number(chatSettings.openai_max_context ?? context?.maxContext)
+        : Number(context?.maxContext);
+    const responseLength = context?.mainApi === 'openai'
+        ? Number(chatSettings.openai_max_tokens ?? 0)
+        : Number(textSettings.amount_gen ?? textSettings.max_length ?? 0);
+
+    if (!Number.isFinite(maxContext) || maxContext <= 0) {
+        return null;
+    }
+
+    const reservedResponse = Number.isFinite(responseLength) && responseLength > 0 ? responseLength : 0;
+    return Math.max(1, maxContext - reservedResponse);
+}
+
+/**
+ * Count prompt tokens with SillyTavern's active tokenizer, falling back to a
+ * conservative character estimate if the tokenizer is not available in tests.
+ * @param {string} text Text to count
+ * @returns {Promise<number>} Token count
+ */
+async function countPromptTokens(text) {
+    const context = SillyTavern.getContext();
+    const normalized = String(text || '').replace(/\r/gm, '');
+    const padding = context?.powerUserSettings?.token_padding ?? 0;
+
+    if (typeof context?.getTokenCountAsync === 'function') {
+        return await context.getTokenCountAsync(normalized, padding);
+    }
+
+    return Math.ceil(normalized.length / 4) + Number(padding || 0);
+}
+
+/**
+ * Convert a prompt payload to the text SillyTavern's tokenizer should budget.
+ * @param {Object} promptData Prompt payload
+ * @returns {string} Joined prompt text
+ */
+function promptDataToTokenText(promptData) {
+    if (Array.isArray(promptData.messages)) {
+        return [
+            promptData.systemPrompt || '',
+            ...promptData.messages.map(message => message?.content || ''),
+        ].filter(Boolean).join('\n\n');
+    }
+
+    return [promptData.systemPrompt || '', promptData.prompt || ''].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Remove the oldest variable context item while preserving the current question
+ * and fixed instructions.
+ * @param {Array} chatMessages Roleplay chat messages
+ * @param {Array} scratchpadMessages Previous scratchpad messages
+ * @returns {boolean} True if an item was removed
+ */
+function removeOldestVariableContext(chatMessages, scratchpadMessages) {
+    if (scratchpadMessages.length >= chatMessages.length && scratchpadMessages.length > 0) {
+        scratchpadMessages.shift();
+        return true;
+    }
+
+    if (chatMessages.length > 0) {
+        chatMessages.shift();
+        return true;
+    }
+
+    if (scratchpadMessages.length > 0) {
+        scratchpadMessages.shift();
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Parse thread title from AI response
  * @param {string} response AI response text
  * @returns {Object} { title: string|null, cleanedResponse: string }
@@ -708,9 +793,9 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
  * @param {string} userQuestion User's question
  * @param {Object} thread Thread object
  * @param {boolean} isFirstMessage Whether this is the first message in the thread
- * @returns {Object} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
+ * @returns {Promise<Object>} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
  */
-function buildPrompt(userQuestion, thread, isFirstMessage = false) {
+async function buildPrompt(userQuestion, thread, isFirstMessage = false) {
     const context = SillyTavern.getContext();
     const { chat, characters, characterId } = context;
     const globalSettings = getSettings();
@@ -735,111 +820,141 @@ function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         systemPrompt += '\n\nAt the very beginning of your first response in this new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**\n\nThen provide your response.';
     }
 
-    // Multi-message format: return structured messages array
-    if (globalSettings.useMultiMessageFormat) {
-        const messages = [];
+    const selectedChat = (!settings.characterCardOnly && chat && chat.length > 0)
+        ? selectChatHistory(chat, settings).slice()
+        : [];
+    const scratchpadMessages = (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0)
+        ? thread.messages.filter(m => m.status === 'complete').slice()
+        : [];
 
-        // ST system prompt as a system message
+    function buildPromptData(chatMessages, previousScratchpadMessages) {
+        // Multi-message format: return structured messages array
+        if (globalSettings.useMultiMessageFormat) {
+            const messages = [];
+
+            // ST system prompt as a system message
+            if (settings.includeSystemPrompt) {
+                try {
+                    const stContext = SillyTavern.getContext();
+                    const stSystemPrompt = getStSystemPrompt(stContext);
+                    if (stSystemPrompt) {
+                        messages.push({ role: 'system', content: stSystemPrompt });
+                    }
+                } catch (e) {
+                    console.warn('[ScratchPad] Could not retrieve system prompt:', e);
+                }
+            }
+
+            // Character card as a system message
+            if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
+                const charContext = buildCharacterContext(characters[characterId]);
+                if (charContext) {
+                    messages.push({ role: 'system', content: charContext });
+                }
+            }
+
+            // Author's Note as a system message
+            appendAuthorsNoteToMessages(messages, settings.includeAuthorsNote, getAuthorsNote());
+
+            // Chat history as a system message
+            if (chatMessages.length > 0) {
+                const chatHistory = formatChatHistory(chatMessages);
+                if (chatHistory) {
+                    messages.push({ role: 'system', content: `Roleplay chat history:\n\n${chatHistory}` });
+                }
+            }
+
+            // Thread history as alternating user/assistant messages
+            if (previousScratchpadMessages.length > 0) {
+                const threadMessages = buildThreadMessages(previousScratchpadMessages);
+                messages.push(...threadMessages);
+            }
+
+            // Current user question
+            messages.push({ role: 'user', content: userQuestion });
+
+            return { systemPrompt, messages };
+        }
+
+        // Default: concatenated single-prompt format
+        const parts = [];
+
+        // Include SillyTavern's main system prompt if enabled
         if (settings.includeSystemPrompt) {
             try {
                 const stContext = SillyTavern.getContext();
                 const stSystemPrompt = getStSystemPrompt(stContext);
                 if (stSystemPrompt) {
-                    messages.push({ role: 'system', content: stSystemPrompt });
+                    parts.push('--- SYSTEM PROMPT ---');
+                    parts.push(stSystemPrompt);
                 }
             } catch (e) {
                 console.warn('[ScratchPad] Could not retrieve system prompt:', e);
             }
         }
 
-        // Character card as a system message
+        // Character card (if enabled)
         if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
             const charContext = buildCharacterContext(characters[characterId]);
             if (charContext) {
-                messages.push({ role: 'system', content: charContext });
+                parts.push('--- CHARACTER INFORMATION ---');
+                parts.push(charContext);
             }
         }
 
-        // Author's Note as a system message
-        appendAuthorsNoteToMessages(messages, settings.includeAuthorsNote, getAuthorsNote());
+        // Author's Note
+        appendAuthorsNoteToPromptParts(parts, settings.includeAuthorsNote, getAuthorsNote());
 
-        // Chat history as a system message
-        if (!settings.characterCardOnly && chat && chat.length > 0) {
-            const selectedChat = selectChatHistory(chat, settings);
-            const chatHistory = formatChatHistory(selectedChat);
+        // Chat history
+        if (chatMessages.length > 0) {
+            const chatHistory = formatChatHistory(chatMessages);
             if (chatHistory) {
-                messages.push({ role: 'system', content: `Roleplay chat history:\n\n${chatHistory}` });
+                parts.push('--- ROLEPLAY CHAT HISTORY ---');
+                parts.push(chatHistory);
             }
         }
 
-        // Thread history as alternating user/assistant messages
-        if (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0) {
-            const threadMessages = buildThreadMessages(thread.messages);
-            messages.push(...threadMessages);
-        }
-
-        // Current user question
-        messages.push({ role: 'user', content: userQuestion });
-
-        return { systemPrompt, messages };
-    }
-
-    // Default: concatenated single-prompt format
-    const parts = [];
-
-    // Include SillyTavern's main system prompt if enabled
-    if (settings.includeSystemPrompt) {
-        try {
-            const stContext = SillyTavern.getContext();
-            const stSystemPrompt = getStSystemPrompt(stContext);
-            if (stSystemPrompt) {
-                parts.push('--- SYSTEM PROMPT ---');
-                parts.push(stSystemPrompt);
+        // Thread history (for continuity)
+        if (previousScratchpadMessages.length > 0) {
+            const threadHistory = formatThreadHistory(previousScratchpadMessages);
+            if (threadHistory) {
+                parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
+                parts.push(threadHistory);
             }
-        } catch (e) {
-            console.warn('[ScratchPad] Could not retrieve system prompt:', e);
         }
+
+        // User question
+        parts.push('--- USER QUESTION ---');
+        parts.push(userQuestion);
+
+        return {
+            systemPrompt: systemPrompt,
+            prompt: parts.join('\n\n')
+        };
     }
 
-    // Character card (if enabled)
-    if ((settings.includeCharacterCard || settings.characterCardOnly) && characterId !== undefined && characters[characterId]) {
-        const charContext = buildCharacterContext(characters[characterId]);
-        if (charContext) {
-            parts.push('--- CHARACTER INFORMATION ---');
-            parts.push(charContext);
-        }
+    const tokenBudget = getPromptTokenBudget(context);
+    let promptData = buildPromptData(selectedChat, scratchpadMessages);
+
+    if (!tokenBudget) {
+        return promptData;
     }
 
-    // Author's Note
-    appendAuthorsNoteToPromptParts(parts, settings.includeAuthorsNote, getAuthorsNote());
-
-    // Chat history
-    if (!settings.characterCardOnly && chat && chat.length > 0) {
-        const selectedChat = selectChatHistory(chat, settings);
-        const chatHistory = formatChatHistory(selectedChat);
-        if (chatHistory) {
-            parts.push('--- ROLEPLAY CHAT HISTORY ---');
-            parts.push(chatHistory);
-        }
+    let tokenCount = await countPromptTokens(promptDataToTokenText(promptData));
+    let removedContextItems = 0;
+    while (tokenCount > tokenBudget && removeOldestVariableContext(selectedChat, scratchpadMessages)) {
+        removedContextItems += 1;
+        promptData = buildPromptData(selectedChat, scratchpadMessages);
+        tokenCount = await countPromptTokens(promptDataToTokenText(promptData));
     }
 
-    // Thread history (for continuity)
-    if (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0) {
-        const threadHistory = formatThreadHistory(thread.messages);
-        if (threadHistory) {
-            parts.push('--- PREVIOUS SCRATCH PAD DISCUSSION ---');
-            parts.push(threadHistory);
-        }
+    if (removedContextItems > 0) {
+        console.info(`[ScratchPad] Trimmed ${removedContextItems} context item(s) to fit ${tokenCount}/${tokenBudget} prompt tokens.`);
+    } else if (tokenCount > tokenBudget) {
+        console.warn(`[ScratchPad] Fixed prompt context exceeds the configured token budget (${tokenCount}/${tokenBudget}).`);
     }
 
-    // User question
-    parts.push('--- USER QUESTION ---');
-    parts.push(userQuestion);
-
-    return {
-        systemPrompt: systemPrompt,
-        prompt: parts.join('\n\n')
-    };
+    return promptData;
 }
 
 // Track active generation for streaming token identification
@@ -941,7 +1056,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
         const doGenerate = globalSettings.useStandardGeneration
             ? async () => {
-                const promptData = buildPrompt(userQuestion, promptThread, isFirstMessage);
+                const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage);
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
@@ -953,7 +1068,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 }
             }
             : async () => {
-                const promptData = buildPrompt(userQuestion, promptThread, isFirstMessage);
+                const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage);
                 const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                 activeGenerationId = generationId;
                 try {
@@ -1062,12 +1177,12 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
  * Slices thread messages to before the target message so all swipes see the same context
  * @param {string} threadId Thread ID
  * @param {string} messageId Target assistant message ID
- * @returns {Object|null} { systemPrompt, prompt, userQuestion } or { systemPrompt, messages, userQuestion } or null
+ * @returns {Promise<Object|null>} { systemPrompt, prompt, userQuestion } or { systemPrompt, messages, userQuestion } or null
  */
-function buildPromptForSwipe(threadId, messageId) {
+async function buildPromptForSwipe(threadId, messageId) {
     const swipeCtx = getSwipeContext(threadId, messageId);
     if (!swipeCtx) return null;
-    const promptData = buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+    const promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
     return { ...promptData, userQuestion: swipeCtx.userQuestion };
 }
 
@@ -1095,9 +1210,9 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     if (globalSettings.useStandardGeneration) {
         swipeCtx = getSwipeContext(threadId, messageId);
         if (!swipeCtx) return { success: false, error: 'Could not build prompt for swipe' };
-        promptData = buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+        promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
     } else {
-        promptData = buildPromptForSwipe(threadId, messageId);
+        promptData = await buildPromptForSwipe(threadId, messageId);
         if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
     }
 
