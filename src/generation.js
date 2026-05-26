@@ -5,7 +5,8 @@
 
 import { getSettings } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
-import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate } from './reasoning.js';
+import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProfileId } from './connectionProfiles.js';
+import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
 
@@ -159,7 +160,12 @@ function buildThreadMessages(messages) {
  * @param {Object} context SillyTavern context
  * @returns {number|null} Prompt token budget, or null if unavailable
  */
-function getPromptTokenBudget(context) {
+function getPromptTokenBudget(context, profileId = null) {
+    const profileBudget = getProfilePromptTokenBudget(context, profileId);
+    if (profileBudget) {
+        return profileBudget;
+    }
+
     const chatSettings = context?.chatCompletionSettings || {};
     const textSettings = context?.textCompletionSettings || {};
 
@@ -176,6 +182,41 @@ function getPromptTokenBudget(context) {
 
     const reservedResponse = Number.isFinite(responseLength) && responseLength > 0 ? responseLength : 0;
     return Math.max(1, maxContext - reservedResponse);
+}
+
+function firstFiniteNumber(...values) {
+    for (const value of values) {
+        const numberValue = Number(value);
+        if (Number.isFinite(numberValue) && numberValue > 0) {
+            return numberValue;
+        }
+    }
+    return null;
+}
+
+function getProfilePromptTokenBudget(context, profileId) {
+    const profile = getConnectionProfile(profileId, context);
+    if (!profile) return null;
+
+    const apiMap = getConnectionProfileApiMap(profile, context);
+    const presetApiId = apiMap?.selected === 'openai' ? 'openai' : 'textgenerationwebui';
+    const preset = profile.preset && typeof context?.getPresetManager === 'function'
+        ? context.getPresetManager(presetApiId)?.getCompletionPresetByName?.(profile.preset)
+        : null;
+
+    const chatSettings = context?.chatCompletionSettings || {};
+    const textSettings = context?.textCompletionSettings || {};
+
+    const maxContext = apiMap?.selected === 'openai'
+        ? firstFiniteNumber(preset?.openai_max_context, chatSettings.openai_max_context, context?.maxContext)
+        : firstFiniteNumber(preset?.max_length, textSettings.max_length, context?.maxContext);
+    const responseLength = apiMap?.selected === 'openai'
+        ? firstFiniteNumber(preset?.openai_max_tokens, chatSettings.openai_max_tokens)
+        : firstFiniteNumber(preset?.genamt, textSettings.amount_gen, textSettings.max_length);
+
+    if (!maxContext) return null;
+
+    return Math.max(1, maxContext - (responseLength || 0));
 }
 
 /**
@@ -283,89 +324,58 @@ export function generateFallbackTitle(question) {
     return question.substring(0, maxLength) + '...';
 }
 
-// Mutex lock for profile switching to prevent race conditions
-let profileSwitchLock = Promise.resolve();
-
-/**
- * Switch to a different connection profile temporarily
- * @param {string} profileName Profile name
- * @param {Function} generateFn Function to execute with the profile
- * @returns {Promise<*>} Result from generateFn
- */
-async function generateWithProfile(profileName, generateFn) {
-    const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-
-    if (!profileName || !executeSlashCommandsWithOptions) {
-        return await generateFn();
-    }
-
-    // Wait for any pending profile switches to complete
-    await profileSwitchLock;
-
-    // Create a new lock that will be released when we're done
-    let releaseLock;
-    profileSwitchLock = new Promise(resolve => { releaseLock = resolve; });
-
-    let currentProfile = '';
-    let didSwitch = false;
-
-    try {
-        // Get current profile
-        const profileResult = await executeSlashCommandsWithOptions('/profile', { handleParserErrors: false, handleExecutionErrors: false });
-        if (profileResult && profileResult.pipe) {
-            currentProfile = profileResult.pipe.trim();
-        }
-
-        // Switch to alternative profile
-        const safeProfileName = profileName.replace(/\|/g, '').replace(/^\//gm, '');
-        await executeSlashCommandsWithOptions(`/profile ${safeProfileName}`, { handleParserErrors: false, handleExecutionErrors: false });
-        didSwitch = true;
-
-        // Execute generation
-        const result = await generateFn();
-        return result;
-    } finally {
-        // Restore original profile
-        if (didSwitch) {
-            try {
-                // /profile returns '<None>' when no profile is active, and
-                // /profile <None> clears the active profile back to default.
-                // Fall back to '<None>' if the pipe was unexpectedly empty.
-                const restoreProfile = currentProfile || '<None>';
-                const safeRestoreProfile = restoreProfile.replace(/\|/g, '').replace(/^\//gm, '');
-                await executeSlashCommandsWithOptions(`/profile ${safeRestoreProfile}`, { handleParserErrors: false, handleExecutionErrors: false });
-            } catch (e) {
-                console.warn('[ScratchPad] Could not restore profile:', e);
-                toastr.warning('Could not restore your previous connection profile. You may need to switch back manually.', 'Scratch Pad');
-            }
-        }
-        // Release the lock
-        releaseLock();
-    }
-}
-
 /**
  * Get the effective connection profile for a thread
  * Priority: Thread override -> Global setting -> null (default API)
  * @param {string} threadId Thread ID
- * @returns {string|null} Profile name to use, or null for default API
+ * @returns {string|null} Profile ID to use, or null for default API
  */
 export function getEffectiveProfileForThread(threadId) {
-    const thread = getThread(threadId);
+    return getEffectiveProfileResolutionForThread(threadId).profileId;
+}
+
+function getEffectiveProfileResolutionForThread(threadId) {
     const settings = getSettings();
-
-    // Check thread's connectionProfile override first
     const threadSettings = getThreadContextSettings(threadId);
-    if (threadSettings.connectionProfile) {
-        return threadSettings.connectionProfile;
+    const threadValue = threadSettings.connectionProfileId || threadSettings.connectionProfile;
+    const threadProfileId = resolveConnectionProfileId(threadValue);
+    if (threadProfileId) {
+        return { profileId: threadProfileId, missingValue: null, scope: 'thread' };
+    }
+    if (threadValue) {
+        return { profileId: null, missingValue: threadValue, scope: 'thread' };
     }
 
-    // Fall back to global settings
-    if (settings.useAlternativeApi && settings.connectionProfile) {
-        return settings.connectionProfile;
+    if (settings.useAlternativeApi) {
+        const globalValue = settings.connectionProfileId || settings.connectionProfile;
+        const globalProfileId = resolveConnectionProfileId(globalValue);
+        if (globalProfileId) {
+            return { profileId: globalProfileId, missingValue: null, scope: 'global' };
+        }
+        if (globalValue) {
+            return { profileId: null, missingValue: globalValue, scope: 'global' };
+        }
     }
 
-    return null;
+    return { profileId: null, missingValue: null, scope: null };
+}
+
+const warnedProfileFallbacks = new Set();
+
+function warnProfileFallback(resolution) {
+    if (!resolution?.missingValue) return;
+
+    const key = `${resolution.scope}:${resolution.missingValue}`;
+    if (warnedProfileFallbacks.has(key)) return;
+    warnedProfileFallbacks.add(key);
+
+    const message = `Scratch Pad connection profile not found (${resolution.missingValue}); using the active SillyTavern API.`;
+    console.warn(`[ScratchPad] ${message}`);
+    try {
+        toastr?.warning?.(message, 'Scratch Pad');
+    } catch {
+        // Tests and headless environments may not have toastr.
+    }
 }
 
 function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null, hiddenReasoning = null) {
@@ -381,6 +391,174 @@ function buildReasoningPayload(responseText, streamReasoning = null, resultReaso
         },
         cleanedResponse: parsed.cleanedResponse,
     };
+}
+
+function buildMessagesForGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null }) {
+    const context = SillyTavern.getContext();
+    const substitute = context.substituteParams || ((text) => text);
+
+    if (prebuiltMessages) {
+        const msgs = [];
+        if (systemPrompt) {
+            msgs.push({ role: 'system', content: substitute(systemPrompt) });
+        }
+        for (const msg of prebuiltMessages) {
+            msgs.push({ role: msg.role, content: substitute(msg.content) });
+        }
+        return msgs;
+    }
+
+    const msgs = [];
+    if (systemPrompt) {
+        msgs.push({ role: 'system', content: substitute(systemPrompt) });
+    }
+    msgs.push({ role: 'user', content: substitute(prompt) });
+    return msgs;
+}
+
+function createReasoningCandidate(text, source = REASONING_SOURCE.RESULT) {
+    const value = typeof text === 'string' ? text.trim() : '';
+    return {
+        text: value,
+        ...createReasoningMeta({
+            state: value ? REASONING_STATE.VISIBLE : REASONING_STATE.NONE,
+            source,
+        }),
+    };
+}
+
+function isAbortError(error) {
+    return error?.name === 'AbortError' || /abort|cancel/i.test(error?.message || '');
+}
+
+function isHiddenReasoningProfile(profile, context = SillyTavern.getContext()) {
+    const apiMap = getConnectionProfileApiMap(profile, context);
+    if (apiMap?.selected !== 'openai') return false;
+
+    const model = String(profile?.model || '').trim();
+    if (!model) return false;
+
+    const hiddenReasoningModels = [
+        'gpt-4.5',
+        'o1',
+        'o3',
+        'gemini-2.0-flash-thinking-exp',
+        'gemini-2.0-pro-exp',
+    ];
+
+    return hiddenReasoningModels.some(prefix => model.startsWith(prefix));
+}
+
+function createHiddenReasoningCandidateForProfile(durationMs, profile, context = SillyTavern.getContext()) {
+    if (!isHiddenReasoningProfile(profile, context)) return null;
+
+    return {
+        text: '',
+        ...createReasoningMeta({
+            state: REASONING_STATE.HIDDEN,
+            durationMs,
+            source: REASONING_SOURCE.RESULT,
+        }),
+    };
+}
+
+async function reportProfileTokenUsage(inputText, generationResult, profile) {
+    try {
+        const tracker = window['TokenUsageTracker'];
+        if (!tracker) return;
+
+        const inputTokens = await tracker.countTokens(inputText);
+        const outputTokens = await tracker.countTokens(generationResult.text || '');
+        const reasoningText = generationResult.streamReasoning?.text || generationResult.resultReasoning?.text || '';
+        const reasoningTokens = reasoningText ? await tracker.countTokens(reasoningText) : 0;
+        const context = SillyTavern.getContext();
+        const apiMap = getConnectionProfileApiMap(profile, context);
+        const modelId = profile?.model || tracker.getCurrentModelId();
+        const sourceId = apiMap?.source || apiMap?.type || profile?.api || tracker.getCurrentSourceId();
+        const chatId = context.getCurrentChatId?.() || null;
+        tracker.recordUsage(inputTokens, outputTokens, chatId, modelId, sourceId, reasoningTokens);
+    } catch (e) {
+        console.warn('[ScratchPad] Token usage reporting failed:', e);
+    }
+}
+
+async function callConnectionProfileGeneration({ profileId, systemPrompt = '', prompt = '', messages: prebuiltMessages = null, onToken }) {
+    const context = SillyTavern.getContext();
+    const service = context.ConnectionManagerRequestService;
+    const profile = getConnectionProfile(profileId, context);
+
+    if (!service || !profile) {
+        throw new Error(`Connection profile with ID "${profileId}" not found.`);
+    }
+
+    const requestMessages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+    const inputText = [
+        systemPrompt || '',
+        ...requestMessages.map(message => message?.content || ''),
+    ].filter(Boolean).join('\n');
+    const startedAt = Date.now();
+
+    async function sendProfileRequest(stream) {
+        const controller = new AbortController();
+        activeAbortController = controller;
+
+        try {
+            const response = await service.sendRequest(profileId, requestMessages, undefined, {
+                extractData: true,
+                includePreset: true,
+                stream,
+                signal: controller.signal,
+            });
+
+            if (stream && typeof response === 'function') {
+                let accumulatedText = '';
+                let accumulatedReasoning = '';
+                for await (const chunk of response()) {
+                    accumulatedText = chunk?.text ?? accumulatedText;
+                    accumulatedReasoning = chunk?.state?.reasoning ?? accumulatedReasoning;
+                    if (onToken && chunk?.text !== undefined) {
+                        onToken(accumulatedText, false);
+                    }
+                }
+
+                return {
+                    text: accumulatedText,
+                    streamReasoning: createReasoningCandidate(accumulatedReasoning, REASONING_SOURCE.STREAM),
+                    resultReasoning: null,
+                };
+            }
+
+            return {
+                text: response?.content || '',
+                streamReasoning: null,
+                resultReasoning: createReasoningCandidate(response?.reasoning || '', REASONING_SOURCE.RESULT),
+            };
+        } finally {
+            if (activeAbortController === controller) {
+                activeAbortController = null;
+            }
+        }
+    }
+
+    let generationResult;
+    if (onToken) {
+        try {
+            generationResult = await sendProfileRequest(true);
+        } catch (error) {
+            if (isAbortError(error)) {
+                throw error;
+            }
+            console.warn('[ScratchPad] Connection profile streaming failed, falling back to non-streaming:', error.message);
+        }
+    }
+
+    if (!generationResult) {
+        generationResult = await sendProfileRequest(false);
+    }
+
+    generationResult.hiddenReasoning = createHiddenReasoningCandidateForProfile(Date.now() - startedAt, profile, context);
+    await reportProfileTokenUsage(inputText, generationResult, profile);
+    return generationResult;
 }
 
 /**
@@ -402,34 +580,10 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     let generationResult;
     const startedAt = Date.now();
 
-    /**
-     * Build the messages array for the API request.
-     * When prebuiltMessages is provided (multi-message mode), prepend the system prompt
-     * and apply substituteParams. Otherwise, build the traditional 2-message array.
-     */
-    function buildMessages() {
-        if (prebuiltMessages) {
-            const msgs = [];
-            if (systemPrompt) {
-                msgs.push({ role: 'system', content: context.substituteParams(systemPrompt) });
-            }
-            for (const msg of prebuiltMessages) {
-                msgs.push({ role: msg.role, content: context.substituteParams(msg.content) });
-            }
-            return msgs;
-        }
-        const msgs = [];
-        if (systemPrompt) {
-            msgs.push({ role: 'system', content: context.substituteParams(systemPrompt) });
-        }
-        msgs.push({ role: 'user', content: context.substituteParams(prompt) });
-        return msgs;
-    }
-
     // Try streaming first when supported and a token callback is provided
     if (onToken && currentApi === 'openai' && isStreamingSupported()) {
         try {
-            const messages = buildMessages();
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
 
             const controller = new AbortController();
             activeAbortController = controller;
@@ -465,7 +619,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     // Non-streaming path
     if (!generationResult && currentApi === 'openai') {
         try {
-            const messages = buildMessages();
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
 
             const data = await context.sendGenerationRequest('quiet', { prompt: messages });
             const text = context.extractMessageFromData(data) || '';
@@ -478,7 +632,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
             console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
             if (prebuiltMessages) {
                 // For multi-message mode, pass the messages array to generateRaw
-                const messages = buildMessages();
+                const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
                 const result = await context.generateRaw({ prompt: messages });
                 generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
             } else {
@@ -490,7 +644,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
 
     if (!generationResult) {
         if (prebuiltMessages) {
-            const messages = buildMessages();
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
             const result = await context.generateRaw({ prompt: messages });
             generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
         } else {
@@ -604,6 +758,39 @@ async function callStandardGeneration({ systemPrompt = '', prompt = '', messages
     }
 }
 
+async function runGenerationForThread({ threadId, promptData, onStream = null, useStandardGeneration = false, profileResolution = null }) {
+    const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    activeGenerationId = generationId;
+
+    try {
+        const resolution = profileResolution || getEffectiveProfileResolutionForThread(threadId);
+        warnProfileFallback(resolution);
+
+        const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
+        const result = resolution.profileId
+            ? await callConnectionProfileGeneration({
+                profileId: resolution.profileId,
+                systemPrompt: promptData.systemPrompt,
+                prompt: promptData.prompt,
+                messages: promptData.messages,
+                onToken,
+            })
+            : useStandardGeneration
+                ? await callStandardGeneration(promptData)
+                : await callGeneration({
+                    systemPrompt: promptData.systemPrompt,
+                    prompt: promptData.prompt,
+                    messages: promptData.messages,
+                    onToken,
+                });
+
+        if (onStream) onStream(result.text, true);
+        return result;
+    } finally {
+        if (activeGenerationId === generationId) activeGenerationId = null;
+    }
+}
+
 /**
  * Extract swipe context (user question + sliced thread) from a thread/message pair.
  * Used by both buildPromptForSwipe (custom generation) and standard generation swipe path.
@@ -682,39 +869,12 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
     let genFinished = null;
     try {
         const globalSettings = getSettings();
-
-        const doGenerate = globalSettings.useStandardGeneration
-            ? async () => {
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const result = await callStandardGeneration({ systemPrompt: '', prompt: userPrompt });
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            }
-            : async () => {
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                    const result = await callGeneration({ systemPrompt: '', prompt: userPrompt, onToken });
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            };
-
-        let result;
-        const effectiveProfile = getEffectiveProfileForThread(threadId);
-        if (effectiveProfile) {
-            result = await generateWithProfile(effectiveProfile, doGenerate);
-        } else {
-            result = await doGenerate();
-        }
+        const result = await runGenerationForThread({
+            threadId,
+            promptData: { systemPrompt: '', prompt: userPrompt },
+            onStream,
+            useStandardGeneration: globalSettings.useStandardGeneration,
+        });
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -793,9 +953,10 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
  * @param {string} userQuestion User's question
  * @param {Object} thread Thread object
  * @param {boolean} isFirstMessage Whether this is the first message in the thread
+ * @param {string|null} [profileId] Optional Connection Manager profile ID for budget resolution
  * @returns {Promise<Object>} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
  */
-async function buildPrompt(userQuestion, thread, isFirstMessage = false) {
+async function buildPrompt(userQuestion, thread, isFirstMessage = false, profileId = null) {
     const context = SillyTavern.getContext();
     const { chat, characters, characterId } = context;
     const globalSettings = getSettings();
@@ -933,7 +1094,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false) {
         };
     }
 
-    const tokenBudget = getPromptTokenBudget(context);
+    const tokenBudget = getPromptTokenBudget(context, profileId);
     let promptData = buildPromptData(selectedChat, scratchpadMessages);
 
     if (!tokenBudget) {
@@ -1053,47 +1214,15 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         const promptThread = excludeMessagesFromThread(currentThread, [userMessage.id, assistantMessage.id]);
         const isFirstMessage = !currentThread.titled;
         const globalSettings = getSettings();
-
-        const doGenerate = globalSettings.useStandardGeneration
-            ? async () => {
-                const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage);
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const result = await callStandardGeneration(promptData);
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            }
-            : async () => {
-                const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage);
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                    const result = await callGeneration({
-                        systemPrompt: promptData.systemPrompt,
-                        prompt: promptData.prompt,
-                        messages: promptData.messages,
-                        onToken,
-                    });
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            };
-
-        // Execute with profile switching if enabled
-        let result;
-        const effectiveProfile = getEffectiveProfileForThread(threadId);
-        if (effectiveProfile) {
-            result = await generateWithProfile(effectiveProfile, doGenerate);
-        } else {
-            result = await doGenerate();
-        }
+        const profileResolution = getEffectiveProfileResolutionForThread(threadId);
+        const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage, profileResolution.profileId);
+        const result = await runGenerationForThread({
+            threadId,
+            promptData,
+            onStream,
+            useStandardGeneration: globalSettings.useStandardGeneration,
+            profileResolution,
+        });
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1177,12 +1306,13 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
  * Slices thread messages to before the target message so all swipes see the same context
  * @param {string} threadId Thread ID
  * @param {string} messageId Target assistant message ID
+ * @param {string|null} [profileId] Optional Connection Manager profile ID for budget resolution
  * @returns {Promise<Object|null>} { systemPrompt, prompt, userQuestion } or { systemPrompt, messages, userQuestion } or null
  */
-async function buildPromptForSwipe(threadId, messageId) {
+async function buildPromptForSwipe(threadId, messageId, profileId = null) {
     const swipeCtx = getSwipeContext(threadId, messageId);
     if (!swipeCtx) return null;
-    const promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+    const promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false, profileId);
     return { ...promptData, userQuestion: swipeCtx.userQuestion };
 }
 
@@ -1203,6 +1333,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     }
 
     const globalSettings = getSettings();
+    const profileResolution = getEffectiveProfileResolutionForThread(threadId);
 
     // Build prompt / context for swipe
     let swipeCtx = null;
@@ -1210,9 +1341,9 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     if (globalSettings.useStandardGeneration) {
         swipeCtx = getSwipeContext(threadId, messageId);
         if (!swipeCtx) return { success: false, error: 'Could not build prompt for swipe' };
-        promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false);
+        promptData = await buildPrompt(swipeCtx.userQuestion, swipeCtx.contextThread, false, profileResolution.profileId);
     } else {
-        promptData = await buildPromptForSwipe(threadId, messageId);
+        promptData = await buildPromptForSwipe(threadId, messageId, profileResolution.profileId);
         if (!promptData) return { success: false, error: 'Could not build prompt for swipe' };
     }
 
@@ -1231,43 +1362,13 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
 
     let genFinished = null;
     try {
-        const doGenerate = globalSettings.useStandardGeneration
-            ? async () => {
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const result = await callStandardGeneration(promptData);
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            }
-            : async () => {
-                const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                activeGenerationId = generationId;
-                try {
-                    const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
-                    const result = await callGeneration({
-                        systemPrompt: promptData.systemPrompt,
-                        prompt: promptData.prompt,
-                        messages: promptData.messages,
-                        onToken,
-                    });
-                    if (onStream) onStream(result.text, true);
-                    return result;
-                } finally {
-                    if (activeGenerationId === generationId) activeGenerationId = null;
-                }
-            };
-
-        let result;
-        const effectiveProfile = getEffectiveProfileForThread(threadId);
-        if (effectiveProfile) {
-            result = await generateWithProfile(effectiveProfile, doGenerate);
-        } else {
-            result = await doGenerate();
-        }
+        const result = await runGenerationForThread({
+            threadId,
+            promptData,
+            onStream,
+            useStandardGeneration: globalSettings.useStandardGeneration,
+            profileResolution,
+        });
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1509,24 +1610,11 @@ ${threadHistory}
 
 Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
 
-        const doGenerate = getSettings().useStandardGeneration
-            ? async () => {
-                const { text } = await callStandardGeneration({ systemPrompt, prompt });
-                return text;
-            }
-            : async () => {
-                const { text } = await callGeneration({ systemPrompt, prompt });
-                return text;
-            };
-
-        // Execute with profile switching if enabled
-        let response;
-        const effectiveProfile = getEffectiveProfileForThread(thread.id);
-        if (effectiveProfile) {
-            response = await generateWithProfile(effectiveProfile, doGenerate);
-        } else {
-            response = await doGenerate();
-        }
+        const { text: response } = await runGenerationForThread({
+            threadId: thread.id,
+            promptData: { systemPrompt, prompt },
+            useStandardGeneration: getSettings().useStandardGeneration,
+        });
 
         // Clean up the response (remove quotes, extra whitespace, etc.)
         let title = (response || '').trim();

@@ -68,7 +68,7 @@ The extension depends on these SillyTavern APIs accessed via `SillyTavern.getCon
 ### External Extension Dependencies
 
 - **Token Usage Tracker** — wraps `sendRequest` to count tokens. Must load before Scratch Pad's first API call (load-order dependency; silent failure if missed).
-- **Connection Manager** — optional; provides alternative API endpoint profiles.
+- **Connection Manager** — optional; provides alternative API endpoint profiles. Scratch Pad stores profile IDs and sends profile-scoped requests through `ConnectionManagerRequestService` without changing SillyTavern's active profile.
 
 ## Known Open Issues
 

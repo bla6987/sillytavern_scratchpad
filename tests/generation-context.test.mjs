@@ -4,6 +4,8 @@ import { ReadableStream } from 'node:stream/web';
 
 import { generateScratchPadResponse, isChatActive } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
+import { getConnectionProfiles, getSettings } from '../src/settings.js';
+import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
 import { streamGeneration } from '../src/streaming.js';
 
 function setupHarness(overrides = {}) {
@@ -193,6 +195,243 @@ test('custom generation does not duplicate the current question in thread histor
     const userPrompt = requestCall[2].prompt.find(message => message.role === 'user').content;
     const occurrences = userPrompt.match(/Unique custom question/g) || [];
     assert.equal(occurrences.length, 1);
+});
+
+test('profile generation uses Connection Manager profile ID without slash profile switching', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [{ id: 'profile-1', name: 'Writer Profile', api: 'openai', model: 'profile-model' }],
+            },
+            scratchPad: {
+                useAlternativeApi: true,
+                connectionProfileId: 'profile-1',
+                useStandardGeneration: false,
+                oocSystemPrompt: 'OOC PROMPT',
+            },
+        },
+        executeSlashCommandsWithOptions: async (...args) => {
+            calls.push(['slash', ...args]);
+            throw new Error('slash profile switching should not be used');
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                return { content: 'Profile response', reasoning: 'Profile reasoning' };
+            },
+        },
+    });
+
+    const thread = createThread('Profile Thread');
+    const result = await generateScratchPadResponse('Profile question', thread.id);
+    assert.equal(result.success, true);
+    assert.equal(result.response, 'Profile response');
+    assert.equal(result.thinking, 'Profile reasoning');
+
+    const profileCall = calls.find(args => args[0] === 'profileSendRequest');
+    assert.ok(profileCall, 'should send through Connection Manager');
+    assert.equal(profileCall[1], 'profile-1');
+    assert.equal(profileCall[3], undefined);
+    assert.equal(profileCall[4].stream, false);
+    assert.equal(profileCall[4].includePreset, true);
+    assert.equal(calls.some(args => args[0] === 'slash'), false);
+});
+
+test('legacy connection profile names migrate to profile IDs', async () => {
+    setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [{ id: 'legacy-id', name: 'Legacy Profile', api: 'openai' }],
+            },
+            scratchPad: {
+                useAlternativeApi: true,
+                connectionProfile: 'Legacy Profile',
+            },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async () => ({ content: 'ok', reasoning: '' }),
+        },
+    });
+
+    const settings = getSettings();
+    assert.equal(settings.connectionProfileId, 'legacy-id');
+    assert.equal(settings.connectionProfile, '');
+
+    const profiles = await getConnectionProfiles();
+    assert.deepEqual(profiles.map(profile => profile.id), ['legacy-id']);
+});
+
+test('connection profile dropdown renders stable profile IDs as option values', () => {
+    setupHarness({
+        CONNECT_API_MAP: {
+            openai: { selected: 'openai' },
+        },
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [
+                    { id: 'profile-one', name: 'Profile One', api: 'openai' },
+                    { id: 'profile-two', name: 'Profile Two', api: 'openai' },
+                ],
+            },
+            scratchPad: {},
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+        },
+    });
+
+    const previousDocument = globalThis.document;
+    const createElement = (tagName) => ({
+        tagName: tagName.toUpperCase(),
+        children: [],
+        disabled: false,
+        value: '',
+        textContent: '',
+        label: '',
+        appendChild(child) {
+            this.children.push(child);
+        },
+    });
+    const select = createElement('select');
+    Object.defineProperty(select, 'innerHTML', {
+        set() {
+            this.children = [];
+        },
+    });
+    select.appendChild = function appendChild(child) {
+        this.children.push(child);
+    };
+
+    globalThis.document = { createElement };
+    try {
+        const result = renderConnectionProfileOptions(select, 'Profile Two');
+        assert.equal(result.selectedId, 'profile-two');
+        assert.equal(select.value, 'profile-two');
+
+        const optionValues = select.children
+            .flatMap(child => child.children?.length ? child.children : [child])
+            .map(option => option.value);
+        assert.deepEqual(optionValues, ['', 'profile-one', 'profile-two']);
+    } finally {
+        globalThis.document = previousDocument;
+    }
+});
+
+test('missing profile falls back to active API generation', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: { profiles: [] },
+            scratchPad: {
+                useAlternativeApi: true,
+                connectionProfileId: 'missing-profile',
+                useStandardGeneration: true,
+                oocSystemPrompt: 'OOC PROMPT',
+            },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                return { content: 'should not use profile', reasoning: '' };
+            },
+        },
+    });
+
+    const thread = createThread('Fallback Thread');
+    const result = await generateScratchPadResponse('Fallback question', thread.id);
+    assert.equal(result.success, true);
+
+    assert.ok(calls.some(args => args[0] === 'generateRaw'), 'should fall back to active API generation');
+    assert.equal(calls.some(args => args[0] === 'profileSendRequest'), false);
+});
+
+test('profile streaming updates tokens and stores streamed reasoning', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [{ id: 'stream-profile', name: 'Stream Profile', api: 'openai' }],
+            },
+            scratchPad: {
+                useAlternativeApi: true,
+                connectionProfileId: 'stream-profile',
+                useStandardGeneration: false,
+                oocSystemPrompt: 'OOC PROMPT',
+            },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                return async function* streamData() {
+                    yield { text: 'Hel', state: { reasoning: 'Plan' } };
+                    yield { text: 'Hello', state: { reasoning: 'Plan done' } };
+                };
+            },
+        },
+    });
+
+    const streamEvents = [];
+    const thread = createThread('Streaming Thread');
+    const result = await generateScratchPadResponse('Stream question', thread.id, (text, done) => {
+        streamEvents.push({ text, done });
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.response, 'Hello');
+    assert.equal(result.thinking, 'Plan done');
+    assert.deepEqual(streamEvents, [
+        { text: 'Hel', done: false },
+        { text: 'Hello', done: false },
+        { text: 'Hello', done: true },
+    ]);
+
+    const profileCall = calls.find(args => args[0] === 'profileSendRequest');
+    assert.equal(profileCall[4].stream, true);
+});
+
+test('profile streaming failure retries once without streaming', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [{ id: 'retry-profile', name: 'Retry Profile', api: 'openai' }],
+            },
+            scratchPad: {
+                useAlternativeApi: true,
+                connectionProfileId: 'retry-profile',
+                useStandardGeneration: false,
+                oocSystemPrompt: 'OOC PROMPT',
+            },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                if (args[3].stream) {
+                    throw new Error('stream failed');
+                }
+                return { content: 'Retry response', reasoning: 'Retry reasoning' };
+            },
+        },
+    });
+
+    const thread = createThread('Retry Thread');
+    const result = await generateScratchPadResponse('Retry question', thread.id, () => {});
+    assert.equal(result.success, true);
+    assert.equal(result.response, 'Retry response');
+    assert.equal(result.thinking, 'Retry reasoning');
+
+    const streamFlags = calls
+        .filter(args => args[0] === 'profileSendRequest')
+        .map(args => args[4].stream);
+    assert.deepEqual(streamFlags, [true, false]);
 });
 
 test('standard generation stores response timing on assistant messages', async () => {

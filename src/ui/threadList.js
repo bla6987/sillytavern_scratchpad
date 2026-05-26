@@ -4,6 +4,7 @@
 
 import { getThreads, getThreadsForCurrentBranch, getCurrentChatLength, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
 import { getCurrentContextSettings } from '../settings.js';
+import { getConnectionProfileLabel } from '../connectionProfiles.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 
@@ -532,11 +533,11 @@ function createThreadItem(thread, options = {}) {
     nameRowEl.appendChild(nameEl);
 
     // Profile override indicator
-    const threadProfile = thread.contextSettings?.connectionProfile;
+    const threadProfile = thread.contextSettings?.connectionProfileId || thread.contextSettings?.connectionProfile;
     if (threadProfile) {
         const profileBadgeEl = document.createElement('span');
         profileBadgeEl.className = 'sp-thread-profile-indicator';
-        profileBadgeEl.title = threadProfile;  // Tooltip on hover
+        profileBadgeEl.title = getConnectionProfileLabel(threadProfile);  // Tooltip on hover
         nameRowEl.appendChild(profileBadgeEl);
     }
 

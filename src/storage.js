@@ -4,6 +4,7 @@
  */
 
 import { createReasoningMeta, normalizeReasoningMeta } from './reasoning.js';
+import { resolveConnectionProfileId } from './connectionProfiles.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -19,6 +20,7 @@ export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
     includeCharacterCard: true,
     includeSystemPrompt: false,
     includeAuthorsNote: false,
+    connectionProfileId: null,
     connectionProfile: null
 });
 
@@ -305,7 +307,19 @@ export function getThreadContextSettings(threadId) {
     if (!thread || !thread.contextSettings) {
         return { ...DEFAULT_CONTEXT_SETTINGS };
     }
-    return { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings };
+
+    const settings = { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings };
+    if (!settings.connectionProfileId && settings.connectionProfile) {
+        const migratedId = resolveConnectionProfileId(settings.connectionProfile);
+        if (migratedId) {
+            thread.contextSettings.connectionProfileId = migratedId;
+            thread.contextSettings.connectionProfile = null;
+            settings.connectionProfileId = migratedId;
+            settings.connectionProfile = null;
+        }
+    }
+
+    return settings;
 }
 
 /**
@@ -322,7 +336,15 @@ export function updateThreadContextSettings(threadId, updates) {
         thread.contextSettings = { ...DEFAULT_CONTEXT_SETTINGS };
     }
 
-    Object.assign(thread.contextSettings, updates);
+    const normalizedUpdates = { ...updates };
+    if (Object.hasOwn(normalizedUpdates, 'connectionProfile') && !Object.hasOwn(normalizedUpdates, 'connectionProfileId')) {
+        normalizedUpdates.connectionProfileId = normalizedUpdates.connectionProfile
+            ? (resolveConnectionProfileId(normalizedUpdates.connectionProfile) || normalizedUpdates.connectionProfile)
+            : null;
+        normalizedUpdates.connectionProfile = null;
+    }
+
+    Object.assign(thread.contextSettings, normalizedUpdates);
     thread.updatedAt = getTimestamp();
 
     return thread.contextSettings;

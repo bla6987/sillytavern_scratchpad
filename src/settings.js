@@ -3,6 +3,8 @@
  * Handles extension settings management
  */
 
+import { dispatchConnectionProfilesChanged, getConnectionProfiles as getConnectionProfileList, renderConnectionProfileOptions, resolveConnectionProfileId } from './connectionProfiles.js';
+
 const MODULE_NAME = 'scratchPad';
 
 const DEFAULT_OOC_PROMPT = `You are a neutral observer and writing assistant helping the user understand and analyze their ongoing roleplay. Answer out-of-character questions about the story, characters, plot, or setting. Be direct, insightful, and helpful. Do not roleplay as any character — respond as an objective assistant.`;
@@ -18,6 +20,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     includeAuthorsNote: false,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
+    connectionProfileId: '',
     connectionProfile: '',
     textSize: 14, // Default text size in pixels
     ttsEnabled: false, // Enable TTS for assistant messages
@@ -54,7 +57,19 @@ export function getSettings() {
         }
     }
 
+    migrateConnectionProfileSetting(extensionSettings[MODULE_NAME]);
+
     return extensionSettings[MODULE_NAME];
+}
+
+function migrateConnectionProfileSetting(settings) {
+    if (settings.connectionProfileId || !settings.connectionProfile) return;
+
+    const migratedId = resolveConnectionProfileId(settings.connectionProfile);
+    if (migratedId) {
+        settings.connectionProfileId = migratedId;
+        settings.connectionProfile = '';
+    }
 }
 
 /**
@@ -63,7 +78,16 @@ export function getSettings() {
  */
 export function updateSettings(updates) {
     const settings = getSettings();
-    Object.assign(settings, updates);
+    const normalizedUpdates = { ...updates };
+
+    if (Object.hasOwn(normalizedUpdates, 'connectionProfile') && !Object.hasOwn(normalizedUpdates, 'connectionProfileId')) {
+        normalizedUpdates.connectionProfileId = normalizedUpdates.connectionProfile
+            ? (resolveConnectionProfileId(normalizedUpdates.connectionProfile) || normalizedUpdates.connectionProfile)
+            : '';
+        normalizedUpdates.connectionProfile = '';
+    }
+
+    Object.assign(settings, normalizedUpdates);
 
     const { saveSettingsDebounced } = SillyTavern.getContext();
     saveSettingsDebounced();
@@ -173,7 +197,7 @@ export function loadSettingsUI() {
     // Connection profile dropdown
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
-        profileSelect.value = settings.connectionProfile;
+        profileSelect.value = settings.connectionProfileId || settings.connectionProfile || '';
     }
 
     // Text size slider
@@ -234,6 +258,8 @@ export function loadSettingsUI() {
  * Initialize settings event listeners
  */
 export function initSettingsListeners() {
+    initConnectionProfileChangeListeners();
+
     // Chat history limit slider
     const historySlider = document.getElementById('sp_chat_history_limit');
     const historyValue = document.getElementById('sp_chat_history_limit_value');
@@ -340,7 +366,7 @@ export function initSettingsListeners() {
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
         bindOnce(profileSelect, 'change', (e) => {
-            updateSettings({ connectionProfile: e.target.value });
+            updateSettings({ connectionProfileId: e.target.value, connectionProfile: '' });
         });
     }
 
@@ -411,6 +437,30 @@ export function initSettingsListeners() {
     }
 }
 
+let connectionProfileListenersInitialized = false;
+
+function initConnectionProfileChangeListeners() {
+    if (connectionProfileListenersInitialized) return;
+
+    const context = SillyTavern.getContext();
+    const eventSource = context?.eventSource;
+    const eventTypes = context?.eventTypes || {};
+    if (!eventSource?.on) return;
+
+    const refreshProfiles = () => {
+        populateConnectionProfiles();
+        dispatchConnectionProfilesChanged();
+    };
+
+    [
+        eventTypes.CONNECTION_PROFILE_CREATED,
+        eventTypes.CONNECTION_PROFILE_UPDATED,
+        eventTypes.CONNECTION_PROFILE_DELETED,
+    ].filter(Boolean).forEach(eventName => eventSource.on(eventName, refreshProfiles));
+
+    connectionProfileListenersInitialized = true;
+}
+
 function bindOnce(element, eventName, handler) {
     if (!element) return;
     const key = `spBound${eventName.charAt(0).toUpperCase()}${eventName.slice(1)}`;
@@ -448,6 +498,10 @@ export function applyTextSize(size) {
  */
 export function getCurrentContextSettings() {
     const settings = getSettings();
+    const profileId = settings.useAlternativeApi
+        ? resolveConnectionProfileId(settings.connectionProfileId || settings.connectionProfile)
+        : null;
+
     return {
         chatHistoryRangeMode: settings.chatHistoryRangeMode,
         chatHistoryRangeStart: settings.chatHistoryRangeStart,
@@ -456,7 +510,8 @@ export function getCurrentContextSettings() {
         includeCharacterCard: settings.includeCharacterCard,
         includeSystemPrompt: settings.includeSystemPrompt,
         includeAuthorsNote: settings.includeAuthorsNote,
-        connectionProfile: settings.useAlternativeApi ? settings.connectionProfile : null
+        connectionProfileId: profileId,
+        connectionProfile: null
     };
 }
 
@@ -467,49 +522,18 @@ export async function populateConnectionProfiles() {
     const profileSelect = document.getElementById('sp_connection_profile');
     if (!profileSelect) return;
 
-    try {
-        // Try to get profiles via slash command
-        const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-        if (executeSlashCommandsWithOptions) {
-            const result = await executeSlashCommandsWithOptions('/profile-list', { handleParserErrors: false, handleExecutionErrors: false });
-            if (result && result.pipe) {
-                const profiles = result.pipe.split(',').map(p => p.trim()).filter(p => p);
+    const settings = getSettings();
+    const result = renderConnectionProfileOptions(profileSelect, settings.connectionProfileId || settings.connectionProfile);
 
-                profileSelect.innerHTML = '<option value="">-- Select Profile --</option>';
-                profiles.forEach(profile => {
-                    const option = document.createElement('option');
-                    option.value = profile;
-                    option.textContent = profile;
-                    profileSelect.appendChild(option);
-                });
-
-                // Restore selected value
-                const settings = getSettings();
-                if (settings.connectionProfile) {
-                    profileSelect.value = settings.connectionProfile;
-                }
-            }
-        }
-    } catch (error) {
-        console.warn('[ScratchPad] Could not load connection profiles:', error);
+    if (result.selectedId && settings.connectionProfileId !== result.selectedId) {
+        updateSettings({ connectionProfileId: result.selectedId, connectionProfile: '' });
     }
 }
 
 /**
  * Get list of connection profiles from SillyTavern
- * @returns {Promise<string[]>} Array of profile names
+ * @returns {Promise<Array>} Array of supported profile objects
  */
 export async function getConnectionProfiles() {
-    try {
-        const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-        if (executeSlashCommandsWithOptions) {
-            const result = await executeSlashCommandsWithOptions('/profile-list', { handleParserErrors: false, handleExecutionErrors: false });
-            if (result && result.pipe) {
-                return result.pipe.split(',').map(p => p.trim()).filter(p => p);
-            }
-        }
-    } catch (error) {
-        console.warn('[ScratchPad] Could not load connection profiles:', error);
-    }
-    return [];
+    return getConnectionProfileList();
 }

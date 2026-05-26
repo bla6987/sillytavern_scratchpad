@@ -6,7 +6,8 @@ import { getThread, getThreadForCurrentBranch, createThread, updateThread, updat
 import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
-import { getSettings, getCurrentContextSettings, getConnectionProfiles } from '../settings.js';
+import { getSettings, getCurrentContextSettings } from '../settings.js';
+import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
 import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 
@@ -335,7 +336,7 @@ function renderContextOptions(container, thread, isNewThread) {
     profileBadge.className = 'sp-profile-badge';
     profileBadge.id = 'sp-profile-badge';
     profileBadge.textContent = getProfileBadgeText(contextSettings);
-    profileBadge.style.display = contextSettings.connectionProfile ? 'inline-block' : 'none';
+    profileBadge.style.display = getConfiguredProfileValue(contextSettings) ? 'inline-block' : 'none';
     badgesRow.appendChild(profileBadge);
 
     contextSection.appendChild(badgesRow);
@@ -414,7 +415,18 @@ function renderContextOptions(container, thread, isNewThread) {
     bindThreadContextListeners(thread?.id, isNewThread, idPrefix);
 
     // Populate profile dropdown asynchronously
-    populateThreadProfileDropdown(contextSettings.connectionProfile, idPrefix);
+    populateThreadProfileDropdown(getConfiguredProfileValue(contextSettings), idPrefix);
+
+    const refreshProfiles = () => {
+        populateThreadProfileDropdown(getContextSettingsFromUI().connectionProfileId, idPrefix);
+        updateProfileBadge(idPrefix);
+    };
+    window.addEventListener(PROFILE_CHANGE_EVENT, refreshProfiles);
+    registerCleanup(() => window.removeEventListener(PROFILE_CHANGE_EVENT, refreshProfiles));
+}
+
+function getConfiguredProfileValue(contextSettings) {
+    return contextSettings.connectionProfileId || contextSettings.connectionProfile || null;
 }
 
 /**
@@ -423,8 +435,9 @@ function renderContextOptions(container, thread, isNewThread) {
  * @returns {string} Profile badge text
  */
 function getProfileBadgeText(contextSettings) {
-    if (contextSettings.connectionProfile) {
-        return contextSettings.connectionProfile;
+    const profileValue = getConfiguredProfileValue(contextSettings);
+    if (profileValue) {
+        return getConnectionProfileLabel(profileValue);
     }
     return 'Default';
 }
@@ -438,9 +451,9 @@ function updateProfileBadge(idPrefix) {
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     if (!profileBadge || !profileSelect) return;
 
-    const profile = profileSelect.value;
-    if (profile) {
-        profileBadge.textContent = profile;
+    const profileId = profileSelect.value;
+    if (profileId) {
+        profileBadge.textContent = getConnectionProfileLabel(profileId);
         profileBadge.style.display = 'inline-block';
     } else {
         profileBadge.style.display = 'none';
@@ -449,28 +462,16 @@ function updateProfileBadge(idPrefix) {
 
 /**
  * Populate the thread profile dropdown with available profiles
- * @param {string|null} currentProfile Currently selected profile
+ * @param {string|null} currentProfile Currently selected profile ID or legacy name
  * @param {string} idPrefix ID prefix for elements
  */
 async function populateThreadProfileDropdown(currentProfile, idPrefix) {
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     if (!profileSelect) return;
 
-    const profiles = await getConnectionProfiles();
-
-    // Keep the "Use Global Setting" option, add profiles
-    profileSelect.innerHTML = '<option value="">Use Global Setting</option>';
-    profiles.forEach(profile => {
-        const option = document.createElement('option');
-        option.value = profile;
-        option.textContent = profile;
-        profileSelect.appendChild(option);
+    renderConnectionProfileOptions(profileSelect, currentProfile, {
+        defaultLabel: 'Use Global Setting',
     });
-
-    // Restore selected value
-    if (currentProfile) {
-        profileSelect.value = currentProfile;
-    }
 }
 
 /**
@@ -543,8 +544,9 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
 
     if (profileSelect) {
         profileSelect.addEventListener('change', (e) => {
-            const profile = e.target.value || null;
-            updateContextSetting('connectionProfile', profile);
+            const profileId = e.target.value || null;
+            updateContextSetting('connectionProfileId', profileId);
+            updateContextSetting('connectionProfile', null);
             updateProfileBadge(idPrefix);
         });
     }
@@ -642,7 +644,8 @@ function getContextSettingsFromUI() {
     const includeAuthorsNoteToggle = document.getElementById(`${idPrefix}include_authors_note`);
 
     return {
-        connectionProfile: profileSelect?.value || null,
+        connectionProfileId: resolveConnectionProfileId(profileSelect?.value) || profileSelect?.value || null,
+        connectionProfile: null,
         chatHistoryRangeMode: rangeModeSelect?.value || 'all',
         chatHistoryRangeStart: parseRangeNumber(rangeStartInput?.value),
         chatHistoryRangeEnd: parseRangeNumber(rangeEndInput?.value),
