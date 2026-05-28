@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     includeAuthorsNote: false,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
+    forceGlobalApiProfile: false,
     connectionProfileId: '',
     connectionProfile: '',
     textSize: 14, // Default text size in pixels
@@ -194,6 +195,11 @@ export function loadSettingsUI() {
         profileContainer.style.display = settings.useAlternativeApi ? 'block' : 'none';
     }
 
+    const forceGlobalApiToggle = document.getElementById('sp_force_global_api_profile');
+    if (forceGlobalApiToggle) {
+        forceGlobalApiToggle.checked = settings.forceGlobalApiProfile;
+    }
+
     // Connection profile dropdown
     const profileSelect = document.getElementById('sp_connection_profile');
     if (profileSelect) {
@@ -359,6 +365,13 @@ export function initSettingsListeners() {
             if (profileContainer) {
                 profileContainer.style.display = e.target.checked ? 'block' : 'none';
             }
+        });
+    }
+
+    const forceGlobalApiToggle = document.getElementById('sp_force_global_api_profile');
+    if (forceGlobalApiToggle) {
+        bindOnce(forceGlobalApiToggle, 'change', (e) => {
+            updateSettings({ forceGlobalApiProfile: e.target.checked });
         });
     }
 

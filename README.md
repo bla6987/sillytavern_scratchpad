@@ -89,7 +89,8 @@ Customize the instruction that tells the AI how to respond to out-of-character q
 ### API Settings
 
 - **Use Alternative API**: Enable to send scratch pad generations through a Connection Manager profile without changing SillyTavern's active profile
-- **Connection Profile**: Select which profile to use when alternative API is enabled. Scratch Pad stores the stable profile ID, so renamed profiles keep working.
+- **Connection Profile**: Select which profile to use when alternative API is enabled. The selected Connection Manager profile carries its own API, model, and preset. Scratch Pad stores the stable profile ID, so renamed profiles keep working.
+- **Always Use This Profile**: Force every Scratch Pad generation to use the settings-panel profile, ignoring per-thread API selections.
 - **Use Standard Generation (Emergency)**: Applies only to active-API fallback requests. Connection profile requests are sent through Connection Manager.
 
 ## How It Works

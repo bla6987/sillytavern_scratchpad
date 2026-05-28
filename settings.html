@@ -126,10 +126,17 @@
                 <div id="sp_profile_container" style="display: none;">
                     <label for="sp_connection_profile">
                         <span>Connection Profile:</span>
+                        <small>Select a profile with its own API, model, and preset for Scratch Pad generations</small>
                     </label>
                     <select id="sp_connection_profile" class="text_pole">
                         <option value="">-- Select Profile --</option>
                     </select>
+
+                    <label class="checkbox_label" for="sp_force_global_api_profile">
+                        <input type="checkbox" id="sp_force_global_api_profile">
+                        <span>Always Use This Profile</span>
+                        <small>Ignore thread-level API selections and route all Scratch Pad processing through this profile</small>
+                    </label>
                 </div>
             </div>
         </div>

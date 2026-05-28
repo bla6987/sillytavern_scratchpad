@@ -239,6 +239,47 @@ test('profile generation uses Connection Manager profile ID without slash profil
     assert.equal(calls.some(args => args[0] === 'slash'), false);
 });
 
+test('forced global profile overrides thread-level API selections', async () => {
+    const { calls } = setupHarness({
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: {
+                profiles: [
+                    { id: 'global-profile', name: 'Global Profile', api: 'openai', model: 'global-model' },
+                    { id: 'thread-profile', name: 'Thread Profile', api: 'openai', model: 'thread-model' },
+                ],
+            },
+            scratchPad: {
+                useAlternativeApi: true,
+                forceGlobalApiProfile: true,
+                connectionProfileId: 'global-profile',
+                useStandardGeneration: false,
+                oocSystemPrompt: 'OOC PROMPT',
+            },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                return { content: 'Profile response', reasoning: '' };
+            },
+        },
+    });
+
+    const thread = createThread('Forced Profile Thread');
+    updateThreadContextSettings(thread.id, {
+        connectionProfileId: 'thread-profile',
+        connectionProfile: null,
+    });
+
+    const result = await generateScratchPadResponse('Forced profile question', thread.id);
+    assert.equal(result.success, true);
+
+    const profileCall = calls.find(args => args[0] === 'profileSendRequest');
+    assert.ok(profileCall, 'should send through Connection Manager');
+    assert.equal(profileCall[1], 'global-profile');
+});
+
 test('legacy connection profile names migrate to profile IDs', async () => {
     setupHarness({
         extensionSettings: {

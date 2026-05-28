@@ -336,6 +336,18 @@ export function getEffectiveProfileForThread(threadId) {
 
 function getEffectiveProfileResolutionForThread(threadId) {
     const settings = getSettings();
+    const globalValue = settings.connectionProfileId || settings.connectionProfile;
+
+    if (settings.useAlternativeApi && settings.forceGlobalApiProfile) {
+        const globalProfileId = resolveConnectionProfileId(globalValue);
+        if (globalProfileId) {
+            return { profileId: globalProfileId, missingValue: null, scope: 'global' };
+        }
+        if (globalValue) {
+            return { profileId: null, missingValue: globalValue, scope: 'global' };
+        }
+    }
+
     const threadSettings = getThreadContextSettings(threadId);
     const threadValue = threadSettings.connectionProfileId || threadSettings.connectionProfile;
     const threadProfileId = resolveConnectionProfileId(threadValue);
@@ -347,7 +359,6 @@ function getEffectiveProfileResolutionForThread(threadId) {
     }
 
     if (settings.useAlternativeApi) {
-        const globalValue = settings.connectionProfileId || settings.connectionProfile;
         const globalProfileId = resolveConnectionProfileId(globalValue);
         if (globalProfileId) {
             return { profileId: globalProfileId, missingValue: null, scope: 'global' };
