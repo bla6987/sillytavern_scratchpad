@@ -6,7 +6,7 @@ import { getThread, getThreadForCurrentBranch, createThread, updateThread, updat
 import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
-import { getSettings, getCurrentContextSettings } from '../settings.js';
+import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
 import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
@@ -319,6 +319,7 @@ function renderContextOptions(container, thread, isNewThread) {
     const contextSettings = thread?.contextSettings
         ? { ...DEFAULT_CONTEXT_SETTINGS, ...thread.contextSettings }
         : getCurrentContextSettings();
+    const globalApiProfileForced = isGlobalApiProfileForced();
 
     // Badges row for context summary and profile
     const badgesRow = document.createElement('div');
@@ -336,7 +337,7 @@ function renderContextOptions(container, thread, isNewThread) {
     profileBadge.className = 'sp-profile-badge';
     profileBadge.id = 'sp-profile-badge';
     profileBadge.textContent = getProfileBadgeText(contextSettings);
-    profileBadge.style.display = getConfiguredProfileValue(contextSettings) ? 'inline-block' : 'none';
+    profileBadge.style.display = globalApiProfileForced || getConfiguredProfileValue(contextSettings) ? 'inline-block' : 'none';
     badgesRow.appendChild(profileBadge);
 
     contextSection.appendChild(badgesRow);
@@ -354,14 +355,18 @@ function renderContextOptions(container, thread, isNewThread) {
 
     // Generate unique IDs for this instance to avoid conflicts
     const idPrefix = 'sp_thread_';
+    const profileControlDisabled = globalApiProfileForced ? 'disabled' : '';
+    const profileHelpText = globalApiProfileForced
+        ? 'Global API profile override is enabled in Scratch Pad settings; thread-level profiles are ignored.'
+        : 'Override which API profile to use for this thread.';
 
     optionsBlock.innerHTML = `
         <label for="${idPrefix}connection_profile">
             <span>Connection Profile:</span>
-            <small>Override which API profile to use for this thread.</small>
+            <small>${profileHelpText}</small>
         </label>
         <div class="range-block">
-            <select id="${idPrefix}connection_profile" class="text_pole">
+            <select id="${idPrefix}connection_profile" class="text_pole" ${profileControlDisabled}>
                 <option value="">Use Global Setting</option>
             </select>
         </div>
@@ -415,10 +420,10 @@ function renderContextOptions(container, thread, isNewThread) {
     bindThreadContextListeners(thread?.id, isNewThread, idPrefix);
 
     // Populate profile dropdown asynchronously
-    populateThreadProfileDropdown(getConfiguredProfileValue(contextSettings), idPrefix);
+    populateThreadProfileDropdown(globalApiProfileForced ? null : getConfiguredProfileValue(contextSettings), idPrefix);
 
     const refreshProfiles = () => {
-        populateThreadProfileDropdown(getContextSettingsFromUI().connectionProfileId, idPrefix);
+        populateThreadProfileDropdown(isGlobalApiProfileForced() ? null : getContextSettingsFromUI().connectionProfileId, idPrefix);
         updateProfileBadge(idPrefix);
     };
     window.addEventListener(PROFILE_CHANGE_EVENT, refreshProfiles);
@@ -435,6 +440,12 @@ function getConfiguredProfileValue(contextSettings) {
  * @returns {string} Profile badge text
  */
 function getProfileBadgeText(contextSettings) {
+    if (isGlobalApiProfileForced()) {
+        const settings = getSettings();
+        const profileValue = settings.connectionProfileId || settings.connectionProfile;
+        return profileValue ? `Global: ${getConnectionProfileLabel(profileValue)}` : 'Global API override';
+    }
+
     const profileValue = getConfiguredProfileValue(contextSettings);
     if (profileValue) {
         return getConnectionProfileLabel(profileValue);
@@ -450,6 +461,12 @@ function updateProfileBadge(idPrefix) {
     const profileBadge = document.getElementById('sp-profile-badge');
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     if (!profileBadge || !profileSelect) return;
+
+    if (isGlobalApiProfileForced()) {
+        profileBadge.textContent = getProfileBadgeText({});
+        profileBadge.style.display = 'inline-block';
+        return;
+    }
 
     const profileId = profileSelect.value;
     if (profileId) {
@@ -469,9 +486,14 @@ async function populateThreadProfileDropdown(currentProfile, idPrefix) {
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     if (!profileSelect) return;
 
+    const shouldDisable = isGlobalApiProfileForced();
     renderConnectionProfileOptions(profileSelect, currentProfile, {
         defaultLabel: 'Use Global Setting',
     });
+    profileSelect.disabled = shouldDisable || profileSelect.disabled;
+    if (shouldDisable) {
+        profileSelect.value = '';
+    }
 }
 
 /**

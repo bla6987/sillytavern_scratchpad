@@ -117,6 +117,11 @@ export function getDisplayMode() {
     return getSettings().displayMode || 'drawer';
 }
 
+export function isGlobalApiProfileForced() {
+    const settings = getSettings();
+    return !!(settings.useAlternativeApi && settings.forceGlobalApiProfile);
+}
+
 /**
  * Set the display mode
  * @param {'drawer'|'pinned'|'fullscreen'} mode Display mode
@@ -365,6 +370,7 @@ export function initSettingsListeners() {
             if (profileContainer) {
                 profileContainer.style.display = e.target.checked ? 'block' : 'none';
             }
+            dispatchConnectionProfilesChanged();
         });
     }
 
@@ -372,6 +378,7 @@ export function initSettingsListeners() {
     if (forceGlobalApiToggle) {
         bindOnce(forceGlobalApiToggle, 'change', (e) => {
             updateSettings({ forceGlobalApiProfile: e.target.checked });
+            dispatchConnectionProfilesChanged();
         });
     }
 

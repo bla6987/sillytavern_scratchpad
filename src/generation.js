@@ -3,7 +3,7 @@
  * Handles AI generation and prompt building
  */
 
-import { getSettings } from './settings.js';
+import { getSettings, isGlobalApiProfileForced } from './settings.js';
 import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
 import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProfileId } from './connectionProfiles.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
@@ -338,7 +338,7 @@ function getEffectiveProfileResolutionForThread(threadId) {
     const settings = getSettings();
     const globalValue = settings.connectionProfileId || settings.connectionProfile;
 
-    if (settings.useAlternativeApi && settings.forceGlobalApiProfile) {
+    if (isGlobalApiProfileForced()) {
         const globalProfileId = resolveConnectionProfileId(globalValue);
         if (globalProfileId) {
             return { profileId: globalProfileId, missingValue: null, scope: 'global' };
@@ -346,6 +346,7 @@ function getEffectiveProfileResolutionForThread(threadId) {
         if (globalValue) {
             return { profileId: null, missingValue: globalValue, scope: 'global' };
         }
+        return { profileId: null, missingValue: null, scope: 'global' };
     }
 
     const threadSettings = getThreadContextSettings(threadId);
