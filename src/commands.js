@@ -4,7 +4,7 @@
  */
 
 import { clearAllThreads, findThreadByName, saveMetadata } from './storage.js';
-import { openScratchPad, openThread, showQuickPopup, showQuickPopupRaw, closeScratchPad } from './ui/index.js';
+import { openScratchPad, openThread, showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, closeScratchPad } from './ui/index.js';
 import { isChatActive } from './generation.js';
 
 /**
@@ -67,6 +67,49 @@ export function registerCommands() {
                 <ul>
                     <li><code>/sp</code> - Open the scratch pad interface</li>
                     <li><code>/sp What is the character's motivation?</code> - Quick question with popup response</li>
+                </ul>
+            </div>
+        `
+    }));
+
+    // /sp-ask [message]
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'sp-ask',
+        callback: async (namedArgs, unnamedArgs) => {
+            console.log('[ScratchPad CMD] /sp-ask called');
+
+            if (!isChatActive()) {
+                toastr.warning('Open a chat to use Scratch Pad');
+                return '';
+            }
+
+            const message = unnamedArgs ? unnamedArgs.toString().trim() : '';
+            if (!message) {
+                toastr.warning('Please provide a question');
+                return '';
+            }
+
+            await showQuickPopupAsk(message);
+            return '';
+        },
+        aliases: [],
+        returns: 'nothing',
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Question to ask the model without chat, character, or Scratch Pad context',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true
+            })
+        ],
+        helpString: `
+            <div>
+                Asks a general AI question with <strong>no chat history</strong>, character card, author note, or Scratch Pad thread context.
+            </div>
+            <div>
+                <strong>Usage:</strong>
+                <ul>
+                    <li><code>/sp-ask Explain the P vs NP problem</code></li>
+                    <li><code>/sp-ask Give me 10 creative writing prompts</code></li>
                 </ul>
             </div>
         `

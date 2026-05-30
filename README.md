@@ -58,9 +58,13 @@ This creates a new thread and shows a popup with the AI's response. You can dism
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `/scratchpad [message]` | `/sp` | Open scratch pad, or quick-ask with popup if message provided |
+| `/sp-ask <question>` | - | Ask a general AI question with no chat, character, author note, or Scratch Pad thread context |
+| `/rawprompt <prompt>` | `/rp` | Send a strict raw prompt with no system prompt or injected context |
 | `/scratchpad-view` | `/sp-view` | Open scratch pad thread list |
 | `/scratchpad-clear` | `/sp-clear` | Delete all threads (with confirmation) |
 | `/scratchpad-thread <name>` | `/sp-thread` | Open a specific thread by name or ID |
+
+Use `/sp` for roleplay-aware Scratch Pad questions. Use `/sp-ask` for general assistant questions without roleplay context. Use `/rawprompt` when you want the prompt sent directly without even a general assistant system prompt.
 
 ## Settings
 

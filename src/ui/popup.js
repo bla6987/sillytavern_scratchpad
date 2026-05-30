@@ -4,7 +4,7 @@
  */
 
 import { createThread, saveMetadata, getThread } from '../storage.js';
-import { generateScratchPadResponse, generateRawPromptResponse, parseThinking, cancelGeneration } from '../generation.js';
+import { generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse, parseThinking, cancelGeneration } from '../generation.js';
 import { renderMarkdown, createButton, createSpinner, showToast, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
@@ -47,6 +47,23 @@ export async function showQuickPopupRaw(message) {
 
     createPopupElement();
     await generatePopupRawResponse(message);
+}
+
+export async function showQuickPopupAsk(message) {
+    const thread = createThread('New Thread', getCurrentContextSettings());
+    if (!thread) {
+        showToast('Failed to create thread', 'error');
+        return;
+    }
+
+    currentPopupThreadId = thread.id;
+    await saveMetadata();
+
+    createPopupElement();
+    await generatePopupRawResponse(message, {
+        generateResponse: generateGeneralAskResponse,
+        errorLabel: 'General ask',
+    });
 }
 
 /**
@@ -427,9 +444,11 @@ async function generatePopupResponse(message) {
     }
 }
 
-async function generatePopupRawResponse(message) {
+async function generatePopupRawResponse(message, options = {}) {
     const contentEl = document.getElementById('sp-popup-content');
     const titleEl = document.getElementById('sp-popup-title');
+    const generateResponse = options.generateResponse || generateRawPromptResponse;
+    const errorLabel = options.errorLabel || 'Raw prompt';
 
     if (!contentEl || !currentPopupThreadId) return;
 
@@ -440,7 +459,7 @@ async function generatePopupRawResponse(message) {
         let _lastRawRender = 0;
         let _pendingRawUpdate = null;
         let _latestRawResponse = '';
-        const result = await generateRawPromptResponse(message, currentPopupThreadId, (partialResponse) => {
+        const result = await generateResponse(message, currentPopupThreadId, (partialResponse) => {
             _latestRawResponse = partialResponse;
 
             const renderRawContent = (responseText = _latestRawResponse) => {
@@ -474,7 +493,7 @@ async function generatePopupRawResponse(message) {
             iconSpan.className = 'sp-error-icon';
             iconSpan.innerHTML = Icons.error;
             const textSpan = document.createElement('span');
-            textSpan.textContent = `Raw prompt failed: ${result.error}`;
+            textSpan.textContent = `${errorLabel} failed: ${result.error}`;
             errorDiv.appendChild(iconSpan);
             errorDiv.appendChild(textSpan);
             contentEl.innerHTML = '';
@@ -513,7 +532,7 @@ async function generatePopupRawResponse(message) {
         iconSpan.className = 'sp-error-icon';
         iconSpan.innerHTML = Icons.error;
         const textSpan = document.createElement('span');
-        textSpan.textContent = `Raw prompt failed: ${error.message}`;
+        textSpan.textContent = `${errorLabel} failed: ${error.message}`;
         errorDiv.appendChild(iconSpan);
         errorDiv.appendChild(textSpan);
         contentEl.innerHTML = '';

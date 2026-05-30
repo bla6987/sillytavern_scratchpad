@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
 
-import { generateScratchPadResponse, isChatActive } from '../src/generation.js';
+import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, isChatActive } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
 import { getConnectionProfiles, getSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
@@ -195,6 +195,102 @@ test('custom generation does not duplicate the current question in thread histor
     const userPrompt = requestCall[2].prompt.find(message => message.role === 'user').content;
     const occurrences = userPrompt.match(/Unique custom question/g) || [];
     assert.equal(occurrences.length, 1);
+});
+
+test('general ask uses only minimal assistant prompt and user question', async () => {
+    const { calls } = setupHarness({
+        chatMetadata: {
+            system_prompt: 'ST SYSTEM PROMPT',
+            note_prompt: 'AUTHOR NOTE',
+        },
+        chat: [
+            { is_user: true, name: 'User', mes: 'Visible chat history' },
+        ],
+        characters: [
+            { name: 'Seraphina', description: 'Character card text' },
+        ],
+        extensionSettings: {
+            scratchPad: {
+                useStandardGeneration: true,
+                oocSystemPrompt: 'OOC PROMPT',
+                chatHistoryLimit: 0,
+            },
+        },
+    });
+
+    const thread = createThread('General Ask Thread');
+    assert.ok(thread, 'thread should be created');
+    updateThreadContextSettings(thread.id, {
+        includeSystemPrompt: true,
+        includeCharacterCard: true,
+        includeAuthorsNote: true,
+    });
+    addMessage(thread.id, 'user', 'Older thread question', 'complete', 0);
+    addMessage(thread.id, 'assistant', 'Older thread answer', 'complete', 0);
+
+    const result = await generateGeneralAskResponse('General knowledge question', thread.id);
+    assert.equal(result.success, true);
+
+    const rawCall = calls.find(args => args[0] === 'generateRaw');
+    assert.ok(rawCall, 'should generate through generateRaw');
+    const rawArgs = rawCall[1];
+
+    assert.equal(rawArgs.systemPrompt, GENERAL_ASK_SYSTEM_PROMPT);
+    assert.equal(rawArgs.prompt, 'General knowledge question');
+    assert.equal((rawArgs.prompt.match(/General knowledge question/g) || []).length, 1);
+    assert.equal(rawArgs.prompt.includes('Visible chat history'), false);
+    assert.equal(rawArgs.prompt.includes('Character card text'), false);
+    assert.equal(rawArgs.prompt.includes('AUTHOR NOTE'), false);
+    assert.equal(rawArgs.prompt.includes('Older thread question'), false);
+    assert.equal(rawArgs.prompt.includes('Older thread answer'), false);
+    assert.equal(rawArgs.systemPrompt.includes('OOC PROMPT'), false);
+    assert.equal(rawArgs.systemPrompt.includes('Title:'), false);
+
+    const savedThread = getThread(thread.id);
+    assert.equal(savedThread.messages[2].noContext, true);
+    assert.equal(savedThread.messages[3].noContext, true);
+});
+
+test('raw prompt sends no system prompt and no injected context', async () => {
+    const { calls } = setupHarness({
+        chatMetadata: {
+            system_prompt: 'ST SYSTEM PROMPT',
+            note_prompt: 'AUTHOR NOTE',
+        },
+        chat: [
+            { is_user: true, name: 'User', mes: 'Visible chat history' },
+        ],
+        characters: [
+            { name: 'Seraphina', description: 'Character card text' },
+        ],
+        extensionSettings: {
+            scratchPad: {
+                useStandardGeneration: true,
+                oocSystemPrompt: 'OOC PROMPT',
+                chatHistoryLimit: 0,
+            },
+        },
+    });
+
+    const thread = createThread('Raw Prompt Thread');
+    assert.ok(thread, 'thread should be created');
+    addMessage(thread.id, 'user', 'Older thread question', 'complete', 0);
+    addMessage(thread.id, 'assistant', 'Older thread answer', 'complete', 0);
+
+    const result = await generateRawPromptResponse('Raw direct prompt', thread.id);
+    assert.equal(result.success, true);
+
+    const rawCall = calls.find(args => args[0] === 'generateRaw');
+    assert.ok(rawCall, 'should generate through generateRaw');
+    const rawArgs = rawCall[1];
+
+    assert.equal(rawArgs.systemPrompt, '');
+    assert.equal(rawArgs.prompt, 'Raw direct prompt');
+    assert.equal(rawArgs.prompt.includes('Visible chat history'), false);
+    assert.equal(rawArgs.prompt.includes('Character card text'), false);
+    assert.equal(rawArgs.prompt.includes('AUTHOR NOTE'), false);
+    assert.equal(rawArgs.prompt.includes('Older thread question'), false);
+    assert.equal(rawArgs.prompt.includes('Older thread answer'), false);
 });
 
 test('profile generation uses Connection Manager profile ID without slash profile switching', async () => {

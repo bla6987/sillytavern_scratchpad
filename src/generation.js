@@ -851,7 +851,9 @@ function excludeMessagesFromThread(thread, messageIds) {
     };
 }
 
-export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
+export const GENERAL_ASK_SYSTEM_PROMPT = 'You are a helpful general-purpose AI assistant. Answer the user directly and do not rely on any prior chat context.';
+
+async function generateNoContextResponse(userPrompt, threadId, onStream = null, systemPrompt = '') {
     const context = SillyTavern.getContext();
 
     const thread = getThread(threadId);
@@ -883,7 +885,7 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
         const globalSettings = getSettings();
         const result = await runGenerationForThread({
             threadId,
-            promptData: { systemPrompt: '', prompt: userPrompt },
+            promptData: { systemPrompt, prompt: userPrompt },
             onStream,
             useStandardGeneration: globalSettings.useStandardGeneration,
         });
@@ -958,6 +960,14 @@ export async function generateRawPromptResponse(userPrompt, threadId, onStream =
 
         return { success: false, error: error.message };
     }
+}
+
+export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
+    return generateNoContextResponse(userPrompt, threadId, onStream, '');
+}
+
+export async function generateGeneralAskResponse(userPrompt, threadId, onStream = null) {
+    return generateNoContextResponse(userPrompt, threadId, onStream, GENERAL_ASK_SYSTEM_PROMPT);
 }
 
 /**
