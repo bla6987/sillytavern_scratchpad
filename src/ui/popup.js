@@ -346,6 +346,7 @@ async function generatePopupResponse(message) {
     if (!contentEl || !currentPopupThreadId) return;
 
     isPopupGenerating = true;
+    currentPopupResponse = null;
     updatePopupActionButtons(true);
 
     try {
@@ -396,12 +397,14 @@ async function generatePopupResponse(message) {
             errorDiv.appendChild(textSpan);
             contentEl.innerHTML = '';
             contentEl.appendChild(errorDiv);
+            currentPopupResponse = null;
         } else if (result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-response sp-popup-cancelled">
                     <span>Generation cancelled</span>
                 </div>
             `;
+            currentPopupResponse = null;
         } else {
             // Render final response with thinking if present
             const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
@@ -453,6 +456,7 @@ async function generatePopupRawResponse(message, options = {}) {
     if (!contentEl || !currentPopupThreadId) return;
 
     isPopupGenerating = true;
+    currentPopupResponse = null;
     updatePopupActionButtons(true);
 
     try {
@@ -498,12 +502,14 @@ async function generatePopupRawResponse(message, options = {}) {
             errorDiv.appendChild(textSpan);
             contentEl.innerHTML = '';
             contentEl.appendChild(errorDiv);
+            currentPopupResponse = null;
         } else if (result.cancelled) {
             contentEl.innerHTML = `
                 <div class="sp-popup-response sp-popup-cancelled">
                     <span>Generation cancelled</span>
                 </div>
             `;
+            currentPopupResponse = null;
         } else {
             const thinkingHtml = renderReasoningHtml(result.thinking, result.reasoningMeta);
             const timingHtml = renderGenerationTimingHtml(result);
