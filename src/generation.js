@@ -1466,23 +1466,26 @@ export async function retryMessage(threadId, messageId, onStream = null) {
         return { success: false, error: 'Thread not found' };
     }
 
-    const message = getMessage(threadId, messageId);
+    let message = getMessage(threadId, messageId);
+    if (!message) {
+        message = [...thread.messages].reverse().find(m => m.role === 'assistant' && m.status === 'failed') || null;
+    }
     if (!message) {
         return { success: false, error: 'Message not found' };
     }
 
     // If the message has swipes, remove the failed swipe and generate a new one
-    if (message.swipes && message.swipes.length > 0) {
+    if (message.swipes && message.swipes.some(swipe => typeof swipe === 'string' && swipe.trim())) {
         const failedIdx = message.swipeId ?? (message.swipes.length - 1);
-        deleteSwipe(threadId, messageId, failedIdx);
+        deleteSwipe(threadId, message.id, failedIdx);
         message.status = 'complete';
         syncSwipeToMessage(message);
         await saveMetadata();
-        return await generateSwipe(threadId, messageId, onStream);
+        return await generateSwipe(threadId, message.id, onStream);
     }
 
     // Legacy path: no swipes
-    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
+    const messageIndex = thread.messages.findIndex(m => m.id === message.id);
     if (messageIndex === -1) {
         return { success: false, error: 'Message not found' };
     }

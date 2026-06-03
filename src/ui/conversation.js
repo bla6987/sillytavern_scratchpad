@@ -21,6 +21,7 @@ let currentViewportBusUnsubscribe = null;
 let lastRenderedThreadId = null;
 let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
+let lastRenderedMessageId = null;
 
 /**
  * Start a new generation and return its ID
@@ -122,6 +123,7 @@ export function renderConversation(container, isNewThread = false) {
     lastRenderedMessageCount = thread ? thread.messages.length : 0;
     const lastMsg = thread?.messages?.[thread.messages.length - 1];
     lastRenderedMessageStatus = lastMsg?.status ?? null;
+    lastRenderedMessageId = lastMsg?.id ?? null;
 
     container.innerHTML = '';
     // Preserve sp-drawer-content class while adding view-specific class
@@ -1519,8 +1521,8 @@ function goBackToThreadList() {
 /**
  * Refresh the conversation view
  * Skips re-render if the thread ID, message count, and last message status
- * haven't changed. Tracking status ensures we re-render when a pending
- * message completes (count stays the same but content has changed).
+ * haven't changed. Tracking the last message ID keeps retry failures that
+ * replace failed messages from leaving stale retry buttons in the DOM.
  */
 function refreshConversation() {
     if (!conversationContainer || !currentThreadId) return;
@@ -1529,12 +1531,14 @@ function refreshConversation() {
     const currentCount = thread ? thread.messages.length : 0;
     const lastMsg = thread?.messages?.[thread.messages.length - 1];
     const currentStatus = lastMsg?.status ?? null;
+    const currentMessageId = lastMsg?.id ?? null;
 
     // Skip expensive full re-render if nothing has changed
     if (
         currentThreadId === lastRenderedThreadId &&
         currentCount === lastRenderedMessageCount &&
-        currentStatus === lastRenderedMessageStatus
+        currentStatus === lastRenderedMessageStatus &&
+        currentMessageId === lastRenderedMessageId
     ) {
         return;
     }

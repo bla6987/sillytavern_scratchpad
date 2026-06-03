@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
 
-import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, isChatActive } from '../src/generation.js';
+import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, isChatActive, retryMessage } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
 import { getConnectionProfiles, getSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
@@ -605,6 +605,45 @@ test('profile streaming failure retries once without streaming', async () => {
         .filter(args => args[0] === 'profileSendRequest')
         .map(args => args[4].stream);
     assert.deepEqual(streamFlags, [true, false]);
+});
+
+test('retry recovers from stale failed message id after no-response API failures', async () => {
+    let attempts = 0;
+    setupHarness({
+        generateRaw: async () => {
+            attempts++;
+            if (attempts < 3) {
+                throw new Error(`api failed ${attempts}`);
+            }
+            return 'Recovered response';
+        },
+    });
+
+    const thread = createThread('Retry Failure Thread');
+    const firstResult = await generateScratchPadResponse('Retry this question', thread.id);
+    assert.equal(firstResult.success, false);
+    assert.equal(firstResult.error, 'api failed 1');
+
+    const firstFailedMessage = getThread(thread.id).messages.find(msg => msg.role === 'assistant');
+    assert.ok(firstFailedMessage, 'first failure should leave a failed assistant message');
+
+    const secondResult = await retryMessage(thread.id, firstFailedMessage.id);
+    assert.equal(secondResult.success, false);
+    assert.equal(secondResult.error, 'api failed 2');
+
+    const secondFailedMessage = getThread(thread.id).messages.find(msg => msg.role === 'assistant');
+    assert.notEqual(secondFailedMessage.id, firstFailedMessage.id, 'retry replaces the failed assistant message');
+
+    const recoveredResult = await retryMessage(thread.id, firstFailedMessage.id);
+    assert.equal(recoveredResult.success, true);
+    assert.equal(recoveredResult.response, 'Recovered response');
+
+    const messages = getThread(thread.id).messages;
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].role, 'user');
+    assert.equal(messages[1].role, 'assistant');
+    assert.equal(messages[1].status, 'complete');
+    assert.equal(messages[1].content, 'Recovered response');
 });
 
 test('standard generation stores response timing on assistant messages', async () => {
