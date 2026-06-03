@@ -4,7 +4,7 @@
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
 import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
-import { formatTimestamp, renderMarkdown, createStreamingRenderer, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
+import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
@@ -988,7 +988,7 @@ function createMessageElement(message) {
                 const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
                 const content = currentMsg?.content || message.content;
                 try {
-                    await navigator.clipboard.writeText(content);
+                    await copyTextToClipboard(content);
                     showToast('Copied to clipboard', 'success');
                 } catch {
                     showToast('Failed to copy', 'error');

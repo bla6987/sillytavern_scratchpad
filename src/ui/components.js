@@ -40,6 +40,64 @@ export function renderMarkdown(text) {
 }
 
 /**
+ * Copy text to the system clipboard.
+ * Falls back to document.execCommand when the Clipboard API is unavailable or denied.
+ * @param {string} text Text to copy
+ * @returns {Promise<void>}
+ */
+export async function copyTextToClipboard(text) {
+    const value = String(text ?? '');
+    let clipboardError = null;
+
+    if (globalThis.isSecureContext && globalThis.navigator?.clipboard?.writeText) {
+        try {
+            await globalThis.navigator.clipboard.writeText(value);
+            return;
+        } catch (error) {
+            clipboardError = error;
+        }
+    }
+
+    if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
+        throw clipboardError || new Error('Clipboard copy is not available');
+    }
+
+    const parent = document.querySelector('dialog[open]:last-of-type') ?? document.body;
+    if (!parent) {
+        throw clipboardError || new Error('Clipboard copy target is not available');
+    }
+
+    const activeElement = typeof HTMLElement !== 'undefined' && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const textArea = document.createElement('textarea');
+    textArea.value = value;
+    textArea.setAttribute('readonly', '');
+    textArea.style.position = 'fixed';
+    textArea.style.top = '-1000px';
+    textArea.style.left = '-1000px';
+    textArea.style.opacity = '0';
+
+    try {
+        parent.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        textArea.setSelectionRange(0, value.length);
+
+        if (!document.execCommand('copy')) {
+            throw clipboardError || new Error('Clipboard copy command failed');
+        }
+    } finally {
+        textArea.remove();
+        try {
+            activeElement?.focus?.({ preventScroll: true });
+        } catch {
+            // Best effort only; focus restoration should not fail the copy.
+        }
+    }
+}
+
+/**
  * Create a throttled streaming renderer for live AI responses.
  *
  * During streaming the response is written as plain text — no markdown parsing
