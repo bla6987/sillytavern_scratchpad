@@ -666,6 +666,9 @@ test('editing a user message truncates later messages and regenerates from prior
     assert.ok(olderUser);
     assert.ok(olderAssistant);
     assert.ok(editedUser);
+    delete olderUser.status;
+    delete olderAssistant.status;
+    delete editedUser.status;
 
     const result = await editUserMessageAndRegenerate(thread.id, editedUser.id, 'Edited middle question');
     assert.equal(result.success, true);

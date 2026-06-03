@@ -122,6 +122,10 @@ function applyLimitFallback(chat, settings) {
     return historyLimit > 0 ? chat.slice(-historyLimit) : chat;
 }
 
+function isCompleteThreadMessage(message) {
+    return !message?.status || message.status === 'complete';
+}
+
 /**
  * Format thread history for context
  * @param {Array} messages Thread messages array
@@ -131,7 +135,7 @@ function formatThreadHistory(messages) {
     if (!messages || messages.length === 0) return '';
 
     return messages
-        .filter(m => m.status === 'complete')
+        .filter(isCompleteThreadMessage)
         .map(msg => {
             const role = msg.role === 'user' ? 'User' : 'Assistant';
             return `${role}: ${msg.content}`;
@@ -147,7 +151,7 @@ function buildThreadMessages(messages) {
     if (!messages || messages.length === 0) return [];
 
     return messages
-        .filter(m => m.status === 'complete')
+        .filter(isCompleteThreadMessage)
         .map(msg => ({
             role: msg.role === 'user' ? 'user' : 'assistant',
             content: msg.content
@@ -1096,7 +1100,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
         ? selectChatHistory(chat, settings).slice()
         : [];
     const scratchpadMessages = (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0)
-        ? thread.messages.filter(m => m.status === 'complete').slice()
+        ? thread.messages.filter(isCompleteThreadMessage).slice()
         : [];
 
     function buildPromptData(chatMessages, previousScratchpadMessages) {

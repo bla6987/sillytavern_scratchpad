@@ -802,6 +802,7 @@ function createMessageElement(message) {
     const msgEl = document.createElement('div');
     msgEl.className = `sp-message sp-message-${message.role}`;
     msgEl.dataset.messageId = message.id;
+    const isComplete = !message.status || message.status === 'complete';
 
     if (message.status === 'failed') {
         msgEl.classList.add('sp-message-failed');
@@ -896,7 +897,7 @@ function createMessageElement(message) {
         swipeWrapper.appendChild(rightArrow);
 
         // Hide arrows when only 1 swipe and message is complete
-        if (!hasSwipes && message.status === 'complete' && message.content) {
+        if (!hasSwipes && isComplete && message.content) {
             leftArrow.classList.add('sp-swipe-hidden');
             rightArrow.classList.add('sp-swipe-hidden');
         }
@@ -966,7 +967,7 @@ function createMessageElement(message) {
     footerEl.appendChild(metaEl);
 
     // Actions for assistant messages
-    if (isAssistant && message.status === 'complete' && message.content) {
+    if (isAssistant && isComplete && message.content) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
 
@@ -1051,7 +1052,7 @@ function createMessageElement(message) {
         if (actionsEl.children.length > 0) {
             footerEl.appendChild(actionsEl);
         }
-    } else if (!isAssistant && message.status === 'complete' && message.content) {
+    } else if (!isAssistant && isComplete && message.content) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
 

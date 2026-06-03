@@ -979,6 +979,15 @@ svg.sp-message-model-icon {
     opacity: 1;
 }
 
+.sp-message-user .sp-message-actions {
+    opacity: 0.75;
+}
+
+.sp-message-user:hover .sp-message-actions,
+.sp-message-user.sp-message-editing .sp-message-actions {
+    opacity: 1;
+}
+
 /* TTS Speak Button */
 .sp-speak-btn {
     background: transparent;
