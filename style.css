@@ -850,6 +850,30 @@ body.sp-fullscreen-open {
     text-align: right;
 }
 
+.sp-message-timestamp-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.sp-message-timestamp-row .sp-message-time {
+    margin-top: 0;
+}
+
+.sp-message-model-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: 0 0 auto;
+    opacity: 0.75;
+}
+
+.sp-message-model-icon svg,
+svg.sp-message-model-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
 .sp-message-meta {
     display: flex;
     flex-direction: column;
@@ -864,6 +888,14 @@ body.sp-fullscreen-open {
 
 .sp-message-generation-time {
     font-size: 0.625rem;
+    color: var(--sp-text-muted);
+}
+
+.sp-message-generation-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
     color: var(--sp-text-muted);
 }
 

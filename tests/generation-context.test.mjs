@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
 
-import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, isChatActive, retryMessage } from '../src/generation.js';
+import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
 import { getConnectionProfiles, getSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
@@ -325,6 +325,11 @@ test('profile generation uses Connection Manager profile ID without slash profil
     assert.equal(result.success, true);
     assert.equal(result.response, 'Profile response');
     assert.equal(result.thinking, 'Profile reasoning');
+    assert.deepEqual(result.generationInfo, { api: 'openai', model: 'profile-model' });
+
+    const savedAssistant = getThread(thread.id).messages.find(msg => msg.role === 'assistant');
+    assert.equal(savedAssistant.extra.api, 'openai');
+    assert.equal(savedAssistant.extra.model, 'profile-model');
 
     const profileCall = calls.find(args => args[0] === 'profileSendRequest');
     assert.ok(profileCall, 'should send through Connection Manager');
@@ -646,8 +651,14 @@ test('retry recovers from stale failed message id after no-response API failures
     assert.equal(messages[1].content, 'Recovered response');
 });
 
-test('standard generation stores response timing on assistant messages', async () => {
-    setupHarness();
+test('standard generation stores response timing and model metadata on assistant messages', async () => {
+    setupHarness({
+        chatCompletionSettings: {
+            stream_openai: false,
+            chat_completion_source: 'openrouter',
+        },
+        getChatCompletionModel: () => 'test-model',
+    });
 
     const thread = createThread('Timing Thread');
     assert.ok(thread, 'thread should be created');
@@ -661,6 +672,34 @@ test('standard generation stores response timing on assistant messages', async (
     assert.ok(assistantMessage.gen_started);
     assert.ok(assistantMessage.gen_finished);
     assert.ok(Date.parse(assistantMessage.gen_started) <= Date.parse(assistantMessage.gen_finished));
+    assert.deepEqual(result.generationInfo, { api: 'openrouter', model: 'test-model' });
+    assert.equal(assistantMessage.extra.api, 'openrouter');
+    assert.equal(assistantMessage.extra.model, 'test-model');
+});
+
+test('swipe generation stores model metadata per swipe', async () => {
+    setupHarness({
+        chatCompletionSettings: {
+            stream_openai: false,
+            chat_completion_source: 'claude',
+        },
+        getChatCompletionModel: () => 'claude-test-model',
+    });
+
+    const thread = createThread('Swipe Model Thread');
+    const userMessage = addMessage(thread.id, 'user', 'Original question', 'complete', 0);
+    const assistantMessage = addMessage(thread.id, 'assistant', 'Original answer', 'complete', 0);
+    assert.ok(userMessage);
+    assert.ok(assistantMessage);
+
+    const result = await generateSwipe(thread.id, assistantMessage.id);
+    assert.equal(result.success, true);
+
+    const updatedAssistant = getThread(thread.id).messages.find(msg => msg.id === assistantMessage.id);
+    assert.equal(updatedAssistant.swipeExtra[1].api, 'claude');
+    assert.equal(updatedAssistant.swipeExtra[1].model, 'claude-test-model');
+    assert.equal(updatedAssistant.extra.api, 'claude');
+    assert.equal(updatedAssistant.extra.model, 'claude-test-model');
 });
 
 test('streaming parser emits CRLF-delimited SSE events before stream close', async () => {

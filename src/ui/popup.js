@@ -308,9 +308,76 @@ function formatGenerationDuration(genStarted, genFinished) {
     return `${seconds.toFixed(2)}s`;
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
+}
+
+function trimGenerationMetaValue(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function getGenerationExtra(result) {
+    const extra = result?.generationInfo || result?.extra || {};
+    const api = trimGenerationMetaValue(extra.api);
+    const model = trimGenerationMetaValue(extra.model);
+    return api || model ? { api, model } : null;
+}
+
+function formatGenerationModelTitle(extra) {
+    if (!extra) return '';
+    if (extra.api && extra.model) return `${extra.api} - ${extra.model}`;
+    return extra.model || extra.api || '';
+}
+
+function renderGenerationModelHtml(result) {
+    const extra = getGenerationExtra(result);
+    if (!extra) return '';
+
+    const title = formatGenerationModelTitle(extra);
+    if (extra.api) {
+        const iconName = extra.api.replace(/[^a-z0-9_-]/gi, '');
+        if (iconName) {
+            return `<img class="icon-svg timestamp-icon sp-message-model-icon" src="/img/${encodeURIComponent(iconName)}.svg" alt="${escapeHtml(title || extra.api)}" title="${escapeHtml(title)}">`;
+        }
+    }
+
+    return extra.model
+        ? `<span class="sp-message-generation-time" title="${escapeHtml(title)}">Model: ${escapeHtml(extra.model)}</span>`
+        : '';
+}
+
 function renderGenerationTimingHtml(result) {
     const duration = formatGenerationDuration(result?.gen_started, result?.gen_finished);
-    return duration ? `<div class="sp-message-generation-time">Generated in ${duration}</div>` : '';
+    const modelHtml = renderGenerationModelHtml(result);
+    const durationHtml = duration ? `<span class="sp-message-generation-time">Generated in ${escapeHtml(duration)}</span>` : '';
+    return modelHtml || durationHtml
+        ? `<div class="sp-message-generation-meta">${modelHtml}${durationHtml}</div>`
+        : '';
+}
+
+function injectModelIcons(container) {
+    container.querySelectorAll('img.sp-message-model-icon').forEach(image => {
+        const inject = () => {
+            try {
+                globalThis.SVGInject?.(image);
+            } catch {
+                // SillyTavern may not expose SVGInject in tests or older builds.
+            }
+        };
+
+        if (image.complete && image.naturalWidth > 0) {
+            inject();
+        } else {
+            image.addEventListener('load', inject, { once: true });
+        }
+        image.addEventListener('error', () => image.remove(), { once: true });
+    });
 }
 
 function renderReasoningHtml(thinking, reasoningMeta) {
@@ -416,6 +483,7 @@ async function generatePopupResponse(message) {
                     ${timingHtml}
                 </div>
             `;
+            injectModelIcons(contentEl);
             // Store response for TTS
             currentPopupResponse = result.response;
             playCompletionSound();
@@ -520,6 +588,7 @@ async function generatePopupRawResponse(message, options = {}) {
                     ${timingHtml}
                 </div>
             `;
+            injectModelIcons(contentEl);
             // Store response for TTS
             currentPopupResponse = result.response;
             playCompletionSound();

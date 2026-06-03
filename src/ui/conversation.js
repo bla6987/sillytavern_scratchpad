@@ -728,6 +728,46 @@ function formatGenerationDuration(genStarted, genFinished) {
     return `${seconds.toFixed(2)}s`;
 }
 
+function trimGenerationMetaValue(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function getGenerationExtra(message) {
+    const extra = message?.extra && typeof message.extra === 'object' ? message.extra : {};
+    const api = trimGenerationMetaValue(extra.api);
+    const model = trimGenerationMetaValue(extra.model);
+    return api || model ? { api, model } : null;
+}
+
+function formatGenerationModelTitle(extra) {
+    if (!extra) return '';
+    if (extra.api && extra.model) return `${extra.api} - ${extra.model}`;
+    return extra.model || extra.api || '';
+}
+
+function createGenerationModelIcon(extra) {
+    if (!extra?.api) return null;
+
+    const iconName = extra.api.replace(/[^a-z0-9_-]/gi, '');
+    if (!iconName) return null;
+
+    const title = formatGenerationModelTitle(extra);
+    const image = new Image();
+    image.className = 'icon-svg timestamp-icon sp-message-model-icon';
+    image.alt = title || extra.api;
+    image.title = title;
+    image.addEventListener('load', () => {
+        try {
+            globalThis.SVGInject?.(image);
+        } catch {
+            // SillyTavern may not expose SVGInject in tests or older builds.
+        }
+    }, { once: true });
+    image.addEventListener('error', () => image.remove(), { once: true });
+    image.src = `/img/${encodeURIComponent(iconName)}.svg`;
+    return image;
+}
+
 function appendReasoningSection(container, thinking, reasoningMeta) {
     const normalizedMeta = normalizeReasoningMeta(reasoningMeta, thinking);
 
@@ -894,10 +934,23 @@ function createMessageElement(message) {
     metaEl.className = 'sp-message-meta';
 
     // Timestamp
+    const generationExtra = isAssistant ? getGenerationExtra(message) : null;
+    const timestampRowEl = document.createElement('div');
+    timestampRowEl.className = 'sp-message-timestamp-row';
+    const modelIcon = createGenerationModelIcon(generationExtra);
+    if (modelIcon) {
+        timestampRowEl.appendChild(modelIcon);
+    }
+
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-message-time';
     timeEl.textContent = formatTimestamp(message.timestamp);
-    metaEl.appendChild(timeEl);
+    const generationTitle = formatGenerationModelTitle(generationExtra);
+    if (generationTitle) {
+        timeEl.title = generationTitle;
+    }
+    timestampRowEl.appendChild(timeEl);
+    metaEl.appendChild(timestampRowEl);
 
     if (isAssistant) {
         const generationDuration = formatGenerationDuration(message.gen_started, message.gen_finished);

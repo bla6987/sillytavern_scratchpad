@@ -8,6 +8,12 @@ import { resolveConnectionProfileId } from './connectionProfiles.js';
 
 const MODULE_NAME = 'scratchPad';
 
+function normalizeExtra(extra) {
+    if (!extra || typeof extra !== 'object') return null;
+    const normalized = { ...extra };
+    return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 /**
  * Default context settings for threads
  * These determine what context is sent to the AI
@@ -236,6 +242,7 @@ export function addMessage(threadId, role, content, status = 'complete', chatMes
     if (role === 'assistant') {
         message.thinking = null;
         message.reasoningMeta = createReasoningMeta();
+        message.extra = {};
     }
 
     thread.messages.push(message);
@@ -441,10 +448,25 @@ export function ensureSwipeFields(message) {
         message.swipeGenFinished = message.swipeGenFinished.slice(0, message.swipes.length);
     }
 
+    if (!Array.isArray(message.swipeExtra)) {
+        const legacyExtra = normalizeExtra(message.extra);
+        message.swipeExtra = message.swipes.map(() => legacyExtra ? { ...legacyExtra } : null);
+    }
+    while (message.swipeExtra.length < message.swipes.length) {
+        message.swipeExtra.push(null);
+    }
+    if (message.swipeExtra.length > message.swipes.length) {
+        message.swipeExtra = message.swipeExtra.slice(0, message.swipes.length);
+    }
+
     if (!Number.isInteger(message.swipeId)) {
         message.swipeId = 0;
     }
     message.swipeId = Math.max(0, Math.min(message.swipeId, message.swipes.length - 1));
+
+    if (!message.swipeExtra[message.swipeId] && normalizeExtra(message.extra)) {
+        message.swipeExtra[message.swipeId] = normalizeExtra(message.extra);
+    }
 
     if (!message.swipeThinking[message.swipeId] && message.thinking) {
         message.swipeThinking[message.swipeId] = message.thinking;
@@ -490,6 +512,15 @@ export function syncSwipeToMessage(message) {
     message.timestamp = message.swipeTimestamps?.[idx] ?? message.timestamp;
     message.gen_started = message.swipeGenStarted?.[idx] ?? message.gen_started ?? null;
     message.gen_finished = message.swipeGenFinished?.[idx] ?? message.gen_finished ?? null;
+
+    const activeExtra = normalizeExtra(message.swipeExtra?.[idx]);
+    const nextExtra = normalizeExtra(message.extra) || {};
+    delete nextExtra.api;
+    delete nextExtra.model;
+    if (activeExtra) {
+        Object.assign(nextExtra, activeExtra);
+    }
+    message.extra = nextExtra;
 }
 
 /**
@@ -500,9 +531,10 @@ export function syncSwipeToMessage(message) {
  * @param {string|null} thinking Thinking content
  * @param {string} timestamp ISO timestamp
  * @param {Object|null} reasoningMeta Reasoning metadata
+ * @param {Object|null} extra Generation metadata
  * @returns {Object|null} Updated message or null
  */
-export function addSwipe(threadId, messageId, content, thinking = null, timestamp = null, reasoningMeta = null) {
+export function addSwipe(threadId, messageId, content, thinking = null, timestamp = null, reasoningMeta = null, extra = null) {
     const message = getMessage(threadId, messageId);
     if (!message) return null;
 
@@ -515,6 +547,7 @@ export function addSwipe(threadId, messageId, content, thinking = null, timestam
     message.swipeTimestamps.push(ts);
     message.swipeGenStarted.push(null);
     message.swipeGenFinished.push(null);
+    message.swipeExtra.push(normalizeExtra(extra));
     message.swipeId = message.swipes.length - 1;
 
     syncSwipeToMessage(message);
@@ -573,6 +606,9 @@ export function deleteSwipe(threadId, messageId, index) {
     }
     if (Array.isArray(message.swipeGenFinished)) {
         message.swipeGenFinished.splice(index, 1);
+    }
+    if (Array.isArray(message.swipeExtra)) {
+        message.swipeExtra.splice(index, 1);
     }
     message.swipeTimestamps.splice(index, 1);
 

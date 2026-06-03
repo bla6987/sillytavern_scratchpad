@@ -390,6 +390,84 @@ function warnProfileFallback(resolution) {
     }
 }
 
+function trimGenerationString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeGenerationInfo(info) {
+    const api = trimGenerationString(info?.api);
+    const model = trimGenerationString(info?.model);
+    return api || model ? { api, model } : null;
+}
+
+function getTrackerGenerationInfo() {
+    try {
+        const tracker = globalThis.window?.['TokenUsageTracker'];
+        if (!tracker) return null;
+
+        return normalizeGenerationInfo({
+            api: tracker.getCurrentSourceId?.(),
+            model: tracker.getCurrentModelId?.(),
+        });
+    } catch {
+        return null;
+    }
+}
+
+function getActiveGenerationInfo(context = SillyTavern.getContext()) {
+    const trackerInfo = getTrackerGenerationInfo();
+    const mainApi = trimGenerationString(context?.mainApi);
+    const chatSettings = context?.chatCompletionSettings || {};
+    const textSettings = context?.textCompletionSettings || {};
+
+    switch (mainApi) {
+        case 'openai':
+            return normalizeGenerationInfo({
+                api: chatSettings.chat_completion_source || trackerInfo?.api || 'openai',
+                model: context?.getChatCompletionModel?.() || trackerInfo?.model,
+            });
+        case 'textgenerationwebui': {
+            const type = trimGenerationString(textSettings.type);
+            return normalizeGenerationInfo({
+                api: type === 'ooba' ? 'textgenerationwebui' : type || trackerInfo?.api || 'textgenerationwebui',
+                model: context?.onlineStatus || trackerInfo?.model,
+            });
+        }
+        case 'kobold':
+            return normalizeGenerationInfo({
+                api: 'kobold',
+                model: context?.onlineStatus || trackerInfo?.model,
+            });
+        default:
+            return normalizeGenerationInfo({
+                api: trackerInfo?.api || mainApi,
+                model: trackerInfo?.model,
+            });
+    }
+}
+
+function getProfileGenerationInfo(profile) {
+    return normalizeGenerationInfo({
+        api: profile?.api,
+        model: profile?.model,
+    });
+}
+
+function getGenerationInfoForResolution(resolution, context = SillyTavern.getContext()) {
+    if (resolution?.profileId) {
+        const profile = getConnectionProfile(resolution.profileId, context);
+        const profileInfo = getProfileGenerationInfo(profile);
+        if (profileInfo) return profileInfo;
+    }
+
+    return getActiveGenerationInfo(context);
+}
+
+function generationInfoToExtra(generationInfo) {
+    const normalized = normalizeGenerationInfo(generationInfo);
+    return normalized ? { ...normalized } : {};
+}
+
 function buildReasoningPayload(responseText, streamReasoning = null, resultReasoning = null, hiddenReasoning = null) {
     const parsed = parseThinkingFromText(responseText);
     const merged = mergeReasoningCandidates(streamReasoning, resultReasoning, parsed.reasoning, hiddenReasoning);
@@ -770,12 +848,13 @@ async function callStandardGeneration({ systemPrompt = '', prompt = '', messages
     }
 }
 
-async function runGenerationForThread({ threadId, promptData, onStream = null, useStandardGeneration = false, profileResolution = null }) {
+async function runGenerationForThread({ threadId, promptData, onStream = null, useStandardGeneration = false, profileResolution = null, generationInfo = null }) {
     const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     activeGenerationId = generationId;
 
     try {
         const resolution = profileResolution || getEffectiveProfileResolutionForThread(threadId);
+        const resolvedGenerationInfo = normalizeGenerationInfo(generationInfo) || getGenerationInfoForResolution(resolution);
         warnProfileFallback(resolution);
 
         const onToken = onStream ? (partialText) => onStream(partialText, false) : undefined;
@@ -797,6 +876,7 @@ async function runGenerationForThread({ threadId, promptData, onStream = null, u
                 });
 
         if (onStream) onStream(result.text, true);
+        result.generationInfo = resolvedGenerationInfo;
         return result;
     } finally {
         if (activeGenerationId === generationId) activeGenerationId = null;
@@ -877,6 +957,9 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
     assistantMessage.noContext = true;
     assistantMessage.gen_started = new Date().toISOString();
     assistantMessage.gen_finished = null;
+    const profileResolution = getEffectiveProfileResolutionForThread(threadId);
+    const generationInfo = getGenerationInfoForResolution(profileResolution);
+    assistantMessage.extra = generationInfoToExtra(generationInfo);
 
     await saveMetadata();
 
@@ -888,7 +971,10 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
             promptData: { systemPrompt, prompt: userPrompt },
             onStream,
             useStandardGeneration: globalSettings.useStandardGeneration,
+            profileResolution,
+            generationInfo,
         });
+        const resultGenerationInfo = result.generationInfo || generationInfo;
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -906,10 +992,11 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
                 noContext: true,
                 gen_started: assistantMessage.gen_started,
                 gen_finished: genFinished,
+                extra: generationInfoToExtra(resultGenerationInfo),
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished };
+            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
         }
 
         updateMessage(threadId, assistantMessage.id, {
@@ -919,6 +1006,7 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
             noContext: true,
             gen_started: assistantMessage.gen_started,
             gen_finished: genFinished,
+            extra: generationInfoToExtra(resultGenerationInfo),
             status: 'complete'
         });
 
@@ -928,7 +1016,7 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
 
         await saveMetadata();
 
-        return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished };
+        return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
@@ -952,6 +1040,7 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
             noContext: true,
             gen_started: assistantMessage.gen_started,
             gen_finished: genFinished,
+            extra: generationInfoToExtra(generationInfo),
             status: 'failed',
             error: error.message
         });
@@ -1224,6 +1313,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
     }
     assistantMessage.gen_started = new Date().toISOString();
     assistantMessage.gen_finished = null;
+    const profileResolution = getEffectiveProfileResolutionForThread(threadId);
+    const generationInfo = getGenerationInfoForResolution(profileResolution);
+    assistantMessage.extra = generationInfoToExtra(generationInfo);
 
     await saveMetadata();
 
@@ -1236,7 +1328,6 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         const promptThread = excludeMessagesFromThread(currentThread, [userMessage.id, assistantMessage.id]);
         const isFirstMessage = !currentThread.titled;
         const globalSettings = getSettings();
-        const profileResolution = getEffectiveProfileResolutionForThread(threadId);
         const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage, profileResolution.profileId);
         const result = await runGenerationForThread({
             threadId,
@@ -1244,7 +1335,9 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             onStream,
             useStandardGeneration: globalSettings.useStandardGeneration,
             profileResolution,
+            generationInfo,
         });
+        const resultGenerationInfo = result.generationInfo || generationInfo;
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1272,10 +1365,11 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
                 reasoningMeta,
                 gen_started: assistantMessage.gen_started,
                 gen_finished: genFinished,
+                extra: generationInfoToExtra(resultGenerationInfo),
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished };
+            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
         }
 
         // Update assistant message with content and thinking
@@ -1285,12 +1379,13 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             reasoningMeta,
             gen_started: assistantMessage.gen_started,
             gen_finished: genFinished,
+            extra: generationInfoToExtra(resultGenerationInfo),
             status: 'complete'
         });
 
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
@@ -1313,6 +1408,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             content: '',
             gen_started: assistantMessage.gen_started,
             gen_finished: genFinished,
+            extra: generationInfoToExtra(generationInfo),
             status: 'failed',
             error: error.message
         });
@@ -1356,6 +1452,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
 
     const globalSettings = getSettings();
     const profileResolution = getEffectiveProfileResolutionForThread(threadId);
+    const generationInfo = getGenerationInfoForResolution(profileResolution);
 
     // Build prompt / context for swipe
     let swipeCtx = null;
@@ -1372,13 +1469,15 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     // Initialize swipe fields and add empty swipe
     ensureSwipeFields(message);
     const previousSwipeId = message.swipeId;
-    addSwipe(threadId, messageId, '', null, null, null);
+    addSwipe(threadId, messageId, '', null, null, null, generationInfoToExtra(generationInfo));
     const newSwipeIndex = message.swipeId;
     const genStarted = new Date().toISOString();
     message.swipeGenStarted[newSwipeIndex] = genStarted;
     message.swipeGenFinished[newSwipeIndex] = null;
+    message.swipeExtra[newSwipeIndex] = generationInfoToExtra(generationInfo);
     message.gen_started = genStarted;
     message.gen_finished = null;
+    message.extra = generationInfoToExtra(generationInfo);
     message.status = 'pending';
     await saveMetadata();
 
@@ -1390,7 +1489,9 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             onStream,
             useStandardGeneration: globalSettings.useStandardGeneration,
             profileResolution,
+            generationInfo,
         });
+        const resultGenerationInfo = result.generationInfo || generationInfo;
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1413,7 +1514,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             message.status = 'complete';
             syncSwipeToMessage(message);
             await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '' };
+            return { success: false, cancelled: true, response: responseText || '', generationInfo: resultGenerationInfo };
         }
 
         // Update the swipe content
@@ -1423,11 +1524,12 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         message.swipeTimestamps[newSwipeIndex] = new Date().toISOString();
         message.swipeGenStarted[newSwipeIndex] = genStarted;
         message.swipeGenFinished[newSwipeIndex] = genFinished;
+        message.swipeExtra[newSwipeIndex] = generationInfoToExtra(resultGenerationInfo);
         message.status = 'complete';
         syncSwipeToMessage(message);
         await saveMetadata();
 
-        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex, gen_started: genStarted, gen_finished: genFinished };
+        return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex, gen_started: genStarted, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
