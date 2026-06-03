@@ -5,7 +5,7 @@
 
 import { createThread, saveMetadata, getThread } from '../storage.js';
 import { generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse, parseThinking, cancelGeneration } from '../generation.js';
-import { renderMarkdown, createButton, createSpinner, showToast, Icons, playCompletionSound } from './components.js';
+import { renderMarkdown, createStreamingRenderer, createButton, createSpinner, showToast, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
@@ -417,40 +417,39 @@ async function generatePopupResponse(message) {
     updatePopupActionButtons(true);
 
     try {
-        let _lastPopupRender = 0;
-        let _pendingPopupUpdate = null;
         let _latestPopupResponse = '';
+        const getPopupStreamEl = () => {
+            let el = contentEl.querySelector('.sp-popup-response');
+            if (!el) {
+                contentEl.innerHTML = '<div class="sp-popup-response"></div>';
+                el = contentEl.querySelector('.sp-popup-response');
+            }
+            return el;
+        };
+        const popupRenderer = createStreamingRenderer(
+            getPopupStreamEl,
+            () => parseThinking(_latestPopupResponse).cleanedResponse,
+            () => { contentEl.scrollTop = contentEl.scrollHeight; }
+        );
         const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
             _latestPopupResponse = partialResponse;
 
-            const renderPopupContent = (responseText = _latestPopupResponse) => {
-                const { cleanedResponse } = parseThinking(responseText);
+            if (isComplete) {
+                // Render the final markdown once, after streaming completes
+                popupRenderer.cancel();
+                const { cleanedResponse } = parseThinking(partialResponse);
                 contentEl.innerHTML = `
                     <div class="sp-popup-response">
                         ${renderMarkdown(cleanedResponse)}
                     </div>
                 `;
                 contentEl.scrollTop = contentEl.scrollHeight;
-            };
-
-            if (isComplete) {
-                clearTimeout(_pendingPopupUpdate);
-                renderPopupContent(partialResponse);
             } else {
-                const now = performance.now();
-                if (now - _lastPopupRender >= 100) {
-                    _lastPopupRender = now;
-                    clearTimeout(_pendingPopupUpdate);
-                    renderPopupContent();
-                } else if (!_pendingPopupUpdate) {
-                    _pendingPopupUpdate = setTimeout(() => {
-                        _pendingPopupUpdate = null;
-                        _lastPopupRender = performance.now();
-                        renderPopupContent();
-                    }, 100 - (now - _lastPopupRender));
-                }
+                // Stream cheap plain text; markdown is rendered once on completion
+                popupRenderer.schedule();
             }
         });
+        popupRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
             const errorDiv = document.createElement('div');
@@ -528,35 +527,27 @@ async function generatePopupRawResponse(message, options = {}) {
     updatePopupActionButtons(true);
 
     try {
-        let _lastRawRender = 0;
-        let _pendingRawUpdate = null;
         let _latestRawResponse = '';
-        const result = await generateResponse(message, currentPopupThreadId, (partialResponse) => {
-            _latestRawResponse = partialResponse;
-
-            const renderRawContent = (responseText = _latestRawResponse) => {
-                const { cleanedResponse } = parseThinking(responseText);
-                contentEl.innerHTML = `
-                    <div class="sp-popup-response">
-                        ${renderMarkdown(cleanedResponse)}
-                    </div>
-                `;
-                contentEl.scrollTop = contentEl.scrollHeight;
-            };
-
-            const now = performance.now();
-            if (now - _lastRawRender >= 100) {
-                _lastRawRender = now;
-                clearTimeout(_pendingRawUpdate);
-                renderRawContent();
-            } else if (!_pendingRawUpdate) {
-                _pendingRawUpdate = setTimeout(() => {
-                    _pendingRawUpdate = null;
-                    _lastRawRender = performance.now();
-                    renderRawContent();
-                }, 100 - (now - _lastRawRender));
+        const getRawStreamEl = () => {
+            let el = contentEl.querySelector('.sp-popup-response');
+            if (!el) {
+                contentEl.innerHTML = '<div class="sp-popup-response"></div>';
+                el = contentEl.querySelector('.sp-popup-response');
             }
+            return el;
+        };
+        const rawRenderer = createStreamingRenderer(
+            getRawStreamEl,
+            () => parseThinking(_latestRawResponse).cleanedResponse,
+            () => { contentEl.scrollTop = contentEl.scrollHeight; }
+        );
+        const result = await generateResponse(message, currentPopupThreadId, (partialResponse) => {
+            // Stream cheap plain text; final markdown is rendered below once the
+            // response completes.
+            _latestRawResponse = partialResponse;
+            rawRenderer.schedule();
         });
+        rawRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
             const errorDiv = document.createElement('div');

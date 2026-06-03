@@ -1,2 +1,4 @@
 This project is synced with GitHub so please make sure all your changes are pushed to GitHub. Assume the extension is stored in the following directory on the device that pulls from github:
 public/scripts/extensions/third-party/sillytavern_scratchpad 
+
+- Sillytavern source code is available at /Users/macbookpro/projects/source_projects/SillyTavern

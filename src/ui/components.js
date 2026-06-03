@@ -40,6 +40,61 @@ export function renderMarkdown(text) {
 }
 
 /**
+ * Create a throttled streaming renderer for live AI responses.
+ *
+ * During streaming the response is written as plain text — no markdown parsing
+ * and no sanitization — appending only the newly-arrived delta whenever the
+ * text grows as a pure extension. Updates are coalesced with
+ * requestAnimationFrame so the main thread never blocks re-parsing the whole
+ * buffer on every chunk (the previous approach was O(n²) over the response and
+ * froze the tab on long replies). Call schedule() on each streamed chunk, then
+ * render the final markdown once, separately, when the response completes.
+ *
+ * @param {() => (HTMLElement|null)} getElement Returns the live target element;
+ *        it may be re-created or detached between chunks.
+ * @param {() => string} getText Returns the current cleaned text to display.
+ *        Invoked at most once per frame, so any per-call work (e.g. stripping
+ *        reasoning tags) stays off the per-chunk hot path.
+ * @param {(el: HTMLElement) => void} [onAfterRender] Optional callback run after
+ *        each plain-text update (e.g. to scroll).
+ * @returns {{ schedule: () => void, cancel: () => void }}
+ */
+export function createStreamingRenderer(getElement, getText, onAfterRender) {
+    let rafId = null;
+    let lastText = '';
+    let textNode = null;
+
+    const flush = () => {
+        rafId = null;
+        const el = getElement();
+        if (!el || !el.isConnected) return;
+        const text = getText();
+        if (textNode && textNode.parentNode === el && text.startsWith(lastText)) {
+            if (text.length > lastText.length) {
+                textNode.appendData(text.slice(lastText.length));
+            }
+        } else {
+            el.textContent = text;
+            textNode = el.firstChild;
+        }
+        lastText = text;
+        if (onAfterRender) onAfterRender(el);
+    };
+
+    return {
+        schedule() {
+            if (rafId === null) rafId = requestAnimationFrame(flush);
+        },
+        cancel() {
+            if (rafId !== null) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+        },
+    };
+}
+
+/**
  * Format a timestamp for display
  * @param {string} isoTimestamp ISO timestamp string
  * @returns {string} Formatted time string

@@ -4,7 +4,7 @@
  */
 
 import { getSettings, isGlobalApiProfileForced } from './settings.js';
-import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from './storage.js';
+import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage, getTimestamp } from './storage.js';
 import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProfileId } from './connectionProfiles.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
@@ -1282,34 +1282,15 @@ function checkAndResetCancellation() {
     return wasCancelled;
 }
 
-/**
- * Generate a scratch pad response
- * @param {string} userQuestion User's question
- * @param {string} threadId Thread ID
- * @param {Function} onStream Callback for streaming updates
- * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, error }
- */
-export async function generateScratchPadResponse(userQuestion, threadId, onStream = null) {
-    const context = SillyTavern.getContext();
+async function generateAssistantForUserMessage(threadId, userMessage, isFirstMessage, onStream = null) {
+    const chatIndexAtQuestion = userMessage.chatMessageIndex ?? (SillyTavern.getContext().chat ? SillyTavern.getContext().chat.length : null);
 
-    const thread = getThread(threadId);
-    if (!thread) {
-        return { success: false, error: 'Thread not found' };
-    }
-
-    // Capture chat index at question time for branch filtering
-    const chatIndexAtQuestion = context.chat ? context.chat.length : null;
-
-    // Add user message
-    const userMessage = addMessage(threadId, 'user', userQuestion, 'complete', chatIndexAtQuestion);
-    if (!userMessage) {
-        return { success: false, error: 'Failed to add user message' };
-    }
-
-    // Add pending assistant message
     const assistantMessage = addMessage(threadId, 'assistant', '', 'pending', chatIndexAtQuestion);
     if (!assistantMessage) {
         return { success: false, error: 'Failed to add assistant message' };
+    }
+    if (userMessage.noContext) {
+        assistantMessage.noContext = true;
     }
     assistantMessage.gen_started = new Date().toISOString();
     assistantMessage.gen_finished = null;
@@ -1326,9 +1307,8 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             return { success: false, error: 'Thread not found' };
         }
         const promptThread = excludeMessagesFromThread(currentThread, [userMessage.id, assistantMessage.id]);
-        const isFirstMessage = !currentThread.titled;
         const globalSettings = getSettings();
-        const promptData = await buildPrompt(userQuestion, promptThread, isFirstMessage, profileResolution.profileId);
+        const promptData = await buildPrompt(userMessage.content, promptThread, isFirstMessage, profileResolution.profileId);
         const result = await runGenerationForThread({
             threadId,
             promptData,
@@ -1353,7 +1333,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
             if (title) {
                 updateThread(threadId, { name: title, titled: true });
             } else {
-                updateThread(threadId, { name: generateFallbackTitle(userQuestion), titled: true });
+                updateThread(threadId, { name: generateFallbackTitle(userMessage.content), titled: true });
             }
         }
 
@@ -1417,6 +1397,72 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
 
         return { success: false, error: error.message };
     }
+}
+
+/**
+ * Generate a scratch pad response
+ * @param {string} userQuestion User's question
+ * @param {string} threadId Thread ID
+ * @param {Function} onStream Callback for streaming updates
+ * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, error }
+ */
+export async function generateScratchPadResponse(userQuestion, threadId, onStream = null) {
+    const context = SillyTavern.getContext();
+
+    const thread = getThread(threadId);
+    if (!thread) {
+        return { success: false, error: 'Thread not found' };
+    }
+
+    // Capture chat index at question time for branch filtering
+    const chatIndexAtQuestion = context.chat ? context.chat.length : null;
+
+    // Add user message
+    const userMessage = addMessage(threadId, 'user', userQuestion, 'complete', chatIndexAtQuestion);
+    if (!userMessage) {
+        return { success: false, error: 'Failed to add user message' };
+    }
+
+    return await generateAssistantForUserMessage(threadId, userMessage, !thread.titled, onStream);
+}
+
+/**
+ * Edit a user message, discard later thread context, and regenerate the next response.
+ * @param {string} threadId Thread ID
+ * @param {string} messageId User message ID
+ * @param {string} newContent Edited user message content
+ * @param {Function} onStream Callback for streaming updates
+ * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, error }
+ */
+export async function editUserMessageAndRegenerate(threadId, messageId, newContent, onStream = null) {
+    const thread = getThread(threadId);
+    if (!thread) {
+        return { success: false, error: 'Thread not found' };
+    }
+
+    const messageIndex = thread.messages.findIndex(m => m.id === messageId);
+    if (messageIndex === -1) {
+        return { success: false, error: 'Message not found' };
+    }
+
+    const userMessage = thread.messages[messageIndex];
+    if (userMessage.role !== 'user') {
+        return { success: false, error: 'Only user messages can be edited' };
+    }
+
+    const editedContent = String(newContent || '').trim();
+    if (!editedContent) {
+        return { success: false, error: 'Message cannot be empty' };
+    }
+
+    const editedAt = getTimestamp();
+    userMessage.content = editedContent;
+    userMessage.editedAt = editedAt;
+    userMessage.status = 'complete';
+    thread.messages.splice(messageIndex + 1);
+    thread.updatedAt = editedAt;
+
+    return await generateAssistantForUserMessage(threadId, userMessage, !thread.titled && messageIndex === 0, onStream);
 }
 
 /**

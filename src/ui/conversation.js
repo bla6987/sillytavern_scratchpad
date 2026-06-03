@@ -3,8 +3,8 @@
  */
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
-import { generateScratchPadResponse, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
-import { formatTimestamp, renderMarkdown, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
+import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { formatTimestamp, renderMarkdown, createStreamingRenderer, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
@@ -863,6 +863,7 @@ function createMessageElement(message) {
 
         // Render main content
         const mainContent = document.createElement('div');
+        mainContent.className = 'sp-message-main-content';
         mainContent.innerHTML = renderMarkdown(message.content);
         contentEl.appendChild(mainContent);
     }
@@ -1050,11 +1051,203 @@ function createMessageElement(message) {
         if (actionsEl.children.length > 0) {
             footerEl.appendChild(actionsEl);
         }
+    } else if (!isAssistant && message.status === 'complete' && message.content) {
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'sp-message-actions';
+
+        const editBtn = createButton({
+            icon: Icons.edit,
+            className: 'sp-action-btn',
+            ariaLabel: 'Edit message',
+            onClick: () => beginEditUserMessage(message.id)
+        });
+        actionsEl.appendChild(editBtn);
+        footerEl.appendChild(actionsEl);
     }
 
     msgEl.appendChild(footerEl);
 
     return msgEl;
+}
+
+/**
+ * Replace a user message with an inline editor.
+ * @param {string} messageId Message ID
+ */
+function beginEditUserMessage(messageId) {
+    if (isGenerating() || !currentThreadId) return;
+
+    const message = getMessage(currentThreadId, messageId);
+    if (!message || message.role !== 'user') return;
+
+    const msgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+    const contentEl = msgEl?.querySelector('.sp-message-content');
+    if (!msgEl || !contentEl) return;
+
+    msgEl.classList.add('sp-message-editing');
+    contentEl.innerHTML = '';
+
+    const editorEl = document.createElement('div');
+    editorEl.className = 'sp-message-edit-form';
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'sp-message-edit-input';
+    textarea.value = message.content || '';
+    textarea.rows = Math.min(8, Math.max(3, textarea.value.split('\n').length));
+
+    const resizeEditor = () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = `${textarea.scrollHeight}px`;
+    };
+    textarea.addEventListener('input', resizeEditor);
+
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'sp-message-edit-actions';
+
+    const saveBtn = createButton({
+        icon: Icons.send,
+        text: 'Save',
+        className: 'sp-edit-save-btn',
+        onClick: () => submitEditedUserMessage(messageId, textarea.value)
+    });
+
+    const cancelBtn = createButton({
+        icon: Icons.close,
+        text: 'Cancel',
+        className: 'sp-edit-cancel-btn',
+        onClick: () => cancelEditUserMessage(messageId)
+    });
+
+    textarea.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            e.preventDefault();
+            submitEditedUserMessage(messageId, textarea.value);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEditUserMessage(messageId);
+        }
+    });
+
+    actionsEl.appendChild(saveBtn);
+    actionsEl.appendChild(cancelBtn);
+    editorEl.appendChild(textarea);
+    editorEl.appendChild(actionsEl);
+    contentEl.appendChild(editorEl);
+
+    requestAnimationFrame(() => {
+        resizeEditor();
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+}
+
+/**
+ * Restore a user message from its inline editor.
+ * @param {string} messageId Message ID
+ */
+function cancelEditUserMessage(messageId) {
+    if (!currentThreadId) return;
+
+    const message = getMessage(currentThreadId, messageId);
+    const msgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+    if (!message || !msgEl) return;
+
+    msgEl.replaceWith(createMessageElement(message));
+}
+
+/**
+ * Save an edited user message and regenerate the assistant response from there.
+ * @param {string} messageId Message ID
+ * @param {string} editedContent Edited content
+ */
+async function submitEditedUserMessage(messageId, editedContent) {
+    if (isGenerating() || !currentThreadId) return;
+
+    const message = getMessage(currentThreadId, messageId);
+    if (!message || message.role !== 'user') return;
+
+    const trimmedContent = String(editedContent || '').trim();
+    if (!trimmedContent) {
+        showToast('Message cannot be empty', 'warning');
+        return;
+    }
+
+    if (trimmedContent === String(message.content || '').trim()) {
+        cancelEditUserMessage(messageId);
+        return;
+    }
+
+    const sendBtn = document.getElementById('sp-send-btn');
+    const textarea = document.getElementById('sp-message-input');
+
+    const generationId = startGeneration();
+    if (sendBtn) sendBtn.disabled = true;
+    if (textarea) {
+        textarea.disabled = true;
+        textarea.placeholder = 'Generating...';
+    }
+    showGeneratingIndicator(true, () => {
+        cancelGeneration();
+        showToast('Generation cancelled', 'info');
+    });
+
+    let streamingMsgEl = null;
+
+    try {
+        let _latestEditResponse = '';
+        const editRenderer = createStreamingRenderer(
+            () => streamingMsgEl,
+            () => parseThinking(_latestEditResponse).cleanedResponse,
+            () => scrollToBottom()
+        );
+        const result = await editUserMessageAndRegenerate(currentThreadId, messageId, trimmedContent, (partialResponse, isComplete) => {
+            _latestEditResponse = partialResponse;
+
+            if (!streamingMsgEl) {
+                refreshConversation();
+                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+            }
+
+            if (streamingMsgEl && streamingMsgEl.isConnected) {
+                if (isComplete) {
+                    editRenderer.cancel();
+                    streamingMsgEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
+                    scrollToBottom();
+                } else {
+                    editRenderer.schedule();
+                }
+            }
+        });
+        editRenderer.cancel();
+
+        if (!result.success && !result.cancelled) {
+            showToast(`Edit failed: ${result.error}`, 'error');
+        }
+
+        if (result.success) {
+            playCompletionSound();
+        }
+
+        refreshConversation();
+        scrollToBottom();
+
+        const thread = getThread(currentThreadId);
+        if (thread) {
+            const titleEl = document.querySelector('.sp-thread-title');
+            if (titleEl) {
+                titleEl.textContent = thread.name;
+            }
+        }
+    } finally {
+        endGeneration(generationId);
+        if (sendBtn) sendBtn.disabled = false;
+        if (textarea) {
+            textarea.disabled = false;
+            textarea.placeholder = 'Ask a question...';
+            textarea.focus();
+        }
+        showGeneratingIndicator(false);
+    }
 }
 
 /**
@@ -1141,17 +1334,14 @@ async function handleGenerateSwipe(messageId) {
     let streamingContentEl = null;
 
     try {
-        let _lastSwipeRender = 0;
-        let _pendingSwipeUpdate = null;
         let _latestSwipeResponse = '';
+        const swipeRenderer = createStreamingRenderer(
+            () => streamingContentEl,
+            () => parseThinking(_latestSwipeResponse).cleanedResponse,
+            () => scrollToBottom()
+        );
         const result = await generateSwipe(currentThreadId, messageId, (partialResponse, isComplete) => {
             _latestSwipeResponse = partialResponse;
-
-            const renderSwipeContent = (responseText = _latestSwipeResponse) => {
-                const { cleanedResponse } = parseThinking(responseText);
-                streamingContentEl.innerHTML = renderMarkdown(cleanedResponse);
-                scrollToBottom();
-            };
 
             if (!streamingContentEl) {
                 // Refresh to show the pending state
@@ -1164,24 +1354,17 @@ async function handleGenerateSwipe(messageId) {
 
             if (streamingContentEl && streamingContentEl.isConnected) {
                 if (isComplete) {
-                    clearTimeout(_pendingSwipeUpdate);
-                    renderSwipeContent(partialResponse);
+                    // Render the final markdown once, after streaming completes
+                    swipeRenderer.cancel();
+                    streamingContentEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
+                    scrollToBottom();
                 } else {
-                    const now = performance.now();
-                    if (now - _lastSwipeRender >= 100) {
-                        _lastSwipeRender = now;
-                        clearTimeout(_pendingSwipeUpdate);
-                        renderSwipeContent();
-                    } else if (!_pendingSwipeUpdate) {
-                        _pendingSwipeUpdate = setTimeout(() => {
-                            _pendingSwipeUpdate = null;
-                            _lastSwipeRender = performance.now();
-                            renderSwipeContent();
-                        }, 100 - (now - _lastSwipeRender));
-                    }
+                    // Stream cheap plain text; markdown is rendered once on completion
+                    swipeRenderer.schedule();
                 }
             }
         });
+        swipeRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
             showToast(`Swipe generation failed: ${result.error}`, 'error');
@@ -1284,17 +1467,14 @@ async function handleSendMessage() {
         // Generate response with streaming
         let streamingMsgEl = null;
 
-        let _lastStreamRender = 0;
-        let _pendingStreamUpdate = null;
         let _latestStreamResponse = '';
+        const streamRenderer = createStreamingRenderer(
+            () => streamingMsgEl,
+            () => parseThinking(_latestStreamResponse).cleanedResponse,
+            () => scrollToBottom()
+        );
         const result = await generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
             _latestStreamResponse = partialResponse;
-
-            const renderStreamContent = (responseText = _latestStreamResponse) => {
-                const { cleanedResponse } = parseThinking(responseText);
-                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                scrollToBottom();
-            };
 
             // Update streaming message element
             if (!streamingMsgEl) {
@@ -1305,27 +1485,17 @@ async function handleSendMessage() {
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
                 if (isComplete) {
-                    // Always render final state immediately
-                    clearTimeout(_pendingStreamUpdate);
-                    renderStreamContent(partialResponse);
+                    // Render the final markdown once, after streaming completes
+                    streamRenderer.cancel();
+                    streamingMsgEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
+                    scrollToBottom();
                 } else {
-                    // Throttle: render at most every 100ms during streaming
-                    const now = performance.now();
-                    if (now - _lastStreamRender >= 100) {
-                        _lastStreamRender = now;
-                        clearTimeout(_pendingStreamUpdate);
-                        renderStreamContent();
-                    } else if (!_pendingStreamUpdate) {
-                        // Schedule a trailing update to ensure we don't miss the latest content
-                        _pendingStreamUpdate = setTimeout(() => {
-                            _pendingStreamUpdate = null;
-                            _lastStreamRender = performance.now();
-                            renderStreamContent();
-                        }, 100 - (now - _lastStreamRender));
-                    }
+                    // Stream cheap plain text; markdown is rendered once on completion
+                    streamRenderer.schedule();
                 }
             }
         });
+        streamRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
             showToast(`Failed to send message: ${result.error}`, 'error');
@@ -1393,17 +1563,14 @@ async function handleRetry(messageId) {
     let streamingMsgEl = null;
 
     try {
-        let _lastRetryRender = 0;
-        let _pendingRetryUpdate = null;
         let _latestRetryResponse = '';
+        const retryRenderer = createStreamingRenderer(
+            () => streamingMsgEl,
+            () => parseThinking(_latestRetryResponse).cleanedResponse,
+            () => scrollToBottom()
+        );
         const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
             _latestRetryResponse = partialResponse;
-
-            const renderRetryContent = (responseText = _latestRetryResponse) => {
-                const { cleanedResponse } = parseThinking(responseText);
-                streamingMsgEl.innerHTML = renderMarkdown(cleanedResponse);
-                scrollToBottom();
-            };
 
             // On first callback, refresh to show new pending message
             if (!streamingMsgEl) {
@@ -1413,24 +1580,17 @@ async function handleRetry(messageId) {
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
                 if (isComplete) {
-                    clearTimeout(_pendingRetryUpdate);
-                    renderRetryContent(partialResponse);
+                    // Render the final markdown once, after streaming completes
+                    retryRenderer.cancel();
+                    streamingMsgEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
+                    scrollToBottom();
                 } else {
-                    const now = performance.now();
-                    if (now - _lastRetryRender >= 100) {
-                        _lastRetryRender = now;
-                        clearTimeout(_pendingRetryUpdate);
-                        renderRetryContent();
-                    } else if (!_pendingRetryUpdate) {
-                        _pendingRetryUpdate = setTimeout(() => {
-                            _pendingRetryUpdate = null;
-                            _lastRetryRender = performance.now();
-                            renderRetryContent();
-                        }, 100 - (now - _lastRetryRender));
-                    }
+                    // Stream cheap plain text; markdown is rendered once on completion
+                    retryRenderer.schedule();
                 }
             }
         });
+        retryRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
             showToast(`Retry failed: ${result.error}`, 'error');

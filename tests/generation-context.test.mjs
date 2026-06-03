@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
 
-import { GENERAL_ASK_SYSTEM_PROMPT, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
+import { GENERAL_ASK_SYSTEM_PROMPT, editUserMessageAndRegenerate, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
 import { getConnectionProfiles, getSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
@@ -649,6 +649,49 @@ test('retry recovers from stale failed message id after no-response API failures
     assert.equal(messages[1].role, 'assistant');
     assert.equal(messages[1].status, 'complete');
     assert.equal(messages[1].content, 'Recovered response');
+});
+
+test('editing a user message truncates later messages and regenerates from prior context', async () => {
+    const { calls } = setupHarness();
+
+    const thread = createThread('Edit Thread');
+    assert.ok(thread, 'thread should be created');
+
+    const olderUser = addMessage(thread.id, 'user', 'Older question', 'complete', 0);
+    const olderAssistant = addMessage(thread.id, 'assistant', 'Older answer', 'complete', 0);
+    const editedUser = addMessage(thread.id, 'user', 'Original middle question', 'complete', 0);
+    addMessage(thread.id, 'assistant', 'Stale middle answer', 'complete', 0);
+    addMessage(thread.id, 'user', 'Later question', 'complete', 0);
+    addMessage(thread.id, 'assistant', 'Later answer', 'complete', 0);
+    assert.ok(olderUser);
+    assert.ok(olderAssistant);
+    assert.ok(editedUser);
+
+    const result = await editUserMessageAndRegenerate(thread.id, editedUser.id, 'Edited middle question');
+    assert.equal(result.success, true);
+
+    const messages = getThread(thread.id).messages;
+    assert.equal(messages.length, 4);
+    assert.equal(messages[0].id, olderUser.id);
+    assert.equal(messages[1].id, olderAssistant.id);
+    assert.equal(messages[2].id, editedUser.id);
+    assert.equal(messages[2].content, 'Edited middle question');
+    assert.ok(messages[2].editedAt, 'edited user message should record editedAt');
+    assert.equal(messages[3].role, 'assistant');
+    assert.equal(messages[3].content, 'Assistant response');
+
+    const rawCall = calls.find(args => args[0] === 'generateRaw');
+    assert.ok(rawCall, 'should generate through generateRaw');
+    const rawArgs = rawCall[1];
+
+    assert.match(rawArgs.prompt, /Older question/);
+    assert.match(rawArgs.prompt, /Older answer/);
+    assert.match(rawArgs.prompt, /Edited middle question/);
+    assert.equal(rawArgs.prompt.includes('Original middle question'), false);
+    assert.equal(rawArgs.prompt.includes('Stale middle answer'), false);
+    assert.equal(rawArgs.prompt.includes('Later question'), false);
+    assert.equal(rawArgs.prompt.includes('Later answer'), false);
+    assert.equal((rawArgs.prompt.match(/Edited middle question/g) || []).length, 1);
 });
 
 test('standard generation stores response timing and model metadata on assistant messages', async () => {
