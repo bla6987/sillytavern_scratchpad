@@ -15,6 +15,7 @@ let isPopupGenerating = false;
 let popupElement = null;
 let currentPopupThreadId = null;
 let currentPopupResponse = null;
+let transferredPopupThreadId = null;
 
 /**
  * Show the quick popup with a new thread and generate response
@@ -253,12 +254,11 @@ function createPopupElement() {
     });
     dismissBtn.id = 'sp-popup-dismiss-btn';
 
-    // Initially show cancel, hide open and speak (will swap when generation completes)
+    // Opening the response in the full panel is available while generation continues.
     actions.appendChild(cancelBtn);
     actions.appendChild(openBtn);
     actions.appendChild(speakBtn);
     actions.appendChild(dismissBtn);
-    openBtn.style.display = 'none';
     sheet.appendChild(actions);
 
     popupElement.appendChild(sheet);
@@ -284,7 +284,7 @@ function updatePopupActionButtons(isGenerating, hasResponse = false) {
     const speakBtn = document.getElementById('sp-popup-speak-btn');
 
     if (cancelBtn) cancelBtn.style.display = isGenerating ? '' : 'none';
-    if (openBtn) openBtn.style.display = isGenerating ? 'none' : '';
+    if (openBtn) openBtn.style.display = '';
     if (speakBtn) {
         speakBtn.style.display = (!isGenerating && hasResponse && isTTSAvailable()) ? '' : 'none';
     }
@@ -409,8 +409,9 @@ function renderReasoningHtml(thinking, reasoningMeta) {
 async function generatePopupResponse(message) {
     const contentEl = document.getElementById('sp-popup-content');
     const titleEl = document.getElementById('sp-popup-title');
+    const threadId = currentPopupThreadId;
 
-    if (!contentEl || !currentPopupThreadId) return;
+    if (!contentEl || !threadId) return;
 
     isPopupGenerating = true;
     currentPopupResponse = null;
@@ -431,8 +432,9 @@ async function generatePopupResponse(message) {
             () => parseThinking(_latestPopupResponse).cleanedResponse,
             () => { contentEl.scrollTop = contentEl.scrollHeight; }
         );
-        const result = await generateScratchPadResponse(message, currentPopupThreadId, (partialResponse, isComplete) => {
+        const result = await generateScratchPadResponse(message, threadId, (partialResponse, isComplete) => {
             _latestPopupResponse = partialResponse;
+            updateTransferredGeneration(threadId, partialResponse, isComplete);
 
             if (isComplete) {
                 // Render the final markdown once, after streaming completes
@@ -489,7 +491,7 @@ async function generatePopupResponse(message) {
         }
 
         // Update title with thread name
-        const thread = getThread(currentPopupThreadId);
+        const thread = getThread(threadId);
         if (thread && titleEl) {
             titleEl.textContent = thread.name;
         }
@@ -511,16 +513,18 @@ async function generatePopupResponse(message) {
     } finally {
         isPopupGenerating = false;
         updatePopupActionButtons(false, currentPopupResponse !== null);
+        finishTransferredGeneration(threadId);
     }
 }
 
 async function generatePopupRawResponse(message, options = {}) {
     const contentEl = document.getElementById('sp-popup-content');
     const titleEl = document.getElementById('sp-popup-title');
+    const threadId = currentPopupThreadId;
     const generateResponse = options.generateResponse || generateRawPromptResponse;
     const errorLabel = options.errorLabel || 'Raw prompt';
 
-    if (!contentEl || !currentPopupThreadId) return;
+    if (!contentEl || !threadId) return;
 
     isPopupGenerating = true;
     currentPopupResponse = null;
@@ -541,11 +545,12 @@ async function generatePopupRawResponse(message, options = {}) {
             () => parseThinking(_latestRawResponse).cleanedResponse,
             () => { contentEl.scrollTop = contentEl.scrollHeight; }
         );
-        const result = await generateResponse(message, currentPopupThreadId, (partialResponse) => {
+        const result = await generateResponse(message, threadId, (partialResponse, isComplete) => {
             // Stream cheap plain text; final markdown is rendered below once the
             // response completes.
             _latestRawResponse = partialResponse;
             rawRenderer.schedule();
+            updateTransferredGeneration(threadId, partialResponse, isComplete);
         });
         rawRenderer.cancel();
 
@@ -585,7 +590,7 @@ async function generatePopupRawResponse(message, options = {}) {
             playCompletionSound();
         }
 
-        const thread = getThread(currentPopupThreadId);
+        const thread = getThread(threadId);
         if (thread && titleEl) {
             titleEl.textContent = thread.name;
         }
@@ -607,7 +612,29 @@ async function generatePopupRawResponse(message, options = {}) {
     } finally {
         isPopupGenerating = false;
         updatePopupActionButtons(false, currentPopupResponse !== null);
+        finishTransferredGeneration(threadId);
     }
+}
+
+function updateTransferredGeneration(threadId, partialResponse, isComplete) {
+    if (transferredPopupThreadId !== threadId) return;
+
+    import('./conversation.js')
+        .then(({ updateTransferredGeneration: updateConversation }) => {
+            updateConversation(threadId, partialResponse, isComplete);
+        })
+        .catch(error => console.error('[ScratchPad] Failed to update transferred generation:', error));
+}
+
+function finishTransferredGeneration(threadId) {
+    if (transferredPopupThreadId !== threadId) return;
+
+    transferredPopupThreadId = null;
+    import('./conversation.js')
+        .then(({ finishTransferredGeneration: finishConversation }) => {
+            finishConversation(threadId);
+        })
+        .catch(error => console.error('[ScratchPad] Failed to finish transferred generation:', error));
 }
 
 /**
@@ -615,27 +642,30 @@ async function generatePopupRawResponse(message, options = {}) {
  */
 async function handleOpenInScratchPad() {
     const threadId = currentPopupThreadId;
-    dismissPopup();
 
     if (threadId) {
-        // Dynamic imports to avoid circular dependency
+        if (isPopupGenerating) {
+            transferredPopupThreadId = threadId;
+        }
+
+        dismissPopup({ cancelActiveGeneration: false });
+
+        // Dynamic import to avoid circular dependency
         const { openScratchPad } = await import('./index.js');
-        const { openThread } = await import('./conversation.js');
-        openScratchPad();
-        setTimeout(() => openThread(threadId), 100);
+        openScratchPad(threadId);
     }
 }
 
 /**
  * Dismiss the popup
  */
-export function dismissPopup() {
+export function dismissPopup({ cancelActiveGeneration = true } = {}) {
     if (!popupElement) {
         return;
     }
 
     // Cancel any active generation when dismissing
-    if (isPopupGenerating) {
+    if (isPopupGenerating && cancelActiveGeneration) {
         cancelGeneration();
     }
 

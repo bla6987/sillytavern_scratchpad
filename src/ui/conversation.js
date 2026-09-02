@@ -3,7 +3,7 @@
  */
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
-import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
@@ -57,7 +57,7 @@ function endGeneration(id) {
  * @returns {boolean} True if generating
  */
 function isGenerating() {
-    return activeGenerationId !== null;
+    return activeGenerationId !== null || isGenerationActive();
 }
 
 /**
@@ -286,6 +286,19 @@ export function renderConversation(container, isNewThread = false) {
     inputWrapper.appendChild(sendBtn);
     inputContainer.appendChild(inputWrapper);
     container.appendChild(inputContainer);
+
+    const hasPendingAssistantMessage = thread?.messages?.some(message =>
+        message.role === 'assistant' && message.status === 'pending'
+    );
+    if (hasPendingAssistantMessage && isGenerationActive()) {
+        sendBtn.disabled = true;
+        textarea.disabled = true;
+        textarea.placeholder = 'Generating...';
+        showGeneratingIndicator(true, () => {
+            cancelGeneration();
+            showToast('Generation cancelled', 'info');
+        });
+    }
 
     // Scroll to bottom
     scrollToBottom();
@@ -1758,6 +1771,46 @@ function refreshConversation() {
     }
 
     renderConversation(conversationContainer);
+}
+
+/**
+ * Update the open conversation with a generation that started in the quick popup.
+ * @param {string} threadId Thread receiving the generation
+ * @param {string} partialResponse Current streamed response
+ * @param {boolean} isComplete Whether the stream has completed
+ */
+export function updateTransferredGeneration(threadId, partialResponse, isComplete = false) {
+    if (currentThreadId !== threadId || !conversationContainer?.isConnected) return;
+
+    const thread = getThreadForCurrentBranch(threadId);
+    const pendingMessage = [...(thread?.messages || [])].reverse().find(message =>
+        message.role === 'assistant' && message.status === 'pending'
+    );
+    if (!pendingMessage) return;
+
+    const contentEl = conversationContainer.querySelector(
+        `.sp-message[data-message-id="${pendingMessage.id}"] .sp-message-content`
+    );
+    if (!contentEl) return;
+
+    const cleanedResponse = parseThinking(partialResponse).cleanedResponse;
+    if (isComplete) {
+        contentEl.innerHTML = renderMarkdown(cleanedResponse);
+    } else {
+        contentEl.textContent = cleanedResponse;
+    }
+    scrollToBottom();
+}
+
+/**
+ * Refresh a conversation after a generation transferred from the quick popup.
+ * @param {string} threadId Thread that finished generating
+ */
+export function finishTransferredGeneration(threadId) {
+    if (currentThreadId !== threadId || !conversationContainer?.isConnected) return;
+
+    renderConversation(conversationContainer);
+    scrollToBottom();
 }
 
 /**
