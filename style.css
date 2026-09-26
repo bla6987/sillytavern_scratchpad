@@ -1619,14 +1619,6 @@ svg.sp-message-model-icon {
     }
 }
 
-.sp-input-container.sp-generating .sp-input-wrapper {
-    opacity: 0.6;
-}
-
-.sp-input-container.sp-generating .sp-message-input {
-    cursor: not-allowed;
-}
-
 /* Cancel button in generating indicator */
 .sp-cancel-btn {
     margin-left: auto;

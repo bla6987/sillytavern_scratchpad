@@ -15,6 +15,7 @@ let conversationContainer = null;
 let currentThreadId = null;
 let activeGenerationId = null;
 let pendingMessage = null;
+let inputDraft = '';
 let cleanupFunctions = [];
 let currentViewportHandler = null;
 let currentViewportBusUnsubscribe = null;
@@ -84,6 +85,7 @@ function runCleanups() {
 export function openThread(threadId, initialMessage = null) {
     currentThreadId = threadId;
     pendingMessage = initialMessage;
+    inputDraft = '';
 
     const content = getConversationContainer();
     if (!content) return;
@@ -97,6 +99,7 @@ export function openThread(threadId, initialMessage = null) {
 export function startNewThread() {
     currentThreadId = null;
     pendingMessage = null;
+    inputDraft = '';
 
     const content = getConversationContainer();
     if (!content) return;
@@ -124,6 +127,12 @@ export function renderConversation(container, isNewThread = false) {
     const lastMsg = thread?.messages?.[thread.messages.length - 1];
     lastRenderedMessageStatus = lastMsg?.status ?? null;
     lastRenderedMessageId = lastMsg?.id ?? null;
+
+    // Re-renders replace the input, so remember where the user was typing
+    const previousInput = container.querySelector('#sp-message-input');
+    const inputSelection = previousInput && previousInput === document.activeElement
+        ? [previousInput.selectionStart, previousInput.selectionEnd]
+        : null;
 
     container.innerHTML = '';
     // Preserve sp-drawer-content class while adding view-specific class
@@ -258,6 +267,10 @@ export function renderConversation(container, isNewThread = false) {
     textarea.id = 'sp-message-input';
     textarea.placeholder = 'Ask a question...';
     textarea.rows = 2;
+    textarea.value = inputDraft;
+    textarea.addEventListener('input', () => {
+        inputDraft = textarea.value;
+    });
 
     const sendBtn = createButton({
         icon: Icons.send,
@@ -287,13 +300,20 @@ export function renderConversation(container, isNewThread = false) {
     inputContainer.appendChild(inputWrapper);
     container.appendChild(inputContainer);
 
+    if (textarea.value && textarea.scrollHeight) {
+        textarea.style.height = textarea.scrollHeight + 'px';
+    }
+    if (inputSelection) {
+        textarea.focus();
+        textarea.setSelectionRange(...inputSelection);
+    }
+
+    // The input stays editable while generating; only sending is blocked
     const hasPendingAssistantMessage = thread?.messages?.some(message =>
         message.role === 'assistant' && message.status === 'pending'
     );
-    if (hasPendingAssistantMessage && isGenerationActive()) {
+    if (hasPendingAssistantMessage && isGenerating()) {
         sendBtn.disabled = true;
-        textarea.disabled = true;
-        textarea.placeholder = 'Generating...';
         showGeneratingIndicator(true, () => {
             cancelGeneration();
             showToast('Generation cancelled', 'info');
@@ -310,6 +330,7 @@ export function renderConversation(container, isNewThread = false) {
         // Handle pending message
         if (pendingMessage) {
             textarea.value = pendingMessage;
+            inputDraft = pendingMessage;
             pendingMessage = null;
             handleSendMessage();
         }
@@ -1192,14 +1213,9 @@ async function submitEditedUserMessage(messageId, editedContent) {
     }
 
     const sendBtn = document.getElementById('sp-send-btn');
-    const textarea = document.getElementById('sp-message-input');
 
     const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
-    if (textarea) {
-        textarea.disabled = true;
-        textarea.placeholder = 'Generating...';
-    }
     showGeneratingIndicator(true, () => {
         cancelGeneration();
         showToast('Generation cancelled', 'info');
@@ -1255,11 +1271,6 @@ async function submitEditedUserMessage(messageId, editedContent) {
     } finally {
         endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Ask a question...';
-            textarea.focus();
-        }
         showGeneratingIndicator(false);
     }
 }
@@ -1326,14 +1337,9 @@ async function handleGenerateSwipe(messageId) {
     if (isGenerating() || !currentThreadId) return;
 
     const sendBtn = document.getElementById('sp-send-btn');
-    const textarea = document.getElementById('sp-message-input');
 
     const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
-    if (textarea) {
-        textarea.disabled = true;
-        textarea.placeholder = 'Generating swipe...';
-    }
     showGeneratingIndicator(true, () => {
         cancelGeneration();
         showToast('Generation cancelled', 'info');
@@ -1393,10 +1399,6 @@ async function handleGenerateSwipe(messageId) {
     } finally {
         endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Ask a question...';
-        }
         showGeneratingIndicator(false);
     }
 }
@@ -1443,19 +1445,19 @@ async function handleSendMessage() {
     // Clear input
     textarea.value = '';
     textarea.style.height = 'auto';
+    inputDraft = '';
 
     // Start generation and track ID
     const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
-    textarea.disabled = true;
-    textarea.placeholder = 'Generating...';
     showGeneratingIndicator(true, () => {
         cancelGeneration();
         showToast('Generation cancelled', 'info');
     });
 
     try {
-        // Create thread if needed
+        // Create thread if needed. Generation saves metadata right after adding
+        // the first messages, so don't wait on a separate save here.
         if (!currentThreadId) {
             // Get context settings from the UI (which shows current global settings for new threads)
             const contextSettings = getContextSettingsFromUI();
@@ -1465,21 +1467,14 @@ async function handleSendMessage() {
                 return;
             }
             currentThreadId = newThread.id;
-            await saveMetadata();
-        }
-
-        // Refresh UI to show user message immediately
-        const messagesContainer = document.getElementById('sp-messages');
-        if (messagesContainer) {
-            // Clear empty state
-            const emptyState = messagesContainer.querySelector('.sp-empty-state');
-            if (emptyState) {
-                emptyState.remove();
-            }
         }
 
         // Generate response with streaming
         let streamingMsgEl = null;
+        const showPendingMessages = () => {
+            refreshConversation();
+            streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+        };
 
         let _latestStreamResponse = '';
         const streamRenderer = createStreamingRenderer(
@@ -1487,14 +1482,11 @@ async function handleSendMessage() {
             () => parseThinking(_latestStreamResponse).cleanedResponse,
             () => scrollToBottom()
         );
-        const result = await generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
+        const generation = generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
             _latestStreamResponse = partialResponse;
 
-            // Update streaming message element
             if (!streamingMsgEl) {
-                // Refresh to show user message and pending assistant message
-                refreshConversation();
-                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+                showPendingMessages();
             }
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
@@ -1509,6 +1501,11 @@ async function handleSendMessage() {
                 }
             }
         });
+        // The user message and pending reply are stored before generation's first
+        // await, so show them now instead of waiting for the first streamed token
+        showPendingMessages();
+        scrollToBottom();
+        const result = await generation;
         streamRenderer.cancel();
 
         if (!result.success && !result.cancelled) {
@@ -1536,10 +1533,7 @@ async function handleSendMessage() {
     } finally {
         endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
-        textarea.disabled = false;
-        textarea.placeholder = 'Ask a question...';
         showGeneratingIndicator(false);
-        textarea.focus();
     }
 }
 
@@ -1559,15 +1553,10 @@ async function handleRetry(messageId) {
     }
 
     const sendBtn = document.getElementById('sp-send-btn');
-    const textarea = document.getElementById('sp-message-input');
 
     // Start generation and track ID
     const generationId = startGeneration();
     if (sendBtn) sendBtn.disabled = true;
-    if (textarea) {
-        textarea.disabled = true;
-        textarea.placeholder = 'Generating...';
-    }
     showGeneratingIndicator(true, () => {
         cancelGeneration();
         showToast('Generation cancelled', 'info');
@@ -1620,10 +1609,6 @@ async function handleRetry(messageId) {
     } finally {
         endGeneration(generationId);
         if (sendBtn) sendBtn.disabled = false;
-        if (textarea) {
-            textarea.disabled = false;
-            textarea.placeholder = 'Ask a question...';
-        }
         showGeneratingIndicator(false);
     }
 }
