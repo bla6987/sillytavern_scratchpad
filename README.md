@@ -63,13 +63,14 @@ Semantic mode requires embeddings to be enabled and configured (see Settings →
 - **Rename Thread**: Click on the thread name (in either list or conversation view)
 - **Delete Thread**: Click the delete icon on a thread (swipe left on mobile)
 - **Clear All**: Use `/sp-clear` to delete all threads (with confirmation)
+- **Unsent Text**: Anything typed but not sent stays in that thread's input (or the New Thread view's) when you switch threads, go back to the list, or close the drawer. It lives in memory only, so it is cleared when you reload the page or switch chats.
 
 ### Queuing Messages
 
 While a reply is generating, the Send button becomes **Queue**. Messages you send then wait above the input and go out one at a time, each as its own turn, as soon as the reply ahead of it finishes. Queued messages keep sending even if you switch threads or close the drawer.
 
 - **Edit** (✎) pulls a queued message back into the input; **Remove** (✕) drops it.
-- If the reply they're waiting on is cancelled or fails, that thread's queued messages are put back into its input instead of being sent, so you can retry or rephrase first.
+- If the reply they're waiting on is cancelled or fails, that thread's queued messages are put back into its input instead of being sent, so you can retry or rephrase first. This works even if you're in another thread: the text is waiting in that thread's input, ahead of anything you had typed there, when you open it.
 - The queue lives in memory: it is cleared when you switch chats or reload the page.
 
 ### Slash Commands

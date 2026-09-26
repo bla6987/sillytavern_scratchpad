@@ -2,7 +2,7 @@
  * Conversation View component for Scratch Pad extension
  */
 
-import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
+import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, saveMetadataDebounced, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
 import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
 import { warmEmbeddings } from '../semanticSearch.js';
 import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
@@ -11,14 +11,14 @@ import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
 import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
-import { enqueueMessage, getQueuedMessages, dequeueNextMessage, removeQueuedMessage, takeQueuedMessages, clearMessageQueue, joinDraftText } from '../messageQueue.js';
+import { enqueueMessage, getQueuedMessages, dequeueNextMessage, removeQueuedMessage, takeQueuedMessages, clearMessageQueue } from '../messageQueue.js';
+import { NEW_THREAD_DRAFT_KEY, getDraft, setDraft, deleteDraft, clearDrafts, prependToDraft, joinDraftText } from '../draftStore.js';
 import { isPopupGenerationActive } from './popup.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
 let activeGenerationId = null;
 let pendingMessage = null;
-let inputDraft = '';
 let cleanupFunctions = [];
 let currentViewportHandler = null;
 let currentViewportBusUnsubscribe = null;
@@ -26,8 +26,6 @@ let lastRenderedThreadId = null;
 let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
 let lastRenderedMessageId = null;
-// Queued text sent back by a cancelled/failed reply while its thread was off screen
-const returnedDrafts = new Map();
 
 /**
  * Start a new generation and return its ID
@@ -90,8 +88,6 @@ function runCleanups() {
 export function openThread(threadId, initialMessage = null) {
     currentThreadId = threadId;
     pendingMessage = initialMessage;
-    inputDraft = returnedDrafts.get(threadId) ?? '';
-    returnedDrafts.delete(threadId);
 
     const content = getConversationContainer();
     if (!content) return;
@@ -105,7 +101,6 @@ export function openThread(threadId, initialMessage = null) {
 export function startNewThread() {
     currentThreadId = null;
     pendingMessage = null;
-    inputDraft = '';
 
     const content = getConversationContainer();
     if (!content) return;
@@ -268,14 +263,19 @@ export function renderConversation(container, isNewThread = false) {
     const inputWrapper = document.createElement('div');
     inputWrapper.className = 'sp-input-wrapper';
 
+    // Captured once so this textarea can only ever write its own thread's
+    // draft, even after currentThreadId moves on. Saving on every keystroke
+    // means no close path needs a "save on leave" hook.
+    const draftKey = currentThreadId ?? NEW_THREAD_DRAFT_KEY;
+
     const textarea = document.createElement('textarea');
     textarea.className = 'sp-message-input';
     textarea.id = 'sp-message-input';
     textarea.placeholder = 'Ask a question...';
     textarea.rows = 2;
-    textarea.value = inputDraft;
+    textarea.value = getDraft(draftKey);
     textarea.addEventListener('input', () => {
-        inputDraft = textarea.value;
+        setDraft(draftKey, textarea.value);
     });
 
     const sendBtn = createButton({
@@ -334,7 +334,7 @@ export function renderConversation(container, isNewThread = false) {
         // Handle pending message
         if (pendingMessage) {
             textarea.value = pendingMessage;
-            inputDraft = pendingMessage;
+            setDraft(draftKey, pendingMessage);
             pendingMessage = null;
             handleSendMessage();
         }
@@ -1440,10 +1440,11 @@ async function handleSendMessage() {
     const message = textarea.value.trim();
     if (!message) return;
 
-    // Clear input
+    // Clear input and its draft. Read the key before a thread is created below,
+    // so text typed in the New Thread view clears the New Thread draft.
     textarea.value = '';
     textarea.style.height = 'auto';
-    inputDraft = '';
+    deleteDraft(currentThreadId ?? NEW_THREAD_DRAFT_KEY);
 
     // Create thread if needed. Generation saves metadata right after adding
     // the first messages, so don't wait on a separate save here.
@@ -1463,10 +1464,11 @@ async function handleSendMessage() {
     if (isGenerating()) {
         enqueueMessage(currentThreadId, message);
         if (createdThread) {
-            // Swap the "New Thread" view for the real thread, and save it now
-            // since no generation will touch it until the queue reaches it
+            // Swap the "New Thread" view for the real thread. No generation will
+            // save it until the queue reaches it, but a save rewrites the whole
+            // chat file, so let it coalesce with the running reply's save.
             renderConversation(conversationContainer);
-            await saveMetadata();
+            saveMetadataDebounced();
         } else {
             renderMessageQueue();
         }
@@ -1611,11 +1613,11 @@ export function advanceMessageQueue(threadId, succeeded) {
 }
 
 /**
- * Drop queued messages and returned drafts; they belong to the previous chat's threads
+ * Drop queued messages and unsent drafts; they belong to the previous chat's threads
  */
-export function resetConversationQueue() {
+export function resetConversationState() {
     clearMessageQueue();
-    returnedDrafts.clear();
+    clearDrafts();
     renderMessageQueue();
 }
 
@@ -1627,18 +1629,16 @@ export function resetConversationQueue() {
 function returnTextToInput(threadId, text) {
     if (!text) return;
 
-    if (!isViewingThread(threadId)) {
-        returnedDrafts.set(threadId, joinDraftText(returnedDrafts.get(threadId), text));
+    const textarea = isViewingThread(threadId) ? document.getElementById('sp-message-input') : null;
+    if (!textarea) {
+        prependToDraft(threadId, text);
         return;
     }
 
-    const textarea = document.getElementById('sp-message-input');
-    inputDraft = joinDraftText(text, textarea ? textarea.value : inputDraft);
-    if (textarea) {
-        textarea.value = inputDraft;
-        textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
-    }
+    textarea.value = joinDraftText(text, textarea.value);
+    setDraft(threadId, textarea.value);
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
 }
 
 /**

@@ -9,7 +9,6 @@ const {
     removeQueuedMessage,
     takeQueuedMessages,
     clearMessageQueue,
-    joinDraftText,
 } = await import(new URL('../src/messageQueue.js', import.meta.url));
 
 /* ---- FIFO order across threads ---- */
@@ -87,16 +86,6 @@ const {
     clearMessageQueue();
     assert.equal(getQueueLength(), 0);
     assert.equal(dequeueNextMessage(), null);
-}
-
-/* ---- joinDraftText ---- */
-{
-    assert.equal(joinDraftText('one', 'two'), 'one\n\ntwo');
-    assert.equal(joinDraftText('one', '', '   ', null, undefined, 'two'), 'one\n\ntwo');
-    assert.equal(joinDraftText('only'), 'only');
-    assert.equal(joinDraftText(), '');
-    assert.equal(joinDraftText('', undefined), '');
-    assert.equal(joinDraftText('line1\nline2', 'three'), 'line1\nline2\n\nthree'); // inner newlines kept
 }
 
 console.log('message-queue tests passed');

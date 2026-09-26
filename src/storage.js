@@ -5,6 +5,7 @@
 
 import { createReasoningMeta, normalizeReasoningMeta } from './reasoning.js';
 import { resolveConnectionProfileId } from './connectionProfiles.js';
+import { deleteDraft, clearDrafts } from './draftStore.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -87,6 +88,24 @@ export function getScratchPadData() {
 export async function saveMetadata() {
     const { saveMetadata: saveMeta } = SillyTavern.getContext();
     await saveMeta();
+}
+
+/**
+ * Schedule a metadata save that coalesces with other saves made shortly after.
+ * Every save rewrites the whole chat file, so prefer this when nothing needs
+ * the data on disk right away. Falls back to an immediate save on SillyTavern
+ * builds without the debounced helper.
+ */
+export function saveMetadataDebounced() {
+    const { saveMetadataDebounced: saveMetaDebounced } = SillyTavern.getContext();
+    if (typeof saveMetaDebounced === 'function') {
+        saveMetaDebounced();
+        return;
+    }
+    // Callers don't await this, so a failed fallback save must not go unhandled
+    saveMetadata().catch(error => {
+        console.error('[ScratchPad] Failed to save metadata:', error);
+    });
 }
 
 /**
@@ -195,6 +214,8 @@ export function deleteThread(threadId) {
     if (index === -1) return false;
 
     data.threads.splice(index, 1);
+    // Every delete path goes through here, so this keeps drafts from piling up
+    deleteDraft(threadId);
     return true;
 }
 
@@ -207,6 +228,7 @@ export function clearAllThreads() {
     if (!data) return false;
 
     data.threads = [];
+    clearDrafts();
     return true;
 }
 

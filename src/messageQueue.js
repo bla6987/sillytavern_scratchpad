@@ -3,7 +3,8 @@
  *
  * Holds messages the user sent while a generation was running. Entries are
  * dispatched one at a time, oldest first, after the generation ahead of them
- * completes. The queue is in-memory only, like the unsent input draft.
+ * completes. The queue is in-memory only, like the unsent input drafts in
+ * draftStore.js.
  *
  * Kept free of DOM and SillyTavern access so it can be unit-tested under node.
  */
@@ -76,13 +77,4 @@ export function takeQueuedMessages(threadId) {
  */
 export function clearMessageQueue() {
     queue = [];
-}
-
-/**
- * Join pieces of input text with a blank line, skipping empty pieces
- * @param {...string} parts Text pieces in order
- * @returns {string} Joined text
- */
-export function joinDraftText(...parts) {
-    return parts.filter(part => typeof part === 'string' && part.trim()).join('\n\n');
 }
