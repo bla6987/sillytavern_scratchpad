@@ -4,7 +4,7 @@
  */
 
 import { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
-import { openThread, startNewThread, getCurrentThreadId, renderConversation } from './conversation.js';
+import { openThread, startNewThread, getCurrentThreadId, renderConversation, resetConversationQueue } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, dismissPopup, isPopupVisible } from './popup.js';
 import { getSettings, updateSettings, getDisplayMode, setDisplayMode } from '../settings.js';
 import { Icons, createButton } from './components.js';
@@ -427,6 +427,7 @@ export function closeScratchPad() {
  */
 function resetScratchPadUIState() {
     resetThreadListState();
+    resetConversationQueue();
 }
 
 /**

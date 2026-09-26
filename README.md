@@ -9,6 +9,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Semantic Search**: Search threads by *meaning*, not just keywords, using embeddings (OpenRouter / OpenAI / Ollama). Reuses the Chat Manager extension's embedding key by default.
 - **Full Context**: AI responses are informed by your chat history and character information
 - **Streaming Responses**: Watch AI responses generate in real-time
+- **Message Queue**: Keep typing while a reply generates — messages you send are queued and sent in order as each reply finishes
 - **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
 - **Mobile Friendly**: Full-screen drawer UI with touch support and bottom sheet popups
 - **Persistent Storage**: Threads are saved with your chat and inherit properly when branching
@@ -62,6 +63,14 @@ Semantic mode requires embeddings to be enabled and configured (see Settings →
 - **Rename Thread**: Click on the thread name (in either list or conversation view)
 - **Delete Thread**: Click the delete icon on a thread (swipe left on mobile)
 - **Clear All**: Use `/sp-clear` to delete all threads (with confirmation)
+
+### Queuing Messages
+
+While a reply is generating, the Send button becomes **Queue**. Messages you send then wait above the input and go out one at a time, each as its own turn, as soon as the reply ahead of it finishes. Queued messages keep sending even if you switch threads or close the drawer.
+
+- **Edit** (✎) pulls a queued message back into the input; **Remove** (✕) drops it.
+- If the reply they're waiting on is cancelled or fails, that thread's queued messages are put back into its input instead of being sent, so you can retry or rephrase first.
+- The queue lives in memory: it is cleared when you switch chats or reload the page.
 
 ### Slash Commands
 
@@ -145,7 +154,7 @@ Scratch pad data is stored in `chatMetadata.scratchPad` for each chat:
 
 ## Keyboard Shortcuts
 
-- **Enter**: Send message (Shift+Enter for new line)
+- **Enter**: Send message, or queue it while a reply is generating (Shift+Enter for new line)
 - **Escape**: Close scratch pad or dismiss popup
 
 ## Troubleshooting

@@ -147,6 +147,7 @@ test('opening a generating popup in Scratch Pad transfers instead of cancelling'
     let cancelCalls = 0;
     const openedThreads = [];
     const finishedThreads = [];
+    const settledGenerations = [];
     const mocks = {
         createThread: () => ({ id: 'thread-1' }),
         saveMetadata: async () => {},
@@ -179,6 +180,7 @@ test('opening a generating popup in Scratch Pad transfers instead of cancelling'
         openScratchPad: threadId => openedThreads.push(threadId),
         updateTransferredGeneration() {},
         finishTransferredGeneration: threadId => finishedThreads.push(threadId),
+        advanceMessageQueue: (threadId, succeeded) => settledGenerations.push([threadId, succeeded]),
     };
 
     try {
@@ -198,6 +200,7 @@ test('opening a generating popup in Scratch Pad transfers instead of cancelling'
         await generationPromise;
         await Promise.resolve();
         assert.deepEqual(finishedThreads, ['thread-1']);
+        assert.deepEqual(settledGenerations, [['thread-1', true]], 'finishing must advance the message queue');
     } finally {
         globalThis.document = originalDocument;
         globalThis.requestAnimationFrame = originalRequestAnimationFrame;

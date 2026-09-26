@@ -11,6 +11,8 @@ import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
 import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
+import { enqueueMessage, getQueuedMessages, dequeueNextMessage, removeQueuedMessage, takeQueuedMessages, clearMessageQueue, joinDraftText } from '../messageQueue.js';
+import { isPopupGenerationActive } from './popup.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
@@ -24,6 +26,8 @@ let lastRenderedThreadId = null;
 let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
 let lastRenderedMessageId = null;
+// Queued text sent back by a cancelled/failed reply while its thread was off screen
+const returnedDrafts = new Map();
 
 /**
  * Start a new generation and return its ID
@@ -59,7 +63,7 @@ function endGeneration(id) {
  * @returns {boolean} True if generating
  */
 function isGenerating() {
-    return activeGenerationId !== null || isGenerationActive();
+    return activeGenerationId !== null || isGenerationActive() || isPopupGenerationActive();
 }
 
 /**
@@ -86,7 +90,8 @@ function runCleanups() {
 export function openThread(threadId, initialMessage = null) {
     currentThreadId = threadId;
     pendingMessage = initialMessage;
-    inputDraft = '';
+    inputDraft = returnedDrafts.get(threadId) ?? '';
+    returnedDrafts.delete(threadId);
 
     const content = getConversationContainer();
     if (!content) return;
@@ -309,17 +314,15 @@ export function renderConversation(container, isNewThread = false) {
         textarea.setSelectionRange(...inputSelection);
     }
 
-    // The input stays editable while generating; only sending is blocked
+    // The input stays usable while generating; sends are queued until the reply finishes
     const hasPendingAssistantMessage = thread?.messages?.some(message =>
         message.role === 'assistant' && message.status === 'pending'
     );
     if (hasPendingAssistantMessage && isGenerating()) {
-        sendBtn.disabled = true;
-        showGeneratingIndicator(true, () => {
-            cancelGeneration();
-            showToast('Generation cancelled', 'info');
-        });
+        showGeneratingIndicator(true, handleCancelGeneration);
     }
+    renderMessageQueue();
+    updateSendButtonMode();
 
     // Scroll to bottom
     scrollToBottom();
@@ -1213,16 +1216,12 @@ async function submitEditedUserMessage(messageId, editedContent) {
         return;
     }
 
-    const sendBtn = document.getElementById('sp-send-btn');
-
+    const threadId = currentThreadId;
     const generationId = startGeneration();
-    if (sendBtn) sendBtn.disabled = true;
-    showGeneratingIndicator(true, () => {
-        cancelGeneration();
-        showToast('Generation cancelled', 'info');
-    });
+    showGeneratingIndicator(true, handleCancelGeneration);
 
     let streamingMsgEl = null;
+    let succeeded = false;
 
     try {
         let _latestEditResponse = '';
@@ -1250,6 +1249,7 @@ async function submitEditedUserMessage(messageId, editedContent) {
             }
         });
         editRenderer.cancel();
+        succeeded = result.success === true;
 
         if (!result.success && !result.cancelled) {
             showToast(`Edit failed: ${result.error}`, 'error');
@@ -1271,8 +1271,8 @@ async function submitEditedUserMessage(messageId, editedContent) {
         }
     } finally {
         endGeneration(generationId);
-        if (sendBtn) sendBtn.disabled = false;
         showGeneratingIndicator(false);
+        advanceMessageQueue(threadId, succeeded);
     }
 }
 
@@ -1337,14 +1337,9 @@ async function handleSwipeNavigation(messageId, direction) {
 async function handleGenerateSwipe(messageId) {
     if (isGenerating() || !currentThreadId) return;
 
-    const sendBtn = document.getElementById('sp-send-btn');
-
+    const threadId = currentThreadId;
     const generationId = startGeneration();
-    if (sendBtn) sendBtn.disabled = true;
-    showGeneratingIndicator(true, () => {
-        cancelGeneration();
-        showToast('Generation cancelled', 'info');
-    });
+    showGeneratingIndicator(true, handleCancelGeneration);
 
     // Disable swipe arrows during generation
     const msgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
@@ -1353,6 +1348,7 @@ async function handleGenerateSwipe(messageId) {
     }
 
     let streamingContentEl = null;
+    let succeeded = false;
 
     try {
         let _latestSwipeResponse = '';
@@ -1386,6 +1382,7 @@ async function handleGenerateSwipe(messageId) {
             }
         });
         swipeRenderer.cancel();
+        succeeded = result.success === true;
 
         if (!result.success && !result.cancelled) {
             showToast(`Swipe generation failed: ${result.error}`, 'error');
@@ -1401,8 +1398,8 @@ async function handleGenerateSwipe(messageId) {
 
     } finally {
         endGeneration(generationId);
-        if (sendBtn) sendBtn.disabled = false;
         showGeneratingIndicator(false);
+        advanceMessageQueue(threadId, succeeded);
     }
 }
 
@@ -1433,13 +1430,11 @@ async function handleDeleteSwipe(messageId) {
 }
 
 /**
- * Handle sending a message
+ * Handle sending a message. While a generation is running the message is
+ * queued and sent once the reply ahead of it finishes.
  */
 async function handleSendMessage() {
-    if (isGenerating()) return;
-
     const textarea = document.getElementById('sp-message-input');
-    const sendBtn = document.getElementById('sp-send-btn');
     if (!textarea) return;
 
     const message = textarea.value.trim();
@@ -1450,66 +1445,102 @@ async function handleSendMessage() {
     textarea.style.height = 'auto';
     inputDraft = '';
 
+    // Create thread if needed. Generation saves metadata right after adding
+    // the first messages, so don't wait on a separate save here.
+    let createdThread = false;
+    if (!currentThreadId) {
+        // Get context settings from the UI (which shows current global settings for new threads)
+        const contextSettings = getContextSettingsFromUI();
+        const newThread = createThread('New Thread', contextSettings);
+        if (!newThread) {
+            showToast('Failed to create thread', 'error');
+            return;
+        }
+        currentThreadId = newThread.id;
+        createdThread = true;
+    }
+
+    if (isGenerating()) {
+        enqueueMessage(currentThreadId, message);
+        if (createdThread) {
+            // Swap the "New Thread" view for the real thread, and save it now
+            // since no generation will touch it until the queue reaches it
+            renderConversation(conversationContainer);
+            await saveMetadata();
+        } else {
+            renderMessageQueue();
+        }
+        return;
+    }
+
+    await sendMessageToThread(currentThreadId, message);
+}
+
+/**
+ * Send a message to a thread and stream the reply. Queued messages can be
+ * dispatched while another thread (or no thread) is on screen, so the DOM is
+ * only touched while this thread is being viewed.
+ * @param {string} threadId Thread ID
+ * @param {string} message Message text
+ */
+async function sendMessageToThread(threadId, message) {
     // Start generation and track ID
     const generationId = startGeneration();
-    if (sendBtn) sendBtn.disabled = true;
-    showGeneratingIndicator(true, () => {
-        cancelGeneration();
-        showToast('Generation cancelled', 'info');
-    });
+    if (isViewingThread(threadId)) {
+        showGeneratingIndicator(true, handleCancelGeneration);
+    } else {
+        updateSendButtonMode();
+    }
+
+    let succeeded = false;
 
     try {
-        // Create thread if needed. Generation saves metadata right after adding
-        // the first messages, so don't wait on a separate save here.
-        if (!currentThreadId) {
-            // Get context settings from the UI (which shows current global settings for new threads)
-            const contextSettings = getContextSettingsFromUI();
-            const newThread = createThread('New Thread', contextSettings);
-            if (!newThread) {
-                showToast('Failed to create thread', 'error');
-                return;
-            }
-            currentThreadId = newThread.id;
-        }
-
-        // Generate response with streaming
+        // Find the reply by ID rather than position: re-renders replace the
+        // element, and the last message on screen may belong to another thread
+        let pendingMessageId = null;
         let streamingMsgEl = null;
-        const showPendingMessages = () => {
-            refreshConversation();
-            streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+        const resolveStreamingElement = () => {
+            if (!pendingMessageId || !isViewingThread(threadId)) return null;
+            if (!streamingMsgEl?.isConnected) {
+                refreshConversation();
+                streamingMsgEl = conversationContainer.querySelector(
+                    `.sp-message[data-message-id="${pendingMessageId}"] .sp-message-content`
+                );
+            }
+            return streamingMsgEl;
         };
 
         let _latestStreamResponse = '';
         const streamRenderer = createStreamingRenderer(
-            () => streamingMsgEl,
+            () => (isViewingThread(threadId) ? streamingMsgEl : null),
             () => parseThinking(_latestStreamResponse).cleanedResponse,
             () => scrollToBottom()
         );
-        const generation = generateScratchPadResponse(message, currentThreadId, (partialResponse, isComplete) => {
+        const generation = generateScratchPadResponse(message, threadId, (partialResponse, isComplete) => {
             _latestStreamResponse = partialResponse;
 
-            if (!streamingMsgEl) {
-                showPendingMessages();
-            }
+            const contentEl = resolveStreamingElement();
+            if (!contentEl) return;
 
-            if (streamingMsgEl && streamingMsgEl.isConnected) {
-                if (isComplete) {
-                    // Render the final markdown once, after streaming completes
-                    streamRenderer.cancel();
-                    streamingMsgEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
-                    scrollToBottom();
-                } else {
-                    // Stream cheap plain text; markdown is rendered once on completion
-                    streamRenderer.schedule();
-                }
+            if (isComplete) {
+                // Render the final markdown once, after streaming completes
+                streamRenderer.cancel();
+                contentEl.innerHTML = renderMarkdown(parseThinking(partialResponse).cleanedResponse);
+                scrollToBottom();
+            } else {
+                // Stream cheap plain text; markdown is rendered once on completion
+                streamRenderer.schedule();
             }
         });
         // The user message and pending reply are stored before generation's first
         // await, so show them now instead of waiting for the first streamed token
-        showPendingMessages();
-        scrollToBottom();
+        pendingMessageId = getPendingAssistantMessageId(threadId);
+        if (resolveStreamingElement()) {
+            scrollToBottom();
+        }
         const result = await generation;
         streamRenderer.cancel();
+        succeeded = result.success === true;
 
         if (!result.success && !result.cancelled) {
             showToast(`Failed to send message: ${result.error}`, 'error');
@@ -1521,25 +1552,215 @@ async function handleSendMessage() {
             warmEmbeddings([message, result.response]);
         }
 
-        // Refresh conversation to show final state
-        refreshConversation();
-        // Ensure we scroll to show the new messages after refresh
-        scrollToBottom();
+        if (isViewingThread(threadId)) {
+            // Refresh conversation to show final state
+            refreshConversation();
+            // Ensure we scroll to show the new messages after refresh
+            scrollToBottom();
 
-        // Update thread name in header if changed
-        const thread = getThread(currentThreadId);
-        if (thread) {
-            const titleEl = document.querySelector('.sp-thread-title');
-            if (titleEl) {
+            // Update thread name in header if changed
+            const thread = getThread(threadId);
+            const titleEl = conversationContainer.querySelector('.sp-thread-title');
+            if (thread && titleEl) {
                 titleEl.textContent = thread.name;
             }
         }
 
     } finally {
         endGeneration(generationId);
-        if (sendBtn) sendBtn.disabled = false;
         showGeneratingIndicator(false);
+        advanceMessageQueue(threadId, succeeded);
     }
+}
+
+/**
+ * Continue the message queue after a generation settles. A queued message
+ * waits on the reply ahead of it in its own thread, so when that reply is
+ * cancelled or fails, the thread's queued messages go back to its input
+ * instead of piling more turns on top.
+ * @param {string|null} threadId Thread whose generation settled
+ * @param {boolean} succeeded Whether the reply completed
+ */
+export function advanceMessageQueue(threadId, succeeded) {
+    if (!succeeded && threadId) {
+        const returned = takeQueuedMessages(threadId);
+        if (returned.length > 0) {
+            returnTextToInput(threadId, joinDraftText(...returned.map(entry => entry.content)));
+            showToast(returned.length === 1
+                ? 'Queued message returned to the input'
+                : `${returned.length} queued messages returned to the input`, 'info');
+        }
+    }
+
+    // Whatever is still generating will advance the queue when it finishes
+    if (!isGenerating()) {
+        let next = dequeueNextMessage();
+        // Skip messages whose thread was deleted
+        while (next && !getThread(next.threadId)) {
+            next = dequeueNextMessage();
+        }
+        if (next) {
+            sendMessageToThread(next.threadId, next.content).catch(error => {
+                console.error('[ScratchPad] Queued message send error:', error);
+            });
+        }
+    }
+
+    renderMessageQueue();
+    updateSendButtonMode();
+}
+
+/**
+ * Drop queued messages and returned drafts; they belong to the previous chat's threads
+ */
+export function resetConversationQueue() {
+    clearMessageQueue();
+    returnedDrafts.clear();
+    renderMessageQueue();
+}
+
+/**
+ * Put text back into a thread's input, ahead of anything typed since
+ * @param {string} threadId Thread ID
+ * @param {string} text Text to return
+ */
+function returnTextToInput(threadId, text) {
+    if (!text) return;
+
+    if (!isViewingThread(threadId)) {
+        returnedDrafts.set(threadId, joinDraftText(returnedDrafts.get(threadId), text));
+        return;
+    }
+
+    const textarea = document.getElementById('sp-message-input');
+    inputDraft = joinDraftText(text, textarea ? textarea.value : inputDraft);
+    if (textarea) {
+        textarea.value = inputDraft;
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    }
+}
+
+/**
+ * Render the current thread's queued messages above the input
+ */
+function renderMessageQueue() {
+    const inputContainer = conversationContainer?.querySelector('.sp-input-container');
+    if (!inputContainer) return;
+
+    inputContainer.querySelector('.sp-message-queue')?.remove();
+
+    const queued = currentThreadId ? getQueuedMessages(currentThreadId) : [];
+    if (queued.length === 0) return;
+
+    const panel = document.createElement('div');
+    panel.className = 'sp-message-queue';
+
+    const header = document.createElement('div');
+    header.className = 'sp-message-queue-header';
+    const countEl = document.createElement('span');
+    countEl.className = 'sp-message-queue-count';
+    countEl.textContent = `Queued · ${queued.length}`;
+    const hintEl = document.createElement('span');
+    hintEl.className = 'sp-message-queue-hint';
+    hintEl.textContent = queued.length === 1
+        ? 'Sends when the current reply finishes'
+        : 'Sends in order as each reply finishes';
+    header.append(countEl, hintEl);
+    panel.appendChild(header);
+
+    queued.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = 'sp-queued-message';
+
+        const textEl = document.createElement('span');
+        textEl.className = 'sp-queued-message-text';
+        textEl.textContent = entry.content;
+        textEl.title = entry.content;
+        row.appendChild(textEl);
+
+        row.appendChild(createButton({
+            icon: Icons.edit,
+            className: 'sp-queued-edit-btn',
+            ariaLabel: 'Edit queued message',
+            onClick: () => {
+                if (!removeQueuedMessage(entry.id)) return;
+                returnTextToInput(entry.threadId, entry.content);
+                renderMessageQueue();
+                document.getElementById('sp-message-input')?.focus();
+            }
+        }));
+
+        row.appendChild(createButton({
+            icon: Icons.close,
+            className: 'sp-queued-remove-btn',
+            ariaLabel: 'Remove queued message',
+            onClick: () => {
+                removeQueuedMessage(entry.id);
+                renderMessageQueue();
+            }
+        }));
+
+        panel.appendChild(row);
+    });
+
+    inputContainer.insertBefore(panel, inputContainer.firstChild);
+}
+
+/**
+ * Label the send button "Queue" while a generation is running
+ */
+function updateSendButtonMode() {
+    const queueing = isGenerating();
+
+    const sendBtn = document.getElementById('sp-send-btn');
+    if (sendBtn) {
+        const label = sendBtn.querySelector('.sp-button-text');
+        if (label) label.textContent = queueing ? 'Queue' : 'Send';
+        if (queueing) {
+            sendBtn.title = 'Queue this message to send after the current reply';
+        } else {
+            sendBtn.removeAttribute('title');
+        }
+    }
+
+    const textarea = document.getElementById('sp-message-input');
+    if (textarea) {
+        textarea.placeholder = queueing ? 'Queue a message...' : 'Ask a question...';
+    }
+}
+
+/**
+ * Cancel the active generation from the generating indicator
+ */
+function handleCancelGeneration() {
+    cancelGeneration();
+    showToast('Generation cancelled', 'info');
+}
+
+/**
+ * Check whether a thread is the one currently shown in the conversation view
+ * @param {string} threadId Thread ID
+ * @returns {boolean} True if the thread is on screen
+ */
+function isViewingThread(threadId) {
+    return !!threadId
+        && currentThreadId === threadId
+        && !!conversationContainer?.isConnected
+        && conversationContainer.classList.contains('sp-conversation-view');
+}
+
+/**
+ * Find the reply currently being generated in a thread
+ * @param {string} threadId Thread ID
+ * @returns {string|null} Pending assistant message ID
+ */
+function getPendingAssistantMessageId(threadId) {
+    const thread = getThread(threadId);
+    const pending = [...(thread?.messages || [])].reverse().find(message =>
+        message.role === 'assistant' && message.status === 'pending'
+    );
+    return pending?.id ?? null;
 }
 
 /**
@@ -1557,18 +1778,14 @@ async function handleRetry(messageId) {
         return;
     }
 
-    const sendBtn = document.getElementById('sp-send-btn');
-
     // Start generation and track ID
+    const threadId = currentThreadId;
     const generationId = startGeneration();
-    if (sendBtn) sendBtn.disabled = true;
-    showGeneratingIndicator(true, () => {
-        cancelGeneration();
-        showToast('Generation cancelled', 'info');
-    });
+    showGeneratingIndicator(true, handleCancelGeneration);
 
     // Track the new assistant message ID for streaming updates
     let streamingMsgEl = null;
+    let succeeded = false;
 
     try {
         let _latestRetryResponse = '';
@@ -1599,6 +1816,7 @@ async function handleRetry(messageId) {
             }
         });
         retryRenderer.cancel();
+        succeeded = result.success === true;
 
         if (!result.success && !result.cancelled) {
             showToast(`Retry failed: ${result.error}`, 'error');
@@ -1613,8 +1831,8 @@ async function handleRetry(messageId) {
 
     } finally {
         endGeneration(generationId);
-        if (sendBtn) sendBtn.disabled = false;
         showGeneratingIndicator(false);
+        advanceMessageQueue(threadId, succeeded);
     }
 }
 
@@ -1657,8 +1875,11 @@ async function handleAiRename(thread) {
         // Show loading toast
         showToast('Generating title suggestion...', 'info');
 
-        // Generate title
-        const result = await generateThreadTitle(thread);
+        // Generate title. It holds the generation lock, so anything sent
+        // meanwhile was queued behind it.
+        const result = await generateThreadTitle(thread).finally(() => {
+            advanceMessageQueue(null, true);
+        });
 
         if (!result.success) {
             showToast(`Title generation failed: ${result.error}`, 'error');
@@ -1772,14 +1993,11 @@ function refreshConversation() {
 export function updateTransferredGeneration(threadId, partialResponse, isComplete = false) {
     if (currentThreadId !== threadId || !conversationContainer?.isConnected) return;
 
-    const thread = getThreadForCurrentBranch(threadId);
-    const pendingMessage = [...(thread?.messages || [])].reverse().find(message =>
-        message.role === 'assistant' && message.status === 'pending'
-    );
-    if (!pendingMessage) return;
+    const pendingMessageId = getPendingAssistantMessageId(threadId);
+    if (!pendingMessageId) return;
 
     const contentEl = conversationContainer.querySelector(
-        `.sp-message[data-message-id="${pendingMessage.id}"] .sp-message-content`
+        `.sp-message[data-message-id="${pendingMessageId}"] .sp-message-content`
     );
     if (!contentEl) return;
 
@@ -1956,11 +2174,14 @@ function showGeneratingIndicator(show, onCancel = null) {
             indicator.appendChild(cancelBtn);
         }
 
-        inputContainer.insertBefore(indicator, inputContainer.firstChild);
+        // Keep the indicator directly above the input: the queue panel above it
+        // changes height as items leave, and must not shift Cancel under the pointer
+        inputContainer.insertBefore(indicator, inputContainer.querySelector('.sp-input-wrapper'));
         inputContainer.classList.add('sp-generating');
     } else {
         inputContainer.classList.remove('sp-generating');
     }
+    updateSendButtonMode();
 }
 
 /**

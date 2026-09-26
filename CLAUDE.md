@@ -36,6 +36,7 @@ index.js ──┬── src/storage.js      Thread/message CRUD, branch filteri
            │   └── src/streaming.js   Direct SSE streaming to chat-completions endpoint
            ├── src/embeddings.js   Embedding provider dispatch + localforage vector cache
            ├── src/semanticSearch.js  Corpus build, lazy index, hybrid cosine ranking
+           ├── src/messageQueue.js  In-memory FIFO of messages sent while generating (pure, no DOM)
            ├── src/tts.js          Optional text-to-speech integration
            └── src/ui/
                ├── index.js        Drawer lifecycle (create-on-open, destroy-on-close)
@@ -61,6 +62,8 @@ index.js ──┬── src/storage.js      Thread/message CRUD, branch filteri
 **Reasoning normalization** (`reasoning.js`): Extracts thinking/reasoning from 10+ provider formats (Anthropic content blocks, OpenAI `reasoning_content`, `<think>` tags, Google/Mistral fields, encrypted signatures) into a unified representation.
 
 **Semantic search** (`embeddings.js` + `semanticSearch.js`): Optional embedding-based thread search alongside the instant keyword search. `embeddings.js` dispatches to OpenRouter/OpenAI/Ollama and caches vectors in IndexedDB (localforage, DB `ScratchPad_Embeddings`); config lives at `extensionSettings.scratchPad.embeddings` and, when `useSharedConfig` is on, inherits provider/key/model from the sibling `chat_manager` extension's `extensionSettings.chat_manager.embeddings`. `semanticSearch.js` builds a corpus of thread titles + message variants, embeds them lazily (cache-first), and ranks threads with a hybrid score `0.7*cosine + 0.3*keyword` (ported from `chat_manager`). The pure scoring helpers (`cosineSimilarity`, `scoreEntries`, `reduceToBestPerThread`) are unit-tested in `tests/semantic-search.test.mjs`. The Text/Semantic toggle lives in `ui/threadList.js`.
+
+**Message queue:** Sending while `isGenerating()` enqueues instead of dispatching. State lives in `src/messageQueue.js` (pure, unit-tested in `tests/message-queue.test.mjs`); UI and dispatch live in `ui/conversation.js`. Every path that holds the generation lock (send, retry, swipe, edit, AI rename, and both popup generations via `notifyGenerationSettled`) calls `advanceMessageQueue(threadId, succeeded)` when it settles: on cancel/failure that thread's queued items return to its input (stashed in `returnedDrafts` if the thread is off screen), then the next item is dispatched with `sendMessageToThread`, which only touches the DOM while its thread is on screen because queued items can dispatch in the background. The queue is cleared on CHAT_CHANGED via `resetConversationQueue()`.
 
 **Lazy UI:** The drawer DOM is created on open and destroyed on close to avoid stale state.
 

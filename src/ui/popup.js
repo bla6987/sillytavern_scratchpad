@@ -18,6 +18,14 @@ let currentPopupResponse = null;
 let transferredPopupThreadId = null;
 
 /**
+ * Check if the popup is running a generation
+ * @returns {boolean} True while a popup generation is in progress
+ */
+export function isPopupGenerationActive() {
+    return isPopupGenerating;
+}
+
+/**
  * Show the quick popup with a new thread and generate response
  * @param {string} message User's question
  */
@@ -514,6 +522,7 @@ async function generatePopupResponse(message) {
         isPopupGenerating = false;
         updatePopupActionButtons(false, currentPopupResponse !== null);
         finishTransferredGeneration(threadId);
+        notifyGenerationSettled(threadId, currentPopupResponse !== null);
     }
 }
 
@@ -613,6 +622,7 @@ async function generatePopupRawResponse(message, options = {}) {
         isPopupGenerating = false;
         updatePopupActionButtons(false, currentPopupResponse !== null);
         finishTransferredGeneration(threadId);
+        notifyGenerationSettled(threadId, currentPopupResponse !== null);
     }
 }
 
@@ -635,6 +645,17 @@ function finishTransferredGeneration(threadId) {
             finishConversation(threadId);
         })
         .catch(error => console.error('[ScratchPad] Failed to finish transferred generation:', error));
+}
+
+/**
+ * Let the conversation view send messages queued behind this generation.
+ * @param {string} threadId Thread that finished generating
+ * @param {boolean} succeeded Whether the reply completed
+ */
+function notifyGenerationSettled(threadId, succeeded) {
+    import('./conversation.js')
+        .then(({ advanceMessageQueue }) => advanceMessageQueue(threadId, succeeded))
+        .catch(error => console.error('[ScratchPad] Failed to advance message queue:', error));
 }
 
 /**
