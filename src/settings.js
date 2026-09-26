@@ -4,6 +4,7 @@
  */
 
 import { dispatchConnectionProfilesChanged, getConnectionProfiles as getConnectionProfileList, renderConnectionProfileOptions, resolveConnectionProfileId } from './connectionProfiles.js';
+import { getStoredEmbeddingSettings, updateEmbeddingSettings, isUsingSharedConfig, clearEmbeddingCache, getCacheStats } from './embeddings.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -263,6 +264,75 @@ export function loadSettingsUI() {
     if (stdGenToggle) {
         stdGenToggle.checked = settings.useStandardGeneration;
     }
+
+    // Embeddings / semantic search
+    loadEmbeddingSettingsUI();
+}
+
+/**
+ * Load embedding settings into the UI.
+ */
+function loadEmbeddingSettingsUI() {
+    const emb = getStoredEmbeddingSettings();
+
+    const enabledToggle = document.getElementById('sp_emb_enabled');
+    if (enabledToggle) enabledToggle.checked = emb.enabled;
+
+    const sharedToggle = document.getElementById('sp_emb_use_shared');
+    if (sharedToggle) sharedToggle.checked = emb.useSharedConfig;
+
+    const providerSelect = document.getElementById('sp_emb_provider');
+    if (providerSelect) providerSelect.value = emb.provider;
+
+    const apiKeyInput = document.getElementById('sp_emb_api_key');
+    if (apiKeyInput) apiKeyInput.value = emb.apiKey || '';
+
+    const ollamaUrlInput = document.getElementById('sp_emb_ollama_url');
+    if (ollamaUrlInput) ollamaUrlInput.value = emb.ollamaUrl || '';
+
+    const modelInput = document.getElementById('sp_emb_model');
+    if (modelInput) modelInput.value = emb.model || '';
+
+    updateEmbeddingConfigVisibility();
+    refreshEmbeddingCacheStatus();
+}
+
+/**
+ * Show/hide provider-specific inputs and disable the config block when the
+ * Chat Manager config is being shared.
+ */
+function updateEmbeddingConfigVisibility() {
+    const emb = getStoredEmbeddingSettings();
+    const sharing = emb.useSharedConfig && isUsingSharedConfig();
+
+    const configBlock = document.getElementById('sp_emb_config');
+    if (configBlock) {
+        configBlock.style.opacity = sharing ? '0.5' : '1';
+        configBlock.querySelectorAll('input, select').forEach((el) => { el.disabled = sharing; });
+    }
+
+    const apiKeyWrap = document.getElementById('sp_emb_api_key_wrap');
+    const ollamaWrap = document.getElementById('sp_emb_ollama_wrap');
+    const isOllama = emb.provider === 'ollama';
+    if (apiKeyWrap) apiKeyWrap.style.display = isOllama ? 'none' : 'block';
+    if (ollamaWrap) ollamaWrap.style.display = isOllama ? 'block' : 'none';
+}
+
+/**
+ * Update the embedding cache status line.
+ */
+async function refreshEmbeddingCacheStatus() {
+    const statusEl = document.getElementById('sp_emb_status');
+    if (!statusEl) return;
+    const emb = getStoredEmbeddingSettings();
+    const sharing = emb.useSharedConfig && isUsingSharedConfig();
+    try {
+        const stats = await getCacheStats();
+        const source = sharing ? 'Using Chat Manager config. ' : '';
+        statusEl.textContent = `${source}Cached embeddings: ${stats.count} (~${stats.estimatedSizeKB} KB)`;
+    } catch {
+        statusEl.textContent = sharing ? 'Using Chat Manager config.' : '';
+    }
 }
 
 /**
@@ -270,6 +340,7 @@ export function loadSettingsUI() {
  */
 export function initSettingsListeners() {
     initConnectionProfileChangeListeners();
+    initEmbeddingSettingsListeners();
 
     // Chat history limit slider
     const historySlider = document.getElementById('sp_chat_history_limit');
@@ -453,6 +524,70 @@ export function initSettingsListeners() {
     if (stdGenToggle) {
         bindOnce(stdGenToggle, 'change', (e) => {
             updateSettings({ useStandardGeneration: e.target.checked });
+        });
+    }
+}
+
+/**
+ * Wire up embedding / semantic search settings inputs.
+ */
+function initEmbeddingSettingsListeners() {
+    const enabledToggle = document.getElementById('sp_emb_enabled');
+    if (enabledToggle) {
+        bindOnce(enabledToggle, 'change', (e) => {
+            updateEmbeddingSettings({ enabled: e.target.checked });
+        });
+    }
+
+    const sharedToggle = document.getElementById('sp_emb_use_shared');
+    if (sharedToggle) {
+        bindOnce(sharedToggle, 'change', (e) => {
+            updateEmbeddingSettings({ useSharedConfig: e.target.checked });
+            updateEmbeddingConfigVisibility();
+            refreshEmbeddingCacheStatus();
+        });
+    }
+
+    const providerSelect = document.getElementById('sp_emb_provider');
+    if (providerSelect) {
+        bindOnce(providerSelect, 'change', (e) => {
+            updateEmbeddingSettings({ provider: e.target.value });
+            updateEmbeddingConfigVisibility();
+        });
+    }
+
+    const apiKeyInput = document.getElementById('sp_emb_api_key');
+    if (apiKeyInput) {
+        bindOnce(apiKeyInput, 'input', (e) => {
+            updateEmbeddingSettings({ apiKey: e.target.value.trim() });
+        });
+    }
+
+    const ollamaUrlInput = document.getElementById('sp_emb_ollama_url');
+    if (ollamaUrlInput) {
+        bindOnce(ollamaUrlInput, 'input', (e) => {
+            updateEmbeddingSettings({ ollamaUrl: e.target.value.trim() });
+        });
+    }
+
+    const modelInput = document.getElementById('sp_emb_model');
+    if (modelInput) {
+        bindOnce(modelInput, 'input', (e) => {
+            updateEmbeddingSettings({ model: e.target.value.trim() });
+        });
+    }
+
+    const clearCacheBtn = document.getElementById('sp_emb_clear_cache');
+    if (clearCacheBtn) {
+        bindOnce(clearCacheBtn, 'click', async () => {
+            try {
+                await clearEmbeddingCache();
+                if (typeof toastr !== 'undefined') toastr.success('Embedding cache cleared');
+            } catch (err) {
+                console.error('[ScratchPad] Failed to clear embedding cache:', err);
+                if (typeof toastr !== 'undefined') toastr.error('Failed to clear embedding cache');
+            }
+            refreshEmbeddingCacheStatus();
         });
     }
 }

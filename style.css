@@ -530,6 +530,57 @@ body.sp-fullscreen-open {
     padding: 0 0.15rem;
 }
 
+/* Text / Semantic search-mode toggle */
+.sp-search-mode-toggle {
+    display: inline-flex;
+    align-self: flex-start;
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    overflow: hidden;
+    background: var(--sp-bg-secondary);
+}
+
+.sp-search-mode-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--sp-text-muted);
+    font: inherit;
+    font-size: calc(var(--sp-text-size) * 0.72);
+    padding: 0.25rem 0.7rem;
+    cursor: pointer;
+    transition: background-color var(--sp-transition), color var(--sp-transition);
+}
+
+.sp-search-mode-btn + .sp-search-mode-btn {
+    border-left: 1px solid var(--sp-border);
+}
+
+.sp-search-mode-btn:hover:not(:disabled):not(.active) {
+    color: var(--sp-text-primary);
+}
+
+.sp-search-mode-btn.active {
+    background: var(--sp-accent);
+    color: var(--sp-bg-primary, #fff);
+}
+
+.sp-search-mode-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.sp-search-loading {
+    opacity: 0.85;
+}
+
+.sp-emb-status {
+    display: block;
+    margin-top: 0.35rem;
+    opacity: 0.7;
+    font-size: 0.85em;
+}
+
 /* ========================================
    Thread List
    ======================================== */

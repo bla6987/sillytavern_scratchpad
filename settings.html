@@ -82,7 +82,52 @@
                 <div class="flex-container">
                     <input type="button" id="sp_reset_ooc_prompt" class="menu_button" value="Reset to Default">
                 </div>
-                
+
+                <hr>
+
+                <h4>Semantic Search</h4>
+
+                <label class="checkbox_label" for="sp_emb_enabled">
+                    <input type="checkbox" id="sp_emb_enabled">
+                    <span>Enable Semantic Search</span>
+                    <small>Adds a "Semantic" mode to thread search that finds threads by meaning using embeddings</small>
+                </label>
+
+                <label class="checkbox_label" for="sp_emb_use_shared">
+                    <input type="checkbox" id="sp_emb_use_shared" checked>
+                    <span>Use Chat Manager's embedding config</span>
+                    <small>Reuse the provider, model, and API key already set in the Chat Manager extension (recommended)</small>
+                </label>
+
+                <div id="sp_emb_config">
+                    <label for="sp_emb_provider">
+                        <span>Provider:</span>
+                    </label>
+                    <select id="sp_emb_provider" class="text_pole">
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="ollama">Ollama (Local)</option>
+                    </select>
+
+                    <div id="sp_emb_api_key_wrap">
+                        <label for="sp_emb_api_key"><span>API Key:</span></label>
+                        <input type="password" id="sp_emb_api_key" class="text_pole" placeholder="sk-...">
+                    </div>
+
+                    <div id="sp_emb_ollama_wrap" style="display: none;">
+                        <label for="sp_emb_ollama_url"><span>Ollama URL:</span></label>
+                        <input type="text" id="sp_emb_ollama_url" class="text_pole" placeholder="http://localhost:11434">
+                    </div>
+
+                    <label for="sp_emb_model"><span>Embedding Model:</span></label>
+                    <input type="text" id="sp_emb_model" class="text_pole" placeholder="e.g. text-embedding-3-small">
+                </div>
+
+                <div class="flex-container">
+                    <input type="button" id="sp_emb_clear_cache" class="menu_button" value="Clear Embedding Cache">
+                </div>
+                <small id="sp_emb_status" class="sp-emb-status"></small>
+
                 <hr>
 
                 <h4>Text-to-Speech</h4>

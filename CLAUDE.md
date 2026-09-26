@@ -11,8 +11,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run tests (reasoning extraction)
+# Run a test (each file is a standalone node script)
 node tests/reasoning-normalization.test.mjs
+node tests/semantic-search.test.mjs
+
+# Run all tests
+for t in tests/*.test.mjs; do node "$t"; done
 ```
 
 There is no build, lint, or bundling step. The extension loads directly via SillyTavern's extension system.
@@ -25,16 +29,18 @@ There is no build, lint, or bundling step. The extension loads directly via Sill
 
 ```
 index.js ──┬── src/storage.js      Thread/message CRUD, branch filtering, swipes
-           ├── src/settings.js     Settings UI binding, per-thread context config
+           ├── src/settings.js     Settings UI binding, per-thread context config, embeddings config
            ├── src/commands.js     Slash command registration (/sp, /sp-view, /rawprompt)
            ├── src/generation.js   Context building, API calls, 3 generation modes
            │   ├── src/reasoning.js   Multi-provider reasoning/thinking extraction
            │   └── src/streaming.js   Direct SSE streaming to chat-completions endpoint
+           ├── src/embeddings.js   Embedding provider dispatch + localforage vector cache
+           ├── src/semanticSearch.js  Corpus build, lazy index, hybrid cosine ranking
            ├── src/tts.js          Optional text-to-speech integration
            └── src/ui/
                ├── index.js        Drawer lifecycle (create-on-open, destroy-on-close)
                ├── conversation.js Thread view, message rendering, swipe navigation
-               ├── threadList.js   Thread list with branch indicators
+               ├── threadList.js   Thread list, branch indicators, Text/Semantic search toggle
                ├── popup.js        Quick-response bottom-sheet (mobile) / inline (desktop)
                └── components.js   Shared UI primitives, markdown rendering
 ```
@@ -53,6 +59,8 @@ index.js ──┬── src/storage.js      Thread/message CRUD, branch filteri
 - **Safety mode** — for Claude models that don't support assistant prefill
 
 **Reasoning normalization** (`reasoning.js`): Extracts thinking/reasoning from 10+ provider formats (Anthropic content blocks, OpenAI `reasoning_content`, `<think>` tags, Google/Mistral fields, encrypted signatures) into a unified representation.
+
+**Semantic search** (`embeddings.js` + `semanticSearch.js`): Optional embedding-based thread search alongside the instant keyword search. `embeddings.js` dispatches to OpenRouter/OpenAI/Ollama and caches vectors in IndexedDB (localforage, DB `ScratchPad_Embeddings`); config lives at `extensionSettings.scratchPad.embeddings` and, when `useSharedConfig` is on, inherits provider/key/model from the sibling `chat_manager` extension's `extensionSettings.chat_manager.embeddings`. `semanticSearch.js` builds a corpus of thread titles + message variants, embeds them lazily (cache-first), and ranks threads with a hybrid score `0.7*cosine + 0.3*keyword` (ported from `chat_manager`). The pure scoring helpers (`cosineSimilarity`, `scoreEntries`, `reduceToBestPerThread`) are unit-tested in `tests/semantic-search.test.mjs`. The Text/Semantic toggle lives in `ui/threadList.js`.
 
 **Lazy UI:** The drawer DOM is created on open and destroyed on close to avoid stale state.
 

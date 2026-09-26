@@ -6,6 +6,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 
 - **Meta Conversations**: Have OOC discussions about your roleplay without affecting the main chat
 - **Threaded Discussions**: Organize different lines of inquiry into separate threads
+- **Semantic Search**: Search threads by *meaning*, not just keywords, using embeddings (OpenRouter / OpenAI / Ollama). Reuses the Chat Manager extension's embedding key by default.
 - **Full Context**: AI responses are informed by your chat history and character information
 - **Streaming Responses**: Watch AI responses generate in real-time
 - **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
@@ -45,6 +46,15 @@ Send a question directly from the chat input:
 
 This creates a new thread and shows a popup with the AI's response. You can dismiss the popup or open it in the full Scratch Pad interface to continue the conversation.
 
+### Searching Threads
+
+The thread list has a search box with two modes, toggled by the **Text / Semantic** control:
+
+- **Text** (default): instant, offline keyword/fuzzy search over thread titles and message content.
+- **Semantic**: embedding-based search that ranks threads by meaning. Searching a paraphrase (e.g. "why did she leave") surfaces threads about a character's departure even if those exact words never appear. Results combine semantic similarity with keyword matches (`0.7 * semantic + 0.3 * keyword`).
+
+Semantic mode requires embeddings to be enabled and configured (see Settings → Semantic Search). The first semantic search in a chat embeds the threads (cached afterward, so repeats are instant); new messages are indexed in the background as you go.
+
 ### Managing Threads
 
 - **New Thread**: Click the "New Thread" button or send a message from the thread list
@@ -82,6 +92,13 @@ Access settings in the Extensions panel under "Scratch Pad":
 
 Global content inclusion settings are used as defaults for new Scratch Pad threads.
 Existing threads keep their own context settings, which you can change in each thread's context panel.
+
+### Semantic Search
+
+- **Enable Semantic Search**: Turns on the "Semantic" search mode in the thread list.
+- **Use Chat Manager's embedding config**: When on (default), the provider, model, and API key configured in the Chat Manager extension are reused — so if you already use Chat Manager's semantic features, no extra setup is needed. Turn it off to configure a provider/key just for Scratch Pad.
+- **Provider / API Key / Model**: OpenRouter (`https://openrouter.ai/api/v1/embeddings`), OpenAI, or a local Ollama instance. Embedding vectors are cached locally (IndexedDB); the cache auto-clears when you change models.
+- **Clear Embedding Cache**: Removes cached vectors (e.g. to free space or force a re-embed).
 
 ### OOC System Prompt
 

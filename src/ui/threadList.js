@@ -7,6 +7,8 @@ import { getCurrentContextSettings, isGlobalApiProfileForced } from '../settings
 import { getConnectionProfileLabel } from '../connectionProfiles.js';
 import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
+import { isSemanticSearchEnabled } from '../embeddings.js';
+import { searchThreadsSemantic, resetQueryCache } from '../semanticSearch.js';
 
 // Dynamic import to avoid circular dependency
 let conversationModule = null;
@@ -19,7 +21,9 @@ async function getConversationModule() {
 
 let threadListContainer = null;
 let currentSearchQuery = '';
+let currentSearchMode = 'text'; // 'text' (instant keyword) | 'semantic' (embeddings)
 let searchDebounceTimer = null;
+let searchRequestId = 0; // guards against stale async (semantic) renders
 const searchIndexCache = new Map();
 const SEARCH_DEBOUNCE_MS = 180;
 const MAX_SEARCH_RESULTS = 50;
@@ -30,9 +34,12 @@ const SNIPPET_RADIUS = 42;
  */
 export function resetThreadListState() {
     currentSearchQuery = '';
+    currentSearchMode = 'text';
     clearTimeout(searchDebounceTimer);
     searchDebounceTimer = null;
+    searchRequestId++;
     searchIndexCache.clear();
+    resetQueryCache();
 }
 
 /**
@@ -104,10 +111,15 @@ export function renderThreadList(container) {
     const searchContainer = document.createElement('div');
     searchContainer.className = 'sp-thread-search-container';
 
+    // Fall back to keyword mode if semantic became unavailable.
+    if (currentSearchMode === 'semantic' && !isSemanticSearchEnabled()) {
+        currentSearchMode = 'text';
+    }
+
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'sp-thread-search-input';
-    searchInput.placeholder = 'Search threads...';
+    searchInput.placeholder = currentSearchMode === 'semantic' ? 'Search by meaning...' : 'Search threads...';
     searchInput.value = currentSearchQuery;
     searchInput.setAttribute('aria-label', 'Search scratch pad threads');
 
@@ -124,7 +136,14 @@ export function renderThreadList(container) {
         }, SEARCH_DEBOUNCE_MS);
     });
 
+    // Text / Semantic mode toggle
+    const modeToggle = createSearchModeToggle(() => {
+        searchInput.placeholder = currentSearchMode === 'semantic' ? 'Search by meaning...' : 'Search threads...';
+        renderThreadContent(listContainer, searchMeta, currentSearchQuery);
+    });
+
     searchContainer.appendChild(searchInput);
+    searchContainer.appendChild(modeToggle);
     searchContainer.appendChild(searchMeta);
     container.appendChild(searchContainer);
 
@@ -178,11 +197,16 @@ export function renderThreadList(container) {
  * @param {string} query Current search query
  */
 function renderThreadContent(listContainer, searchMeta, query = '') {
+    const requestId = ++searchRequestId;
     listContainer.innerHTML = '';
     const trimmedQuery = query.trim();
 
     if (trimmedQuery) {
-        renderSearchResults(listContainer, searchMeta, trimmedQuery);
+        if (currentSearchMode === 'semantic' && isSemanticSearchEnabled()) {
+            renderSemanticResults(listContainer, searchMeta, trimmedQuery, requestId);
+        } else {
+            renderSearchResults(listContainer, searchMeta, trimmedQuery);
+        }
         return;
     }
 
@@ -242,6 +266,115 @@ function renderThreadContent(listContainer, searchMeta, query = '') {
 
             listContainer.appendChild(details);
         }
+    }
+}
+
+/**
+ * Build the Text / Semantic search-mode toggle.
+ * @param {() => void} onChange Called after the mode changes
+ * @returns {HTMLElement} Toggle element
+ */
+function createSearchModeToggle(onChange) {
+    const toggle = document.createElement('div');
+    toggle.className = 'sp-search-mode-toggle';
+    toggle.setAttribute('role', 'group');
+    toggle.setAttribute('aria-label', 'Search mode');
+
+    const semanticAvailable = isSemanticSearchEnabled();
+
+    const makeBtn = (mode, label) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `sp-search-mode-btn ${currentSearchMode === mode ? 'active' : ''}`;
+        btn.textContent = label;
+        btn.dataset.mode = mode;
+        if (mode === 'semantic' && !semanticAvailable) {
+            btn.disabled = true;
+            btn.title = 'Enable and configure semantic search in Scratch Pad settings';
+        }
+        btn.addEventListener('click', () => {
+            if (currentSearchMode === mode) return;
+            if (mode === 'semantic' && !isSemanticSearchEnabled()) return;
+            currentSearchMode = mode;
+            toggle.querySelectorAll('.sp-search-mode-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.mode === mode);
+            });
+            onChange();
+        });
+        return btn;
+    };
+
+    toggle.appendChild(makeBtn('text', 'Text'));
+    toggle.appendChild(makeBtn('semantic', 'Semantic'));
+    return toggle;
+}
+
+/**
+ * Render semantic (embedding-based) search results. Async: shows a loading
+ * state, then results, guarding against stale renders via requestId.
+ * @param {HTMLElement} listContainer Thread list container
+ * @param {HTMLElement} searchMeta Search status element
+ * @param {string} query Search query
+ * @param {number} requestId Render token for staleness checks
+ */
+async function renderSemanticResults(listContainer, searchMeta, query, requestId) {
+    const loading = document.createElement('div');
+    loading.className = 'sp-empty-state sp-search-loading';
+    loading.innerHTML = `
+        <div class="sp-empty-icon">${Icons.thread}</div>
+        <p>Searching by meaning…</p>
+    `;
+    listContainer.appendChild(loading);
+    searchMeta.textContent = 'Embedding…';
+
+    let results;
+    try {
+        results = await searchThreadsSemantic(query, { maxResults: MAX_SEARCH_RESULTS });
+    } catch (err) {
+        if (requestId !== searchRequestId) return; // stale
+        console.error('[ScratchPad] Semantic search error:', err);
+        listContainer.innerHTML = '';
+        searchMeta.textContent = '';
+        const errState = document.createElement('div');
+        errState.className = 'sp-empty-state';
+        const icon = document.createElement('div');
+        icon.className = 'sp-empty-icon';
+        icon.innerHTML = Icons.thread;
+        const line1 = document.createElement('p');
+        line1.textContent = 'Semantic search failed.';
+        const line2 = document.createElement('p');
+        line2.textContent = err?.message || 'Check your embedding settings.';
+        errState.append(icon, line1, line2);
+        listContainer.appendChild(errState);
+        showToast(err?.message || 'Semantic search failed', 'error');
+        return;
+    }
+
+    if (requestId !== searchRequestId) return; // a newer search superseded this one
+
+    listContainer.innerHTML = '';
+    searchMeta.textContent = `${results.length} result${results.length !== 1 ? 's' : ''}`;
+
+    if (results.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'sp-empty-state';
+        emptyState.innerHTML = `
+            <div class="sp-empty-icon">${Icons.thread}</div>
+            <p>No semantically related threads.</p>
+            <p>Try rephrasing your query.</p>
+        `;
+        listContainer.appendChild(emptyState);
+        return;
+    }
+
+    for (const result of results) {
+        listContainer.appendChild(createThreadItem(result.thread, {
+            query,
+            previewText: result.snippet,
+            matchType: result.matchType,
+            branchLabel: result.branchLabel,
+            isSearchResult: true
+        }));
     }
 }
 

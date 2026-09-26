@@ -4,6 +4,7 @@
 
 import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
 import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { warmEmbeddings } from '../semanticSearch.js';
 import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
@@ -1392,6 +1393,8 @@ async function handleGenerateSwipe(messageId) {
 
         if (result.success) {
             playCompletionSound();
+            // Best-effort incremental indexing for semantic search
+            warmEmbeddings(result.response);
         }
 
         updateSwipeDisplay(messageId);
@@ -1514,6 +1517,8 @@ async function handleSendMessage() {
 
         if (result.success) {
             playCompletionSound();
+            // Best-effort incremental indexing for semantic search
+            warmEmbeddings([message, result.response]);
         }
 
         // Refresh conversation to show final state
