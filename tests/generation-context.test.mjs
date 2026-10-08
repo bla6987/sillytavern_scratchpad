@@ -4,7 +4,7 @@ import { ReadableStream } from 'node:stream/web';
 
 import { GENERAL_ASK_SYSTEM_PROMPT, editUserMessageAndRegenerate, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
-import { getConnectionProfiles, getSettings } from '../src/settings.js';
+import { getConnectionProfiles, getSettings, getCurrentContextSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
 import { streamGeneration } from '../src/streaming.js';
 
@@ -845,4 +845,131 @@ test('streaming request uses GPT-5 compatible token and sampling parameters', as
     } finally {
         globalThis.fetch = previousFetch;
     }
+});
+
+function swipeChatFixture() {
+    return [
+        { is_user: false, name: 'Bot', mes: 'Prior story' },
+        { is_user: true, name: 'Player', mes: 'USER_SELECTED', swipe_id: 1, swipes: ['USER_ALTERNATE', 'USER_SELECTED'] },
+        { is_user: false, name: 'Bot', mes: 'AI_SELECTED', swipe_id: 0, swipes: ['AI_SELECTED', 'AI_ALTERNATE'] },
+    ];
+}
+
+for (const useStandardGeneration of [true, false]) {
+    for (const useMultiMessageFormat of [true, false]) {
+        test(`swipe context reaches generation (standard=${useStandardGeneration}, multi=${useMultiMessageFormat})`, async () => {
+            const chat = swipeChatFixture();
+            const original = structuredClone(chat);
+            const { calls } = setupHarness({
+                chat,
+                extensionSettings: { scratchPad: { useStandardGeneration, useMultiMessageFormat, oocSystemPrompt: 'OOC' } },
+            });
+            const thread = createThread('Compare', {
+                swipeContextMode: 'both', chatHistoryRangeMode: 'start_to', chatHistoryRangeEnd: 1,
+            });
+            const result = await generateScratchPadResponse('Compare the swipes', thread.id);
+            assert.equal(result.success, true);
+            const call = calls.find(args => args[0] === (useStandardGeneration ? 'generateRaw' : 'sendGenerationRequest'));
+            const payload = useStandardGeneration ? call[1].prompt : call[2].prompt;
+            const text = typeof payload === 'string' ? payload : payload.map(m => m.content).join('\n');
+            assert.match(text, /Swipe 1:\nUSER_ALTERNATE/);
+            assert.match(text, /Swipe 2 \(currently selected\):\nUSER_SELECTED/);
+            assert.match(text, /Swipe 2:\nAI_ALTERNATE/);
+            assert.deepEqual(chat, original);
+            if (useMultiMessageFormat) {
+                const block = payload.find(m => m.content.includes('MAIN CHAT SWIPE ALTERNATIVES'));
+                assert.equal(block.role, 'system');
+                assert.equal(payload.at(-1).content, 'Compare the swipes');
+            }
+        });
+    }
+}
+
+test('new threads copy global swipe defaults while existing threads keep their own choice', async () => {
+    const { calls } = setupHarness({
+        chat: swipeChatFixture(),
+        extensionSettings: { scratchPad: { swipeContextMode: 'user' } },
+    });
+    const newThread = createThread('New', getCurrentContextSettings());
+    assert.equal(newThread.contextSettings.swipeContextMode, 'user');
+    await generateScratchPadResponse('Compare', newThread.id);
+    assert.match(calls.find(c => c[0] === 'generateRaw')[1].prompt, /USER_ALTERNATE/);
+    calls.length = 0;
+    const existingThread = createThread('Legacy', { includeCharacterCard: true });
+    await generateScratchPadResponse('Compare', existingThread.id);
+    assert.doesNotMatch(calls.find(c => c[0] === 'generateRaw')[1].prompt, /USER_ALTERNATE|AI_ALTERNATE/);
+});
+
+test('card-only, general ask, and raw prompt omit swipe alternatives', async () => {
+    const { calls } = setupHarness({ chat: swipeChatFixture() });
+    const thread = createThread('Compare', { swipeContextMode: 'both', characterCardOnly: true });
+    await generateScratchPadResponse('Card question', thread.id);
+    assert.doesNotMatch(calls.find(c => c[0] === 'generateRaw')[1].prompt, /MAIN CHAT SWIPE|USER_ALTERNATE|AI_ALTERNATE/);
+    thread.contextSettings.characterCardOnly = false;
+    for (const generate of [generateGeneralAskResponse, generateRawPromptResponse]) {
+        calls.length = 0;
+        const result = await generate('General question', thread.id);
+        assert.equal(result.success, true);
+        assert.doesNotMatch(JSON.stringify(calls), /USER_ALTERNATE|AI_ALTERNATE|MAIN CHAT SWIPE/);
+    }
+});
+
+test('swipe alternatives survive history trimming and fail clearly if they cannot fit', async () => {
+    const chat = swipeChatFixture();
+    chat[0].mes = 'OLD_HISTORY '.repeat(300);
+    const countWords = text => String(text).split(/\s+/).filter(Boolean).length;
+    const { context, calls } = setupHarness({
+        chat,
+        chatCompletionSettings: { openai_max_context: 250, openai_max_tokens: 10, stream_openai: false },
+        getTokenCountAsync: async text => countWords(text),
+    });
+    const original = structuredClone(context.chat);
+    const thread = createThread('Compare', { swipeContextMode: 'both' });
+    const result = await generateScratchPadResponse('Compare', thread.id);
+    assert.equal(result.success, true);
+    const prompt = calls.find(c => c[0] === 'generateRaw')[1].prompt;
+    assert.doesNotMatch(prompt, /OLD_HISTORY/);
+    assert.match(prompt, /USER_ALTERNATE/);
+    assert.match(prompt, /AI_ALTERNATE/);
+    assert.ok(countWords(prompt + calls.find(c => c[0] === 'generateRaw')[1].systemPrompt) <= 240);
+    assert.deepEqual(context.chat, original);
+    calls.length = 0;
+    context.chat[2].swipes.push('OVERSIZED_ALTERNATIVE '.repeat(500));
+    const oversizedChat = structuredClone(context.chat);
+    const tooLarge = await generateScratchPadResponse('Compare again', thread.id);
+    assert.equal(tooLarge.success, false);
+    assert.match(tooLarge.error, /swipe context exceeds.*prompt budget/);
+    assert.equal(calls.some(c => ['generateRaw', 'sendGenerationRequest'].includes(c[0])), false);
+    assert.deepEqual(context.chat, oversizedChat);
+});
+
+test('profile requests and regenerated Scratch Pad replies include main-chat swipe context', async () => {
+    const { calls, context } = setupHarness({
+        chat: swipeChatFixture(),
+        extensionSettings: {
+            disabledExtensions: [],
+            connectionManager: { profiles: [{ id: 'swipe-profile', name: 'Swipe Profile', api: 'openai' }] },
+            scratchPad: { useAlternativeApi: true, connectionProfileId: 'swipe-profile' },
+        },
+        ConnectionManagerRequestService: {
+            isProfileSupported: () => true,
+            sendRequest: async (...args) => {
+                calls.push(['profileSendRequest', ...args]);
+                return { content: 'Comparison response' };
+            },
+        },
+    });
+    const thread = createThread('Compare', { swipeContextMode: 'assistant' });
+    const result = await generateScratchPadResponse('Compare AI swipes', thread.id);
+    assert.equal(result.success, true);
+    let request = calls.find(c => c[0] === 'profileSendRequest');
+    assert.match(request[2].map(m => m.content).join('\n'), /AI_ALTERNATE/);
+    assert.doesNotMatch(request[2].map(m => m.content).join('\n'), /USER_ALTERNATE/);
+    calls.length = 0;
+    context.chat[2].swipes.push('NEW_AI_ALTERNATE');
+    const assistant = thread.messages.find(m => m.role === 'assistant');
+    const regenerated = await generateSwipe(thread.id, assistant.id);
+    assert.equal(regenerated.success, true);
+    request = calls.find(c => c[0] === 'profileSendRequest');
+    assert.match(request[2].map(m => m.content).join('\n'), /Swipe 3:\nNEW_AI_ALTERNATE/);
 });

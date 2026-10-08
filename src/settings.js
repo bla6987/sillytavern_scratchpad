@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     chatHistoryRangeMode: 'all',
     chatHistoryRangeStart: null,
     chatHistoryRangeEnd: null,
+    swipeContextMode: 'none',
     includeCharacterCard: true,
     characterCardOnly: false,
     includeSystemPrompt: false,
@@ -159,6 +160,11 @@ export function loadSettingsUI() {
         rangeEndInput.value = settings.chatHistoryRangeEnd ?? '';
     }
     updateRangeInputsVisibility();
+
+    const swipeContextSelect = document.getElementById('sp_swipe_context_mode');
+    if (swipeContextSelect) {
+        swipeContextSelect.value = settings.swipeContextMode || 'none';
+    }
 
     // Include character card toggle
     const charCardToggle = document.getElementById('sp_include_char_card');
@@ -341,6 +347,13 @@ async function refreshEmbeddingCacheStatus() {
 export function initSettingsListeners() {
     initConnectionProfileChangeListeners();
     initEmbeddingSettingsListeners();
+
+    const swipeContextSelect = document.getElementById('sp_swipe_context_mode');
+    if (swipeContextSelect) {
+        bindOnce(swipeContextSelect, 'change', (e) => {
+            updateSettings({ swipeContextMode: e.target.value });
+        });
+    }
 
     // Chat history limit slider
     const historySlider = document.getElementById('sp_chat_history_limit');
@@ -661,6 +674,7 @@ export function getCurrentContextSettings() {
         chatHistoryRangeMode: settings.chatHistoryRangeMode,
         chatHistoryRangeStart: settings.chatHistoryRangeStart,
         chatHistoryRangeEnd: settings.chatHistoryRangeEnd,
+        swipeContextMode: settings.swipeContextMode,
         characterCardOnly: settings.characterCardOnly,
         includeCharacterCard: settings.includeCharacterCard,
         includeSystemPrompt: settings.includeSystemPrompt,

@@ -9,6 +9,7 @@ import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProf
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
+import { buildSwipeContext } from './swipeContext.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -1102,6 +1103,8 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
     const scratchpadMessages = (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0)
         ? thread.messages.filter(isCompleteThreadMessage).slice()
         : [];
+    // Keep requested alternatives intact even when older history is trimmed.
+    const swipeContext = settings.characterCardOnly ? '' : buildSwipeContext(chat, settings.swipeContextMode);
 
     function buildPromptData(chatMessages, previousScratchpadMessages) {
         // Multi-message format: return structured messages array
@@ -1138,6 +1141,10 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
                 if (chatHistory) {
                     messages.push({ role: 'system', content: `Roleplay chat history:\n\n${chatHistory}` });
                 }
+            }
+
+            if (swipeContext) {
+                messages.push({ role: 'system', content: swipeContext });
             }
 
             // Thread history as alternating user/assistant messages
@@ -1190,6 +1197,10 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
             }
         }
 
+        if (swipeContext) {
+            parts.push(swipeContext);
+        }
+
         // Thread history (for continuity)
         if (previousScratchpadMessages.length > 0) {
             const threadHistory = formatThreadHistory(previousScratchpadMessages);
@@ -1222,6 +1233,10 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
         removedContextItems += 1;
         promptData = buildPromptData(selectedChat, scratchpadMessages);
         tokenCount = await countPromptTokens(promptDataToTokenText(promptData));
+    }
+
+    if (tokenCount > tokenBudget && swipeContext) {
+        throw new Error('The requested swipe context exceeds the available prompt budget. Choose one message role, reduce other context, or use a larger context window.');
     }
 
     if (removedContextItems > 0) {

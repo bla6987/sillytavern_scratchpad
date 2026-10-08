@@ -17,6 +17,17 @@
                     <span id="sp_chat_history_limit_value">All</span>
                 </div>
 
+                <label for="sp_swipe_context_mode">
+                    <span>Swipe context:</span>
+                    <small>Include all available swipes of the latest main-chat message for each selected role. Default for new threads.</small>
+                </label>
+                <select id="sp_swipe_context_mode" class="text_pole">
+                    <option value="none">Selected swipes only</option>
+                    <option value="user">Latest user message</option>
+                    <option value="assistant">Latest AI message</option>
+                    <option value="both">Latest user and AI messages</option>
+                </select>
+
                 <hr>
                 
                 <h4>Display Settings</h4>

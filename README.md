@@ -8,6 +8,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Threaded Discussions**: Organize different lines of inquiry into separate threads
 - **Semantic Search**: Search threads by *meaning*, not just keywords, using embeddings (OpenRouter / OpenAI / Ollama). Reuses the Chat Manager extension's embedding key by default.
 - **Full Context**: AI responses are informed by your chat history and character information
+- **Swipe Analysis**: Compare alternative swipes of the latest main-chat user message, AI message, or both
 - **Streaming Responses**: Watch AI responses generate in real-time
 - **Message Queue**: Keep typing while a reply generates — messages you send are queued and sent in order as each reply finishes
 - **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
@@ -46,6 +47,16 @@ Send a question directly from the chat input:
 ```
 
 This creates a new thread and shows a popup with the AI's response. You can dismiss the popup or open it in the full Scratch Pad interface to continue the conversation.
+
+### Analyzing Main-Chat Swipes
+
+Open a Scratch Pad thread, expand **Context Options**, and set **Swipe context** to **Latest user message**, **Latest AI message**, or **Latest user and AI messages**. Then ask a question such as “Compare the AI swipes for character consistency” or “Which user swipe gives the scene the strongest direction?”
+
+Scratch Pad includes every available nonempty swipe of the latest message for each selected role, labels them with 1-based swipe numbers, and marks the currently selected version. Alternatives are presented as different versions of one message. Your main chat and selected swipes stay unchanged. If the latest message has no alternatives, Scratch Pad reports that to the model instead of using an older message's swipes.
+
+Swipe context uses the latest messages in the full main chat, even when your history range excludes them. It refreshes on every request, including regenerated Scratch Pad replies. Older history can be trimmed to fit the model's context window; if the requested alternatives still cannot fit, generation stops with an error so the comparison does not silently omit swipes. **Character Card Only**, `/sp-ask`, and `/rawprompt` omit swipe context.
+
+The default is **Selected swipes only**, which keeps the existing behavior. Change **Extensions → Scratch Pad → Swipe context** to set the default for new threads and `/sp` popups. Existing threads keep their own choice.
 
 ### Searching Threads
 
@@ -93,6 +104,7 @@ Access settings in the Extensions panel under "Scratch Pad":
 ### Context Settings
 
 - **Chat History Limit**: Control how many messages from the main chat are included as context (default: all)
+- **Swipe Context**: Include alternative swipes of the latest user message, AI message, or both (default: selected swipes only)
 
 ### Content Inclusion
 

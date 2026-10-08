@@ -23,6 +23,7 @@ export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
     chatHistoryRangeMode: 'all',
     chatHistoryRangeStart: null,
     chatHistoryRangeEnd: null,
+    swipeContextMode: 'none',
     characterCardOnly: false,
     includeCharacterCard: true,
     includeSystemPrompt: false,

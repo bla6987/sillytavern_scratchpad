@@ -411,6 +411,19 @@ function renderContextOptions(container, thread, isNewThread) {
             </select>
         </div>
 
+        <label for="${idPrefix}swipe_context_mode">
+            <span>Swipe context:</span>
+            <small>Compare all swipes of the latest main-chat message for each selected role, even outside the history range. Ignored in Card Only mode.</small>
+        </label>
+        <div class="range-block">
+            <select id="${idPrefix}swipe_context_mode" class="text_pole">
+                <option value="none">Selected swipes only</option>
+                <option value="user">Latest user message</option>
+                <option value="assistant">Latest AI message</option>
+                <option value="both">Latest user and AI messages</option>
+            </select>
+        </div>
+
         <label for="${idPrefix}range_mode">
             <span>Chat history range:</span>
             <small>Which messages to send (1-based).</small>
@@ -550,20 +563,27 @@ function getContextSummaryText(contextSettings) {
     const start = contextSettings.chatHistoryRangeStart;
     const end = contextSettings.chatHistoryRangeEnd;
 
+    const swipeLabel = {
+        user: ' + user swipes',
+        assistant: ' + AI swipes',
+        both: ' + user & AI swipes',
+    }[contextSettings.swipeContextMode] || '';
+    const withSwipes = text => text + swipeLabel;
+
     switch (mode) {
         case 'all':
-            return 'All messages';
+            return withSwipes('All messages');
         case 'start_to':
-            return end ? `Messages 1-${end}` : 'All messages';
+            return withSwipes(end ? `Messages 1-${end}` : 'All messages');
         case 'from_to_end':
-            return start ? `Messages ${start}+` : 'All messages';
+            return withSwipes(start ? `Messages ${start}+` : 'All messages');
         case 'between':
             if (start && end) {
-                return `Messages ${start}-${end}`;
+                return withSwipes(`Messages ${start}-${end}`);
             }
-            return 'All messages';
+            return withSwipes('All messages');
         default:
-            return 'All messages';
+            return withSwipes('All messages');
     }
 }
 
@@ -573,6 +593,10 @@ function getContextSummaryText(contextSettings) {
  * @param {string} idPrefix ID prefix for elements
  */
 function loadThreadContextUI(contextSettings, idPrefix) {
+    const swipeContextSelect = document.getElementById(`${idPrefix}swipe_context_mode`);
+    if (swipeContextSelect) {
+        swipeContextSelect.value = contextSettings.swipeContextMode || 'none';
+    }
     const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
     if (rangeModeSelect) {
         rangeModeSelect.value = contextSettings.chatHistoryRangeMode || 'all';
@@ -586,6 +610,7 @@ function loadThreadContextUI(contextSettings, idPrefix) {
  * @param {string} idPrefix ID prefix for elements
  */
 function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
+    const swipeContextSelect = document.getElementById(`${idPrefix}swipe_context_mode`);
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
     const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
@@ -603,6 +628,12 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
         }
         updateContextSummary(idPrefix);
     };
+
+    if (swipeContextSelect) {
+        swipeContextSelect.addEventListener('change', (e) => {
+            updateContextSetting('swipeContextMode', e.target.value);
+        });
+    }
 
     if (profileSelect) {
         profileSelect.addEventListener('change', (e) => {
@@ -696,6 +727,7 @@ function updateContextSummary(idPrefix) {
  */
 function getContextSettingsFromUI() {
     const idPrefix = 'sp_thread_';
+    const swipeContextSelect = document.getElementById(`${idPrefix}swipe_context_mode`);
     const profileSelect = document.getElementById(`${idPrefix}connection_profile`);
     const rangeModeSelect = document.getElementById(`${idPrefix}range_mode`);
     const rangeStartInput = document.getElementById(`${idPrefix}range_start`);
@@ -711,6 +743,7 @@ function getContextSettingsFromUI() {
         chatHistoryRangeMode: rangeModeSelect?.value || 'all',
         chatHistoryRangeStart: parseRangeNumber(rangeStartInput?.value),
         chatHistoryRangeEnd: parseRangeNumber(rangeEndInput?.value),
+        swipeContextMode: swipeContextSelect?.value || 'none',
         characterCardOnly: charCardOnlyToggle?.checked || false,
         includeCharacterCard: includeCharCardToggle?.checked ?? true,
         includeSystemPrompt: includeSysPromptToggle?.checked || false,
