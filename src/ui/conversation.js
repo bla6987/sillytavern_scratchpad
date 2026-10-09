@@ -92,7 +92,7 @@ export function openThread(threadId, initialMessage = null) {
     const content = getConversationContainer();
     if (!content) return;
 
-    renderConversation(content);
+    renderConversation(content, false, true);
 }
 
 /**
@@ -105,15 +105,16 @@ export function startNewThread() {
     const content = getConversationContainer();
     if (!content) return;
 
-    renderConversation(content, true);
+    renderConversation(content, true, true);
 }
 
 /**
  * Render the conversation view
  * @param {HTMLElement} container Container element
  * @param {boolean} isNewThread Whether this is a new thread
+ * @param {boolean} focusInput Whether explicitly opening the view should focus its input
  */
-export function renderConversation(container, isNewThread = false) {
+export function renderConversation(container, isNewThread = false, focusInput = false) {
     conversationContainer = container;
 
     // Run cleanup functions from previous render
@@ -327,18 +328,27 @@ export function renderConversation(container, isNewThread = false) {
     // Scroll to bottom
     scrollToBottom();
 
-    // Focus input
-    setTimeout(() => {
-        textarea.focus();
+    // Only explicit navigation requests autofocus. Background refreshes restore
+    // focus above only when the replaced input was already being used.
+    if (focusInput || pendingMessage) {
+        const activeElement = document.activeElement;
+        const focusTimer = setTimeout(() => {
+            if (!textarea.isConnected) return;
+            // The user may have moved to another field during the opening delay.
+            if (focusInput && document.hasFocus() && document.activeElement === activeElement) {
+                textarea.focus();
+            }
 
-        // Handle pending message
-        if (pendingMessage) {
-            textarea.value = pendingMessage;
-            setDraft(draftKey, pendingMessage);
-            pendingMessage = null;
-            handleSendMessage();
-        }
-    }, 100);
+            // Handle pending message
+            if (pendingMessage) {
+                textarea.value = pendingMessage;
+                setDraft(draftKey, pendingMessage);
+                pendingMessage = null;
+                handleSendMessage();
+            }
+        }, 100);
+        registerCleanup(() => clearTimeout(focusTimer));
+    }
 
     // Handle keyboard/viewport
     setupViewportHandlers();
