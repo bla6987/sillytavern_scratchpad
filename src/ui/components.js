@@ -376,6 +376,232 @@ export function playCompletionSound() {
 }
 
 /**
+ * Format a token count compactly: 950, 12.3k, 128k
+ * @param {number} value Token count
+ * @returns {string} Formatted count
+ */
+export function formatTokenCount(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '?';
+    if (n < 1000) return String(Math.round(n));
+    const thousands = n / 1000;
+    return `${thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, '')}k`;
+}
+
+/**
+ * Describe how much context a prompt used and what was trimmed to fit
+ * @param {Object|null} stats Prompt stats from generation
+ * @returns {{summary: string, detail: string, trimmed: number}|null} Display text, or null without stats
+ */
+export function formatPromptStats(stats) {
+    if (!stats || !Number.isFinite(Number(stats.promptTokens))) return null;
+
+    const tokens = Number(stats.promptTokens);
+    const budget = Number(stats.tokenBudget) > 0 ? Number(stats.tokenBudget) : null;
+    const chatTrimmed = Math.max(0, Number(stats.chatMessagesTrimmed) || 0);
+    const threadTrimmed = Math.max(0, Number(stats.threadMessagesTrimmed) || 0);
+    const trimmed = chatTrimmed + threadTrimmed;
+
+    let summary = `Context: ${formatTokenCount(tokens)}${budget ? ` / ${formatTokenCount(budget)}` : ''} tokens`;
+    if (trimmed > 0) {
+        summary += ` · trimmed ${trimmed} older message${trimmed === 1 ? '' : 's'}`;
+    }
+
+    const detail = [
+        `Prompt: ${tokens.toLocaleString()}${budget ? ` of ${budget.toLocaleString()}` : ''} tokens`,
+        `Main chat messages sent: ${Number(stats.chatMessages) || 0}`,
+    ];
+    if (trimmed > 0) {
+        const trimmedParts = [];
+        if (chatTrimmed) trimmedParts.push(`${chatTrimmed} main chat`);
+        if (threadTrimmed) trimmedParts.push(`${threadTrimmed} Scratch Pad`);
+        detail.push(`Dropped to fit the context window: ${trimmedParts.join(', ')} message${trimmed === 1 ? '' : 's'} (oldest first)`);
+    }
+
+    return { summary, detail: detail.join('\n'), trimmed };
+}
+
+/**
+ * Escape text for use in HTML
+ * @param {string} value Text
+ * @returns {string} Escaped text
+ */
+export function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
+}
+
+/**
+ * Show a toast that undoes an action when clicked
+ * @param {string} message Toast text
+ * @param {() => void} onUndo Called at most once, when the toast is clicked
+ * @param {number} [timeOut] How long the toast stays up, in ms
+ */
+export function showUndoToast(message, onUndo, timeOut = 8000) {
+    if (typeof toastr === 'undefined') {
+        console.log(`[ScratchPad] ${message}`);
+        return;
+    }
+
+    let used = false;
+    toastr.info(`${escapeHtml(message)} <b class="sp-undo-link">Undo</b>`, '', {
+        timeOut,
+        extendedTimeOut: 4000,
+        escapeHtml: false,
+        tapToDismiss: true,
+        onclick: () => {
+            if (used) return;
+            used = true;
+            onUndo();
+        },
+    });
+}
+
+/**
+ * Save text as a file download
+ * @param {string} filename File name
+ * @param {string} text File contents
+ * @param {string} [mimeType] MIME type
+ */
+export function downloadTextFile(filename, text, mimeType = 'text/plain') {
+    const blob = new Blob([text], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+let openMenu = null;
+
+/**
+ * Close the open dropdown menu, if any
+ */
+export function closeMenu() {
+    openMenu?.close();
+}
+
+/**
+ * Create a button that opens a dropdown menu. The menu is attached to the
+ * page body so scrolling containers can't clip it.
+ * @param {Object} options Menu options
+ * @param {string} options.ariaLabel Button label
+ * @param {string} [options.className] Extra button classes
+ * @param {() => Array<{label: string, icon?: string, onClick: Function, danger?: boolean}>} options.getItems Items, read when the menu opens
+ * @returns {HTMLButtonElement} Menu button
+ */
+export function createMenuButton({ ariaLabel, className = '', getItems }) {
+    const button = createButton({
+        icon: Icons.more,
+        className: `sp-menu-btn ${className}`.trim(),
+        ariaLabel,
+        onClick: () => {
+            const wasOpen = openMenu?.button === button;
+            closeMenu();
+            if (!wasOpen) {
+                showMenu(button, getItems());
+            }
+        }
+    });
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    return button;
+}
+
+function showMenu(button, items) {
+    if (!items.length) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'sp-dropdown-menu';
+    menu.setAttribute('role', 'menu');
+
+    for (const item of items) {
+        const entry = document.createElement('button');
+        entry.type = 'button';
+        entry.className = `sp-dropdown-item${item.danger ? ' sp-dropdown-item-danger' : ''}`;
+        entry.setAttribute('role', 'menuitem');
+        if (item.icon) {
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'sp-dropdown-icon';
+            iconSpan.setAttribute('aria-hidden', 'true');
+            iconSpan.textContent = item.icon;
+            entry.appendChild(iconSpan);
+        }
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        entry.appendChild(label);
+        entry.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+            Promise.resolve()
+                .then(() => item.onClick())
+                .catch(err => {
+                    console.error('[ScratchPad] Menu action error:', err);
+                    showToast(`Error: ${err.message}`, 'error');
+                });
+        });
+        menu.appendChild(entry);
+    }
+
+    document.body.appendChild(menu);
+
+    // Open below the button, flipping up or left when it would leave the screen
+    const rect = button.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const top = rect.bottom + 4 + menuRect.height > window.innerHeight
+        ? Math.max(4, rect.top - 4 - menuRect.height)
+        : rect.bottom + 4;
+    const left = Math.min(Math.max(4, rect.right - menuRect.width), window.innerWidth - menuRect.width - 4);
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+
+    const onPointerDown = (e) => {
+        if (!menu.contains(e.target) && !button.contains(e.target)) close();
+    };
+    const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+            // Handled here so the drawer's own Escape handler leaves it open
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+            button.focus();
+        }
+    };
+    const onScroll = (e) => {
+        if (!menu.contains(e.target)) close();
+    };
+
+    function close() {
+        if (openMenu?.menu !== menu) return;
+        openMenu = null;
+        menu.remove();
+        button.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('pointerdown', onPointerDown, true);
+        document.removeEventListener('keydown', onKeyDown, true);
+        window.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', close);
+    }
+
+    openMenu = { menu, button, close };
+    button.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
+    menu.querySelector('.sp-dropdown-item')?.focus();
+}
+
+/**
  * Icons used in the extension
  */
 export const Icons = {
@@ -398,5 +624,13 @@ export const Icons = {
     swipe: '👈',
     chevronLeft: '\u2039',
     chevronRight: '\u203A',
-    copy: '📋'
+    copy: '📋',
+    more: '⋯',
+    branch: '⑂',
+    insert: '↧',
+    note: '📝',
+    download: '⤓',
+    upload: '⤒',
+    star: '★',
+    starOutline: '☆'
 };

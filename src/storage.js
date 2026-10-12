@@ -28,6 +28,10 @@ export const DEFAULT_CONTEXT_SETTINGS = Object.freeze({
     includeCharacterCard: true,
     includeSystemPrompt: false,
     includeAuthorsNote: false,
+    includePersona: true,
+    includeWorldInfo: false,
+    includeSummary: false,
+    includeHiddenMessages: false,
     connectionProfileId: null,
     connectionProfile: null
 });
@@ -540,6 +544,7 @@ export function syncSwipeToMessage(message) {
     const nextExtra = normalizeExtra(message.extra) || {};
     delete nextExtra.api;
     delete nextExtra.model;
+    delete nextExtra.promptStats;
     if (activeExtra) {
         Object.assign(nextExtra, activeExtra);
     }
@@ -681,4 +686,189 @@ export function getThreadsForCurrentBranch() {
         }
         return { ...thread, messages: filteredMessages, branchedMessages };
     });
+}
+
+/**
+ * Most recent activity in a thread: its newest message, swipe or edit, or
+ * when it was created. Renames and context changes don't count.
+ * @param {Object} thread Thread object
+ * @returns {number} Milliseconds since the epoch, or 0 if unknown
+ */
+export function getThreadActivityTime(thread) {
+    let latest = Date.parse(thread?.createdAt) || 0;
+    const consider = value => {
+        const time = Date.parse(value);
+        if (Number.isFinite(time) && time > latest) latest = time;
+    };
+
+    const messages = [...(thread?.messages || []), ...(thread?.branchedMessages || [])];
+    for (const message of messages) {
+        consider(message?.timestamp);
+        consider(message?.editedAt);
+        if (Array.isArray(message?.swipeTimestamps)) {
+            message.swipeTimestamps.forEach(consider);
+        }
+    }
+
+    return latest;
+}
+
+/**
+ * Order threads for the list: pinned threads first, then most recently active
+ * @param {Array} threads Threads
+ * @returns {Array} New sorted array
+ */
+export function sortThreadsForDisplay(threads) {
+    return [...(threads || [])].sort((a, b) =>
+        (Number(!!b.pinned) - Number(!!a.pinned))
+        || (getThreadActivityTime(b) - getThreadActivityTime(a))
+    );
+}
+
+/**
+ * Pin a thread to the top of the list, or unpin it
+ * @param {string} threadId Thread ID
+ * @param {boolean} pinned Whether the thread should be pinned
+ * @returns {Object|null} Thread or null
+ */
+export function setThreadPinned(threadId, pinned) {
+    const thread = getThread(threadId);
+    if (!thread) return null;
+
+    // Not a content change, so leave updatedAt alone
+    if (pinned) {
+        thread.pinned = true;
+    } else {
+        delete thread.pinned;
+    }
+    return thread;
+}
+
+/**
+ * Copy a message with new IDs so the copy is independent of the original
+ * @param {Object} message Message
+ * @returns {Object} Copy
+ */
+function cloneMessage(message) {
+    return { ...structuredClone(message), id: generateId() };
+}
+
+/**
+ * Start a new thread from a copy of a thread's messages up to and including
+ * one message. The original thread is unchanged.
+ * @param {string} threadId Source thread ID
+ * @param {string} messageId Last message to copy
+ * @returns {Object|null} The new thread, or null if not found
+ */
+export function forkThread(threadId, messageId) {
+    const data = getScratchPadData();
+    const source = getThread(threadId);
+    if (!data || !source) return null;
+
+    const index = source.messages.findIndex(m => m.id === messageId);
+    if (index === -1) return null;
+
+    const timestamp = getTimestamp();
+    const thread = {
+        id: generateId(),
+        name: `${source.name} (branch)`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        messages: source.messages.slice(0, index + 1)
+            .filter(m => m.status !== 'pending')
+            .map(cloneMessage),
+        contextSettings: source.contextSettings ? structuredClone(source.contextSettings) : null,
+        titled: true,
+    };
+
+    data.threads.unshift(thread);
+    return thread;
+}
+
+/**
+ * Remove messages from a thread, keeping what's needed to put them back
+ * @param {string} threadId Thread ID
+ * @param {string[]} messageIds Messages to remove
+ * @returns {Array<{index: number, message: Object}>} Removed messages with their original positions
+ */
+export function removeMessages(threadId, messageIds) {
+    const thread = getThread(threadId);
+    if (!thread) return [];
+
+    const ids = new Set(messageIds);
+    const removed = [];
+    thread.messages.forEach((message, index) => {
+        if (ids.has(message.id)) removed.push({ index, message });
+    });
+    if (removed.length === 0) return [];
+
+    thread.messages = thread.messages.filter(message => !ids.has(message.id));
+    thread.updatedAt = getTimestamp();
+    return removed;
+}
+
+/**
+ * Put back messages taken out by removeMessages
+ * @param {string} threadId Thread ID
+ * @param {Array<{index: number, message: Object}>} removed Result of removeMessages
+ * @returns {boolean} Whether the thread was found
+ */
+export function restoreMessages(threadId, removed) {
+    const thread = getThread(threadId);
+    if (!thread) return false;
+
+    for (const { index, message } of [...removed].sort((a, b) => a.index - b.index)) {
+        if (thread.messages.some(m => m.id === message.id)) continue;
+        thread.messages.splice(Math.min(index, thread.messages.length), 0, message);
+    }
+    thread.updatedAt = getTimestamp();
+    return true;
+}
+
+/**
+ * Messages that go with a message when it's deleted. Deleting your question
+ * also deletes the reply that answered it, so no reply is left without its
+ * question; deleting a reply removes just that reply (and all its swipes).
+ * @param {Object} thread Thread object
+ * @param {string} messageId Message being deleted
+ * @returns {string[]} IDs to delete
+ */
+export function getMessageIdsToDelete(thread, messageId) {
+    const messages = thread?.messages || [];
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return [];
+
+    const ids = [messageId];
+    const next = messages[index + 1];
+    if (messages[index].role === 'user' && next?.role === 'assistant') {
+        ids.push(next.id);
+    }
+    return ids;
+}
+
+/**
+ * Put a deleted thread back where it was
+ * @param {Object} thread Thread object removed by deleteThread
+ * @param {number} index Its former position
+ * @returns {boolean} Whether it was restored
+ */
+export function restoreThread(thread, index) {
+    const data = ensureScratchPadExists();
+    if (!data || !thread || data.threads.some(t => t.id === thread.id)) return false;
+
+    data.threads.splice(Math.min(Math.max(0, index), data.threads.length), 0, thread);
+    return true;
+}
+
+/**
+ * Add imported threads to the top of the current chat's list
+ * @param {Object[]} threads Threads from parseThreadImport
+ * @returns {number} How many were added
+ */
+export function addImportedThreads(threads) {
+    const data = ensureScratchPadExists();
+    if (!data || !Array.isArray(threads)) return 0;
+
+    data.threads.unshift(...threads);
+    return threads.length;
 }

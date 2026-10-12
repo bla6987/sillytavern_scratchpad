@@ -4,7 +4,7 @@
  */
 
 import { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
-import { openThread, startNewThread, getCurrentThreadId, renderConversation, resetConversationState } from './conversation.js';
+import { openThread, startNewThread, getCurrentThreadId, renderConversation, resetConversationState, forgetMissingThread } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, dismissPopup, isPopupVisible } from './popup.js';
 import { getSettings, updateSettings, getDisplayMode, setDisplayMode } from '../settings.js';
 import { Icons, createButton } from './components.js';
@@ -458,6 +458,9 @@ export function isScratchPadOpen() {
 export function refreshScratchPadUI() {
     if (!isScratchPadOpen()) return;
 
+    // The open thread may have been deleted or cleared (e.g. by /sp-clear)
+    const threadWasRemoved = forgetMissingThread();
+
     if (currentDisplayMode === 'fullscreen') {
         // Refresh sidebar thread list
         const sidebarContent = document.querySelector('.sp-fullscreen-sidebar .sp-drawer-content');
@@ -469,6 +472,8 @@ export function refreshScratchPadUI() {
         const currentThread = getCurrentThreadId();
         if (mainContent && currentThread) {
             renderConversation(mainContent);
+        } else if (mainContent && threadWasRemoved) {
+            showFullscreenEmptyState(mainContent);
         }
         return;
     }
@@ -483,6 +488,14 @@ export function refreshScratchPadUI() {
     } else {
         renderThreadList(content);
     }
+}
+
+/**
+ * Whether a SillyTavern popup or other modal dialog is open
+ * @returns {boolean} True if a dialog is open
+ */
+function isDialogOpen() {
+    return !!document.querySelector('dialog[open]');
 }
 
 /**
@@ -509,6 +522,9 @@ export function initUI() {
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
     keydownHandler = (e) => {
         if (e.key === 'Escape') {
+            // Something else handled this Escape (an inline editor or menu), or a
+            // SillyTavern dialog is open and should close first
+            if (e.defaultPrevented || isDialogOpen()) return;
             if (isPopupVisible()) {
                 dismissPopup();
             } else if (isScratchPadOpen()) {

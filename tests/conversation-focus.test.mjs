@@ -81,6 +81,8 @@ function createHarness() {
         getDraft: () => 'draft text',
         NEW_THREAD_DRAFT_KEY: 'new-thread',
         createButton: () => new Element('button'),
+        createMenuButton: () => new Element('button'),
+        getQuickPrompts: () => [],
         Icons: {},
         isPinnedMode: () => false,
         debounce: callback => callback,

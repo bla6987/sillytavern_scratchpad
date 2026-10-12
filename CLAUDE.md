@@ -17,6 +17,9 @@ node tests/semantic-search.test.mjs
 
 # Run all tests
 for t in tests/*.test.mjs; do node "$t"; done
+
+# Syntax-check every module (no build step, so this is the "compile")
+for f in index.js src/*.js src/ui/*.js; do node --check "$f"; done
 ```
 
 There is no build, lint, or bundling step. The extension loads directly via SillyTavern's extension system.
@@ -30,10 +33,13 @@ There is no build, lint, or bundling step. The extension loads directly via Sill
 ```
 index.js ──┬── src/storage.js      Thread/message CRUD, branch filtering, swipes
            ├── src/settings.js     Settings UI binding, per-thread context config, embeddings config
-           ├── src/commands.js     Slash command registration (/sp, /sp-view, /rawprompt)
-           ├── src/generation.js   Context building, API calls, 3 generation modes
+           ├── src/commands.js     Slash command registration (/sp, /sp-view, /rawprompt); replies are returned for STscript
+           ├── src/generation.js   Context building, API calls, 3 generation modes, prompt preview
+           │   ├── src/contextSources.js  Character cards (incl. groups), persona, World Info, summary, history formatting
            │   ├── src/reasoning.js   Multi-provider reasoning/thinking extraction
            │   └── src/streaming.js   Direct SSE streaming to chat-completions endpoint
+           ├── src/threadExport.js Markdown/JSON thread export and JSON import (pure)
+           ├── src/chatActions.js  Insert a reply into the main chat input or the Author's Note
            ├── src/embeddings.js   Embedding provider dispatch + localforage vector cache
            ├── src/semanticSearch.js  Corpus build, lazy index, hybrid cosine ranking
            ├── src/messageQueue.js  In-memory FIFO of messages sent while generating (pure, no DOM)
@@ -68,6 +74,14 @@ index.js ──┬── src/storage.js      Thread/message CRUD, branch filteri
 
 **Input drafts:** `src/draftStore.js` (pure, unit-tested in `tests/draft-store.test.mjs`) is the single source of truth for unsent input text: a Map keyed by thread ID (`NEW_THREAD_DRAFT_KEY` for the New Thread view) that stores only non-empty drafts, so it stays O(1) however many threads a chat has. The conversation textarea writes its draft on every `input` event under a key captured at render time, so no close path needs a save-on-leave hook; `deleteThread()` / `clearAllThreads()` in `storage.js` drop matching drafts. Drafts are never stored in `chatMetadata` because `saveMetadata()` rewrites the entire chat file (every chat message plus every thread), so typing must never trigger a save.
 
+**Prompt context:** `buildPrompt` (generation.js) assembles fixed sections (ST system prompt, character cards, persona, World Info, Author's Note, summary) and variable ones (main-chat history, previous thread messages). Only the variable ones are trimmed, oldest first, to fit the token budget. Per-thread toggles live in `contextSettings` (`includePersona` defaults on; `includeWorldInfo`, `includeSummary`, `includeHiddenMessages` default off) and new threads copy them from the global settings. Hidden main-chat messages (`is_system`) are dropped before the history limit is applied. World Info uses SillyTavern's `getWorldInfoPrompt` as a dry run, with the user's question scanned as the newest message.
+
+**Context stats:** `buildPrompt` returns `promptData.stats` (tokens, budget, messages sent and trimmed). They are stored per swipe as `extra.promptStats` (via `swipeExtra`), shown under each reply, and `syncSwipeToMessage` clears them before applying the active swipe's extra so a swipe never shows another swipe's numbers. `buildPromptPreview` builds the same prompt without sending it.
+
+**Thread order:** The list sorts by `getThreadActivityTime` (newest message, swipe, or edit), not `updatedAt`, so renames and context changes don't reorder threads. `thread.pinned` keeps a thread on top.
+
+**Deletes and undo:** Thread and message deletes happen immediately and show an undo toast (`showUndoToast`). Undo re-inserts the removed objects at their old positions (`restoreThread`, `restoreMessages`) and refuses after a chat switch. Deleting a user message also deletes the reply that follows it (`getMessageIdsToDelete`). Deletes are blocked while that thread is generating.
+
 **Lazy UI:** The drawer DOM is created on open and destroyed on close to avoid stale state.
 
 ### SillyTavern API Surface
@@ -86,8 +100,8 @@ The extension depends on these SillyTavern APIs accessed via `SillyTavern.getCon
 
 ## Known Open Issues
 
-See `.ai-notes/issues.md` for the tracked list. Key open items:
-- #4: Regenerations don't apply extracted title to thread name
+`.ai-notes/` is gitignored, so the issue notes there are local-only and may not exist in a fresh clone. Items last tracked there:
+- #4: Regenerating a thread's first reply keeps the original title (the title instruction is only sent with the first message)
 - #1: Mobile popup height collapses to 0px
 - #5: Pinned panel breaks page scrolling
 

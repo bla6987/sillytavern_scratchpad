@@ -2,10 +2,13 @@
  * Thread List View component for Scratch Pad extension
  */
 
-import { getThreads, getThreadsForCurrentBranch, getCurrentChatLength, createThread, deleteThread, updateThread, saveMetadata } from '../storage.js';
+import { getThreads, getThread, getThreadsForCurrentBranch, getCurrentChatLength, createThread, deleteThread, restoreThread, updateThread, saveMetadata, sortThreadsForDisplay, getThreadActivityTime, setThreadPinned, addImportedThreads, generateId } from '../storage.js';
 import { getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
 import { getConnectionProfileLabel } from '../connectionProfiles.js';
-import { formatTimestamp, truncateText, createButton, showConfirmDialog, showPromptDialog, showToast, Icons } from './components.js';
+import { formatTimestamp, truncateText, createButton, showPromptDialog, showToast, showUndoToast, Icons } from './components.js';
+import { getDraft, setDraft } from '../draftStore.js';
+import { takeQueuedMessages } from '../messageQueue.js';
+import { parseThreadImport } from '../threadExport.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 import { isSemanticSearchEnabled } from '../embeddings.js';
 import { searchThreadsSemantic, resetQueryCache } from '../semanticSearch.js';
@@ -105,6 +108,32 @@ export function renderThreadList(container) {
         onClick: () => handleNewThread()
     });
     actionBar.appendChild(newThreadBtn);
+
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = '.json,application/json';
+    importInput.className = 'sp-import-input';
+    importInput.style.display = 'none';
+    importInput.addEventListener('change', () => {
+        const file = importInput.files?.[0];
+        importInput.value = '';
+        if (file) {
+            handleImportThreads(file).catch(err => {
+                console.error('[ScratchPad] Import failed:', err);
+                showToast(`Import failed: ${err.message}`, 'error');
+            });
+        }
+    });
+    const importBtn = createButton({
+        icon: Icons.upload,
+        text: 'Import',
+        className: 'sp-import-btn',
+        ariaLabel: 'Import threads from a JSON export',
+        onClick: () => importInput.click()
+    });
+    importBtn.title = 'Import threads from a JSON export';
+    actionBar.appendChild(importBtn);
+    actionBar.appendChild(importInput);
     container.appendChild(actionBar);
 
     // Search
@@ -239,11 +268,8 @@ function renderThreadContent(listContainer, searchMeta, query = '') {
         `;
         listContainer.appendChild(emptyState);
     } else {
-        // Main list: threads with messages in current branch, then empty threads
-        for (const thread of currentBranchThreads) {
-            listContainer.appendChild(createThreadItem(thread));
-        }
-        for (const thread of emptyThreads) {
+        // Main list: pinned threads first, then the most recently active
+        for (const thread of sortThreadsForDisplay([...currentBranchThreads, ...emptyThreads])) {
             listContainer.appendChild(createThreadItem(thread));
         }
 
@@ -259,7 +285,7 @@ function renderThreadContent(listContainer, searchMeta, query = '') {
 
             const content = document.createElement('div');
             content.className = 'sp-offbranch-threads-content';
-            for (const thread of offBranchThreads) {
+            for (const thread of sortThreadsForDisplay(offBranchThreads)) {
                 content.appendChild(createThreadItem(thread));
             }
             details.appendChild(content);
@@ -448,7 +474,7 @@ function searchThreads(threads, query) {
 
     return results.sort((a, b) => {
         if (a.rank !== b.rank) return a.rank - b.rank;
-        return new Date(b.thread.updatedAt) - new Date(a.thread.updatedAt);
+        return getThreadActivityTime(b.thread) - getThreadActivityTime(a.thread);
     });
 }
 
@@ -660,6 +686,10 @@ function createThreadItem(thread, options = {}) {
     const nameRowEl = document.createElement('div');
     nameRowEl.className = 'sp-thread-name-row';
 
+    if (thread.pinned) {
+        item.classList.add('sp-thread-item-pinned');
+    }
+
     const nameEl = document.createElement('div');
     nameEl.className = 'sp-thread-name';
     nameEl.textContent = thread.name;
@@ -720,9 +750,10 @@ function createThreadItem(thread, options = {}) {
     // Timestamp
     const timeEl = document.createElement('div');
     timeEl.className = 'sp-thread-time';
+    const activityTime = new Date(getThreadActivityTime(thread) || Date.now()).toISOString();
     timeEl.textContent = options.matchType
-        ? `${options.matchType} match · ${formatTimestamp(thread.updatedAt)}`
-        : formatTimestamp(thread.updatedAt);
+        ? `${options.matchType} match · ${formatTimestamp(activityTime)}`
+        : formatTimestamp(activityTime);
     mainContent.appendChild(timeEl);
 
     item.appendChild(mainContent);
@@ -730,6 +761,17 @@ function createThreadItem(thread, options = {}) {
     // Actions
     const actions = document.createElement('div');
     actions.className = 'sp-thread-actions';
+
+    const pinThreadBtn = createButton({
+        icon: thread.pinned ? Icons.star : Icons.starOutline,
+        className: `sp-action-btn sp-thread-pin-btn${thread.pinned ? ' sp-thread-pin-active' : ''}`,
+        ariaLabel: thread.pinned ? 'Unpin thread' : 'Pin thread to top',
+        onClick: (e) => {
+            e.stopPropagation();
+            handleTogglePinned(thread);
+        }
+    });
+    pinThreadBtn.title = thread.pinned ? 'Unpin thread' : 'Pin thread to top';
 
     const renameBtn = createButton({
         icon: Icons.edit,
@@ -751,6 +793,7 @@ function createThreadItem(thread, options = {}) {
         }
     });
 
+    actions.appendChild(pinThreadBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
     item.appendChild(actions);
@@ -858,21 +901,74 @@ async function handleRenameThread(thread) {
 }
 
 /**
- * Handle deleting a thread
+ * Pin a thread to the top of the list, or unpin it
  * @param {Object} thread Thread object
  */
-async function handleDeleteThread(thread) {
-    const confirmed = await showConfirmDialog(
-        `Delete thread "${thread.name}"? This cannot be undone.`,
-        { confirmText: 'Delete', cancelText: 'Cancel' }
-    );
+async function handleTogglePinned(thread) {
+    const stored = getThread(thread.id);
+    if (!stored) return;
 
-    if (confirmed) {
-        deleteThread(thread.id);
+    setThreadPinned(thread.id, !stored.pinned);
+    await saveMetadata();
+    refreshThreadList();
+}
+
+/**
+ * Delete a thread right away, with an undo toast instead of a confirmation
+ * @param {Object} thread Thread object (may be a branch-filtered copy)
+ */
+async function handleDeleteThread(thread) {
+    const stored = getThread(thread.id);
+    if (!stored) return;
+
+    const { getCurrentThreadId, closeThreadIfOpen, isThreadGenerating, requeueMessages } = await getConversationModule();
+    if (isThreadGenerating(thread.id)) {
+        showToast('Wait for the reply to finish before deleting the thread', 'warning');
+        return;
+    }
+
+    const index = getThreads().indexOf(stored);
+    const draft = getDraft(thread.id);
+    // Queued messages would be dropped once the thread is gone; keep them for undo
+    const queued = takeQueuedMessages(thread.id);
+    const wasOpen = getCurrentThreadId() === thread.id;
+
+    deleteThread(thread.id);
+    await saveMetadata();
+    if (wasOpen) {
+        closeThreadIfOpen(thread.id);
+    }
+    refreshThreadList();
+
+    const chatId = SillyTavern.getContext().getCurrentChatId?.() ?? null;
+    showUndoToast(`Deleted "${stored.name}".`, async () => {
+        if ((SillyTavern.getContext().getCurrentChatId?.() ?? null) !== chatId) {
+            showToast('Cannot undo after switching chats', 'warning');
+            return;
+        }
+        if (!restoreThread(stored, index)) return;
+        if (draft) setDraft(stored.id, draft);
+        requeueMessages(queued);
         await saveMetadata();
         refreshThreadList();
-        showToast('Thread deleted', 'success');
+    });
+}
+
+/**
+ * Add threads from a JSON export file to the current chat
+ * @param {File} file Selected file
+ */
+async function handleImportThreads(file) {
+    const threads = parseThreadImport(await file.text(), generateId);
+    const added = addImportedThreads(threads);
+    if (added === 0) {
+        showToast('No threads found in the file', 'warning');
+        return;
     }
+
+    await saveMetadata();
+    refreshThreadList();
+    showToast(`Imported ${added} thread${added === 1 ? '' : 's'}`, 'success');
 }
 
 /**

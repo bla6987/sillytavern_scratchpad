@@ -3,54 +3,64 @@
  * Handles slash command registration
  */
 
-import { clearAllThreads, findThreadByName, saveMetadata } from './storage.js';
-import { openScratchPad, openThread, showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, closeScratchPad } from './ui/index.js';
+import { clearAllThreads, findThreadByName, getThread, saveMetadata } from './storage.js';
+import { openScratchPad, showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, refreshScratchPadUI } from './ui/index.js';
+import { askQuietly } from './ui/popup.js';
 import { isChatActive } from './generation.js';
+
+/**
+ * Whether a slash command's quiet=true argument was given
+ * @param {Object} namedArgs Named arguments
+ * @returns {boolean} True for quiet mode
+ */
+function isQuiet(namedArgs) {
+    return String(namedArgs?.quiet ?? '').trim().toLowerCase() === 'true';
+}
 
 /**
  * Register all slash commands for the extension
  */
 export function registerCommands() {
     const context = SillyTavern.getContext();
-    const { SlashCommandParser, SlashCommand, SlashCommandArgument, ARGUMENT_TYPE } = context;
+    const { SlashCommandParser, SlashCommand, SlashCommandArgument, SlashCommandNamedArgument, ARGUMENT_TYPE } = context;
 
     if (!SlashCommandParser || !SlashCommand) {
         console.error('[ScratchPad] SlashCommandParser not available');
         return;
     }
 
+    const quietArgument = () => SlashCommandNamedArgument.fromProps({
+        name: 'quiet',
+        description: 'Skip the popup and only return the reply (it is still saved as a thread)',
+        typeList: [ARGUMENT_TYPE.BOOLEAN],
+        defaultValue: 'false',
+        enumList: ['true', 'false'],
+    });
+
     // /scratchpad or /sp [message]
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad',
         callback: async (namedArgs, unnamedArgs) => {
-            console.log('[ScratchPad CMD] /scratchpad called');
-            console.log('[ScratchPad CMD] Named args:', namedArgs);
-            console.log('[ScratchPad CMD] Unnamed args:', unnamedArgs);
-
             if (!isChatActive()) {
-                console.log('[ScratchPad CMD] No active chat');
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
 
             const message = unnamedArgs ? unnamedArgs.toString().trim() : '';
-            console.log('[ScratchPad CMD] Parsed message:', message);
 
-            if (message) {
-                // Create new thread and show popup with response
-                console.log('[ScratchPad CMD] Showing quick popup with message');
-                await showQuickPopup(message);
-            } else {
-                // Open scratch pad UI
-                console.log('[ScratchPad CMD] Opening scratch pad UI');
+            if (!message) {
                 openScratchPad();
+                return '';
             }
 
-            console.log('[ScratchPad CMD] Command completed');
-            return '';
+            // Create a new thread and return the reply, showing it in the popup unless quiet
+            return isQuiet(namedArgs)
+                ? await askQuietly(message, 'scratchpad')
+                : await showQuickPopup(message);
         },
         aliases: ['sp', 'ooc'],
-        returns: 'nothing',
+        returns: 'the reply, when a message is given',
+        namedArgumentList: [quietArgument()],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'Optional message to start a new thread with',
@@ -67,7 +77,11 @@ export function registerCommands() {
                 <ul>
                     <li><code>/sp</code> - Open the scratch pad interface</li>
                     <li><code>/sp What is the character's motivation?</code> - Quick question with popup response</li>
+                    <li><code>/sp quiet=true Summarize the scene | /setvar key=summary</code> - Get the reply without the popup, for scripts</li>
                 </ul>
+            </div>
+            <div>
+                Returns the reply text, so it can be piped into other commands.
             </div>
         `
     }));
@@ -76,8 +90,6 @@ export function registerCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'sp-ask',
         callback: async (namedArgs, unnamedArgs) => {
-            console.log('[ScratchPad CMD] /sp-ask called');
-
             if (!isChatActive()) {
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
@@ -89,11 +101,13 @@ export function registerCommands() {
                 return '';
             }
 
-            await showQuickPopupAsk(message);
-            return '';
+            return isQuiet(namedArgs)
+                ? await askQuietly(message, 'ask')
+                : await showQuickPopupAsk(message);
         },
         aliases: [],
-        returns: 'nothing',
+        returns: 'the reply',
+        namedArgumentList: [quietArgument()],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'Question to ask the model without chat, character, or Scratch Pad context',
@@ -110,7 +124,11 @@ export function registerCommands() {
                 <ul>
                     <li><code>/sp-ask Explain the P vs NP problem</code></li>
                     <li><code>/sp-ask Give me 10 creative writing prompts</code></li>
+                    <li><code>/sp-ask quiet=true Name a random color | /echo</code> - No popup, for scripts</li>
                 </ul>
+            </div>
+            <div>
+                Returns the reply text, so it can be piped into other commands.
             </div>
         `
     }));
@@ -119,8 +137,6 @@ export function registerCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'rawprompt',
         callback: async (namedArgs, unnamedArgs) => {
-            console.log('[ScratchPad CMD] /rawprompt called');
-
             if (!isChatActive()) {
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
@@ -132,11 +148,13 @@ export function registerCommands() {
                 return '';
             }
 
-            await showQuickPopupRaw(message);
-            return '';
+            return isQuiet(namedArgs)
+                ? await askQuietly(message, 'raw')
+                : await showQuickPopupRaw(message);
         },
         aliases: ['rp'],
-        returns: 'nothing',
+        returns: 'the reply',
+        namedArgumentList: [quietArgument()],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'Prompt to send directly to the model (no system prompt, no chat context)',
@@ -153,7 +171,11 @@ export function registerCommands() {
                 <ul>
                     <li><code>/rawprompt Explain the P vs NP problem</code></li>
                     <li><code>/rp Give me 10 creative writing prompts</code></li>
+                    <li><code>/rp quiet=true Say hi | /echo</code> - No popup, for scripts</li>
                 </ul>
+            </div>
+            <div>
+                Returns the reply text, so it can be piped into other commands.
             </div>
         `
     }));
@@ -162,15 +184,11 @@ export function registerCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'scratchpad-view',
         callback: async () => {
-            console.log('[ScratchPad CMD] /scratchpad-view called');
-
             if (!isChatActive()) {
-                console.log('[ScratchPad CMD] No active chat');
                 toastr.warning('Open a chat to use Scratch Pad');
                 return '';
             }
 
-            console.log('[ScratchPad CMD] Opening scratch pad UI');
             openScratchPad();
             return '';
         },
@@ -204,12 +222,8 @@ export function registerCommands() {
                 await saveMetadata();
                 toastr.success('All scratch pad threads have been deleted');
 
-                // Refresh UI if open
-                const drawer = document.getElementById('scratch-pad-drawer');
-                if (drawer && drawer.classList.contains('open')) {
-                    closeScratchPad();
-                    openScratchPad();
-                }
+                // Refresh UI if open, in any display mode
+                refreshScratchPadUI();
             }
 
             return '';
@@ -240,16 +254,10 @@ export function registerCommands() {
             }
 
             // Try to find thread by ID first, then by name
-            const { getThread } = await import('./storage.js');
-            let thread = getThread(searchTerm);
-
-            if (!thread) {
-                thread = findThreadByName(searchTerm);
-            }
+            const thread = getThread(searchTerm) || findThreadByName(searchTerm);
 
             if (thread) {
-                openScratchPad();
-                setTimeout(() => openThread(thread.id), 100);
+                openScratchPad(thread.id);
             } else {
                 toastr.warning(`Thread "${searchTerm}" not found`);
             }

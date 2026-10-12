@@ -83,6 +83,44 @@
                     <small>Send the chat's Author's Note to the AI for additional context</small>
                 </label>
 
+                <label class="checkbox_label" for="sp_include_persona">
+                    <input type="checkbox" id="sp_include_persona" checked>
+                    <span>Include Persona</span>
+                    <small>Send your persona's description so the AI knows who you are playing</small>
+                </label>
+
+                <label class="checkbox_label" for="sp_include_world_info">
+                    <input type="checkbox" id="sp_include_world_info">
+                    <span>Include World Info</span>
+                    <small>Send the lorebook entries the chat (and your question) would activate</small>
+                </label>
+
+                <label class="checkbox_label" for="sp_include_summary">
+                    <input type="checkbox" id="sp_include_summary">
+                    <span>Include Chat Summary</span>
+                    <small>Send the latest summary from the Summarize extension</small>
+                </label>
+
+                <label class="checkbox_label" for="sp_include_hidden_messages">
+                    <input type="checkbox" id="sp_include_hidden_messages">
+                    <span>Include Hidden Messages</span>
+                    <small>Also send main-chat messages hidden from the AI (e.g. with /hide)</small>
+                </label>
+
+                <small>These are defaults for new threads. Each thread can change them under Context Options.</small>
+
+                <hr>
+
+                <h4>Quick Prompts</h4>
+                <label for="sp_quick_prompts">
+                    <span>Saved questions shown when you start a thread (one per line):</span>
+                    <small>Click one to put it in the input. Macros like {{char}} and {{user}} work.</small>
+                </label>
+                <textarea id="sp_quick_prompts" class="text_pole textarea_compact" rows="5"></textarea>
+                <div class="flex-container">
+                    <input type="button" id="sp_reset_quick_prompts" class="menu_button" value="Reset to Default">
+                </div>
+
                 <hr>
                 
                 <h4>OOC System Prompt</h4>

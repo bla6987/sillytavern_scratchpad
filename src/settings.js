@@ -10,6 +10,21 @@ const MODULE_NAME = 'scratchPad';
 
 const DEFAULT_OOC_PROMPT = `You are a neutral observer and writing assistant helping the user understand and analyze their ongoing roleplay. Answer out-of-character questions about the story, characters, plot, or setting. Be direct, insightful, and helpful. Do not roleplay as any character — respond as an objective assistant.`;
 
+export const DEFAULT_QUICK_PROMPTS = Object.freeze([
+    'Summarize the last scene.',
+    'Are there any plot holes or inconsistencies so far?',
+    'Suggest three directions the story could go next.',
+    'How is {{char}} feeling right now, and why?',
+]);
+
+// Context toggles that new threads copy from the global settings
+const CONTEXT_TOGGLE_INPUTS = Object.freeze({
+    sp_include_persona: 'includePersona',
+    sp_include_world_info: 'includeWorldInfo',
+    sp_include_summary: 'includeSummary',
+    sp_include_hidden_messages: 'includeHiddenMessages',
+});
+
 const DEFAULT_SETTINGS = Object.freeze({
     chatHistoryLimit: 0, // 0 means use all available
     chatHistoryRangeMode: 'all',
@@ -20,6 +35,11 @@ const DEFAULT_SETTINGS = Object.freeze({
     characterCardOnly: false,
     includeSystemPrompt: false,
     includeAuthorsNote: false,
+    includePersona: true,
+    includeWorldInfo: false,
+    includeSummary: false,
+    includeHiddenMessages: false,
+    quickPrompts: DEFAULT_QUICK_PROMPTS,
     oocSystemPrompt: DEFAULT_OOC_PROMPT,
     useAlternativeApi: false,
     forceGlobalApiProfile: false,
@@ -56,7 +76,7 @@ export function getSettings() {
     // Ensure all default keys exist
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
-            extensionSettings[MODULE_NAME][key] = DEFAULT_SETTINGS[key];
+            extensionSettings[MODULE_NAME][key] = structuredClone(DEFAULT_SETTINGS[key]);
         }
     }
 
@@ -109,6 +129,27 @@ export function resetOocPrompt() {
  */
 export function getDefaultOocPrompt() {
     return DEFAULT_OOC_PROMPT;
+}
+
+/**
+ * Split the quick prompts textarea into prompts, one per non-empty line
+ * @param {string} text Textarea value
+ * @returns {string[]} Prompts
+ */
+export function parseQuickPrompts(text) {
+    return String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+}
+
+/**
+ * Saved quick prompts shown when starting a thread
+ * @returns {string[]} Prompts
+ */
+export function getQuickPrompts() {
+    const prompts = getSettings().quickPrompts;
+    return Array.isArray(prompts) ? prompts.filter(p => typeof p === 'string' && p.trim()) : [];
 }
 
 /**
@@ -187,6 +228,18 @@ export function loadSettingsUI() {
     const authorsNoteToggle = document.getElementById('sp_include_authors_note');
     if (authorsNoteToggle) {
         authorsNoteToggle.checked = settings.includeAuthorsNote;
+    }
+
+    for (const [inputId, key] of Object.entries(CONTEXT_TOGGLE_INPUTS)) {
+        const toggle = document.getElementById(inputId);
+        if (toggle) {
+            toggle.checked = !!settings[key];
+        }
+    }
+
+    const quickPromptsTextarea = document.getElementById('sp_quick_prompts');
+    if (quickPromptsTextarea) {
+        quickPromptsTextarea.value = getQuickPrompts().join('\n');
     }
 
     // OOC system prompt textarea
@@ -423,6 +476,33 @@ export function initSettingsListeners() {
     if (authorsNoteToggle) {
         bindOnce(authorsNoteToggle, 'change', (e) => {
             updateSettings({ includeAuthorsNote: e.target.checked });
+        });
+    }
+
+    for (const [inputId, key] of Object.entries(CONTEXT_TOGGLE_INPUTS)) {
+        const toggle = document.getElementById(inputId);
+        if (toggle) {
+            bindOnce(toggle, 'change', (e) => {
+                updateSettings({ [key]: e.target.checked });
+            });
+        }
+    }
+
+    // Quick prompts: one per line
+    const quickPromptsTextarea = document.getElementById('sp_quick_prompts');
+    if (quickPromptsTextarea) {
+        bindOnce(quickPromptsTextarea, 'input', (e) => {
+            updateSettings({ quickPrompts: parseQuickPrompts(e.target.value) });
+        });
+    }
+
+    const resetQuickPromptsButton = document.getElementById('sp_reset_quick_prompts');
+    if (resetQuickPromptsButton) {
+        bindOnce(resetQuickPromptsButton, 'click', () => {
+            updateSettings({ quickPrompts: [...DEFAULT_QUICK_PROMPTS] });
+            if (quickPromptsTextarea) {
+                quickPromptsTextarea.value = DEFAULT_QUICK_PROMPTS.join('\n');
+            }
         });
     }
 
@@ -679,6 +759,10 @@ export function getCurrentContextSettings() {
         includeCharacterCard: settings.includeCharacterCard,
         includeSystemPrompt: settings.includeSystemPrompt,
         includeAuthorsNote: settings.includeAuthorsNote,
+        includePersona: settings.includePersona,
+        includeWorldInfo: settings.includeWorldInfo,
+        includeSummary: settings.includeSummary,
+        includeHiddenMessages: settings.includeHiddenMessages,
         connectionProfileId: profileId,
         connectionProfile: null
     };

@@ -2,22 +2,28 @@
  * Conversation View component for Scratch Pad extension
  */
 
-import { getThread, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, saveMetadataDebounced, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage } from '../storage.js';
-import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe } from '../generation.js';
+import { getThread, getThreads, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, saveMetadataDebounced, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage, deleteThread, restoreThread, forkThread, removeMessages, restoreMessages, getMessageIdsToDelete } from '../storage.js';
+import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe, buildPromptPreview } from '../generation.js';
 import { warmEmbeddings } from '../semanticSearch.js';
-import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, showPromptDialog, showConfirmDialog, showToast, createSpinner, debounce, Icons, playCompletionSound } from './components.js';
+import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, createMenuButton, showPromptDialog, showConfirmDialog, showToast, showUndoToast, createSpinner, debounce, downloadTextFile, formatPromptStats, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
-import { getSettings, getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
+import { getSettings, getCurrentContextSettings, getQuickPrompts, isGlobalApiProfileForced } from '../settings.js';
+import { insertIntoChatInput, appendToAuthorsNote } from '../chatActions.js';
+import { threadToMarkdown, threadsToJson, exportFileName } from '../threadExport.js';
+import { getUserName } from '../contextSources.js';
 import { getConnectionProfileLabel, PROFILE_CHANGE_EVENT, renderConnectionProfileOptions, resolveConnectionProfileId } from '../connectionProfiles.js';
 import { isPinnedMode, togglePinnedMode, isFullscreenMode, getConversationContainer } from './index.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 import { enqueueMessage, getQueuedMessages, dequeueNextMessage, removeQueuedMessage, takeQueuedMessages, clearMessageQueue } from '../messageQueue.js';
 import { NEW_THREAD_DRAFT_KEY, getDraft, setDraft, deleteDraft, clearDrafts, prependToDraft, joinDraftText } from '../draftStore.js';
-import { isPopupGenerationActive } from './popup.js';
+import { isPopupGenerationActive, getPopupGenerationThreadId } from './popup.js';
 
 let conversationContainer = null;
 let currentThreadId = null;
 let activeGenerationId = null;
+// Thread the conversation view is generating for, so deletes can be blocked
+// before its pending reply exists (prompt building is async)
+let activeGenerationThreadId = null;
 let pendingMessage = null;
 let cleanupFunctions = [];
 let currentViewportHandler = null;
@@ -27,13 +33,23 @@ let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
 let lastRenderedMessageId = null;
 
+// Thread context checkboxes that map straight onto a boolean setting
+const THREAD_CONTEXT_TOGGLES = Object.freeze({
+    include_persona: 'includePersona',
+    include_world_info: 'includeWorldInfo',
+    include_summary: 'includeSummary',
+    include_hidden_messages: 'includeHiddenMessages',
+});
+
 /**
  * Start a new generation and return its ID
+ * @param {string} threadId Thread being generated for
  * @returns {string} Generation ID
  */
-function startGeneration() {
+function startGeneration(threadId) {
     const id = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     activeGenerationId = id;
+    activeGenerationThreadId = threadId;
     return id;
 }
 
@@ -53,6 +69,7 @@ function isOurGeneration(id) {
 function endGeneration(id) {
     if (activeGenerationId === id) {
         activeGenerationId = null;
+        activeGenerationThreadId = null;
     }
 }
 
@@ -172,15 +189,12 @@ export function renderConversation(container, isNewThread = false, focusInput = 
 
     header.appendChild(titleContainer);
 
-    // AI Rename button (only show for existing threads with messages)
-    if (thread && thread.messages.length > 0) {
-        const aiRenameBtn = createButton({
-            icon: Icons.aiRename,
-            className: 'sp-ai-rename-btn',
-            ariaLabel: 'Rename with AI',
-            onClick: () => handleAiRename(thread)
-        });
-        header.appendChild(aiRenameBtn);
+    if (thread) {
+        header.appendChild(createMenuButton({
+            ariaLabel: 'Thread actions',
+            className: 'sp-header-btn sp-thread-menu-btn',
+            getItems: () => getThreadMenuItems(thread.id),
+        }));
     }
 
     // Pin button
@@ -241,6 +255,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
             const emptyState = document.createElement('div');
             emptyState.className = 'sp-empty-state';
             emptyState.innerHTML = `<p>No messages yet. Ask a question below.</p>`;
+            appendQuickPrompts(emptyState);
             messagesContainer.appendChild(emptyState);
         }
         renderBranchedMessages(thread, messagesContainer, hasBranchedMessages);
@@ -252,6 +267,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
             <p>Start a new conversation.</p>
             <p>Ask any out-of-character question about your roleplay.</p>
         `;
+        appendQuickPrompts(emptyState);
         messagesContainer.appendChild(emptyState);
     }
 
@@ -472,6 +488,31 @@ function renderContextOptions(container, thread, isNewThread) {
             <input type="checkbox" id="${idPrefix}include_authors_note" ${contextSettings.includeAuthorsNote ? 'checked' : ''}>
             <span>Include Author's Note</span>
         </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_persona">
+            <input type="checkbox" id="${idPrefix}include_persona" ${contextSettings.includePersona ? 'checked' : ''}>
+            <span>Include Persona</span>
+        </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_world_info">
+            <input type="checkbox" id="${idPrefix}include_world_info" ${contextSettings.includeWorldInfo ? 'checked' : ''}>
+            <span>Include World Info</span>
+        </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_summary">
+            <input type="checkbox" id="${idPrefix}include_summary" ${contextSettings.includeSummary ? 'checked' : ''}>
+            <span>Include Chat Summary</span>
+        </label>
+
+        <label class="checkbox_label" for="${idPrefix}include_hidden_messages">
+            <input type="checkbox" id="${idPrefix}include_hidden_messages" ${contextSettings.includeHiddenMessages ? 'checked' : ''}>
+            <span>Include Hidden Messages</span>
+        </label>
+
+        <div class="sp-context-preview-row">
+            <button type="button" class="menu_button sp-preview-prompt-btn" id="${idPrefix}preview_prompt">Preview prompt</button>
+            <small>Shows exactly what the next question would send, and how many tokens it uses.</small>
+        </div>
     `;
 
     details.appendChild(optionsBlock);
@@ -706,6 +747,19 @@ function bindThreadContextListeners(threadId, isNewThread, idPrefix) {
             updateContextSetting('includeAuthorsNote', e.target.checked);
         });
     }
+
+    for (const [suffix, key] of Object.entries(THREAD_CONTEXT_TOGGLES)) {
+        document.getElementById(`${idPrefix}${suffix}`)?.addEventListener('change', (e) => {
+            updateContextSetting(key, e.target.checked);
+        });
+    }
+
+    document.getElementById(`${idPrefix}preview_prompt`)?.addEventListener('click', () => {
+        handlePreviewPrompt().catch(error => {
+            console.error('[ScratchPad] Prompt preview failed:', error);
+            showToast(`Prompt preview failed: ${error.message}`, 'error');
+        });
+    });
 }
 
 /**
@@ -747,7 +801,13 @@ function getContextSettingsFromUI() {
     const includeSysPromptToggle = document.getElementById(`${idPrefix}include_sys_prompt`);
     const includeAuthorsNoteToggle = document.getElementById(`${idPrefix}include_authors_note`);
 
+    const toggles = Object.fromEntries(Object.entries(THREAD_CONTEXT_TOGGLES).map(([suffix, key]) => {
+        const toggle = document.getElementById(`${idPrefix}${suffix}`);
+        return [key, toggle ? toggle.checked : DEFAULT_CONTEXT_SETTINGS[key]];
+    }));
+
     return {
+        ...toggles,
         connectionProfileId: resolveConnectionProfileId(profileSelect?.value) || profileSelect?.value || null,
         connectionProfile: null,
         chatHistoryRangeMode: rangeModeSelect?.value || 'all',
@@ -1043,6 +1103,15 @@ function createMessageElement(message) {
             durationEl.textContent = `Generated in ${generationDuration}`;
             metaEl.appendChild(durationEl);
         }
+
+        const promptStats = isComplete ? formatPromptStats(message.extra?.promptStats) : null;
+        if (promptStats) {
+            const statsEl = document.createElement('div');
+            statsEl.className = `sp-message-context-stats${promptStats.trimmed > 0 ? ' sp-context-trimmed' : ''}`;
+            statsEl.textContent = promptStats.summary;
+            statsEl.title = promptStats.detail;
+            metaEl.appendChild(statsEl);
+        }
     }
 
     footerEl.appendChild(metaEl);
@@ -1061,23 +1130,7 @@ function createMessageElement(message) {
         });
         actionsEl.appendChild(regenerateBtn);
 
-        // Copy button
-        const copyBtn = createButton({
-            icon: Icons.copy,
-            className: 'sp-action-btn',
-            ariaLabel: 'Copy to clipboard',
-            onClick: async () => {
-                const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
-                const content = currentMsg?.content || message.content;
-                try {
-                    await copyTextToClipboard(content);
-                    showToast('Copied to clipboard', 'success');
-                } catch {
-                    showToast('Failed to copy', 'error');
-                }
-            }
-        });
-        actionsEl.appendChild(copyBtn);
+        actionsEl.appendChild(createCopyMessageButton(message));
 
         // Apply to Guided Swipe button (only if GG is installed)
         // Read content at click time (stays in sync via syncSwipeToMessage)
@@ -1130,9 +1183,8 @@ function createMessageElement(message) {
             actionsEl.appendChild(speakBtn);
         }
 
-        if (actionsEl.children.length > 0) {
-            footerEl.appendChild(actionsEl);
-        }
+        actionsEl.appendChild(createMessageMenuButton(message));
+        footerEl.appendChild(actionsEl);
     } else if (!isAssistant && isComplete && message.content) {
         const actionsEl = document.createElement('div');
         actionsEl.className = 'sp-message-actions';
@@ -1144,12 +1196,403 @@ function createMessageElement(message) {
             onClick: () => beginEditUserMessage(message.id)
         });
         actionsEl.appendChild(editBtn);
+        actionsEl.appendChild(createCopyMessageButton(message));
+        actionsEl.appendChild(createMessageMenuButton(message));
+        footerEl.appendChild(actionsEl);
+    } else if (message.status === 'failed' || message.status === 'cancelled') {
+        // Failed or cancelled replies can still be removed
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'sp-message-actions';
+        actionsEl.appendChild(createMessageMenuButton(message));
         footerEl.appendChild(actionsEl);
     }
 
     msgEl.appendChild(footerEl);
 
     return msgEl;
+}
+
+/**
+ * Button that copies a message's current text (its selected swipe, for replies)
+ * @param {Object} message Message
+ * @returns {HTMLButtonElement} Copy button
+ */
+function createCopyMessageButton(message) {
+    return createButton({
+        icon: Icons.copy,
+        className: 'sp-action-btn sp-copy-btn',
+        ariaLabel: 'Copy to clipboard',
+        onClick: async () => {
+            const currentMsg = currentThreadId ? getMessage(currentThreadId, message.id) : null;
+            const content = currentMsg?.content || message.content;
+            try {
+                await copyTextToClipboard(content);
+                showToast('Copied to clipboard', 'success');
+            } catch {
+                showToast('Failed to copy', 'error');
+            }
+        }
+    });
+}
+
+/**
+ * The "more actions" menu on a message
+ * @param {Object} message Message
+ * @returns {HTMLButtonElement} Menu button
+ */
+function createMessageMenuButton(message) {
+    return createMenuButton({
+        ariaLabel: 'More message actions',
+        className: 'sp-action-btn sp-message-menu-btn',
+        getItems: () => {
+            const threadId = currentThreadId;
+            const current = threadId ? getMessage(threadId, message.id) : null;
+            if (!current) return [];
+
+            const content = current.content || '';
+            const isComplete = !current.status || current.status === 'complete';
+            const items = [];
+
+            if (current.role === 'assistant' && isComplete && content) {
+                items.push({
+                    label: 'Insert into chat input',
+                    icon: Icons.insert,
+                    onClick: () => {
+                        if (insertIntoChatInput(content)) {
+                            showToast('Added to the chat input', 'success');
+                        } else {
+                            showToast('Chat input not found', 'error');
+                        }
+                    }
+                });
+                items.push({
+                    label: "Add to Author's Note",
+                    icon: Icons.note,
+                    onClick: async () => {
+                        await appendToAuthorsNote(content);
+                        showToast("Added to the Author's Note", 'success');
+                    }
+                });
+            }
+
+            if (isComplete && content) {
+                items.push({
+                    label: 'Branch from here',
+                    icon: Icons.branch,
+                    onClick: () => handleForkFromMessage(threadId, current.id)
+                });
+            }
+
+            const deletesReply = getMessageIdsToDelete(getThread(threadId), current.id).length > 1;
+            items.push({
+                label: deletesReply ? 'Delete with reply' : 'Delete',
+                icon: Icons.delete,
+                danger: true,
+                onClick: () => handleDeleteMessage(threadId, current.id)
+            });
+
+            return items;
+        }
+    });
+}
+
+/**
+ * Whether a thread has a reply being generated right now
+ * @param {string} threadId Thread ID
+ * @returns {boolean} True while the thread is generating
+ */
+export function isThreadGenerating(threadId) {
+    if (!isGenerating()) return false;
+    return activeGenerationThreadId === threadId
+        || getPopupGenerationThreadId() === threadId
+        || !!getPendingAssistantMessageId(threadId);
+}
+
+/**
+ * Whether any Scratch Pad generation is running (conversation, popup, or quiet command)
+ * @returns {boolean} True while generating
+ */
+export function isScratchPadGenerating() {
+    return isGenerating();
+}
+
+/**
+ * Delete a message (and the reply to it, for your questions), with undo
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Message ID
+ */
+async function handleDeleteMessage(threadId, messageId) {
+    if (isThreadGenerating(threadId)) {
+        showToast('Wait for the reply to finish before deleting messages', 'warning');
+        return;
+    }
+
+    const thread = getThread(threadId);
+    const ids = getMessageIdsToDelete(thread, messageId);
+    const removed = removeMessages(threadId, ids);
+    if (removed.length === 0) return;
+
+    await saveMetadata();
+    if (isViewingThread(threadId)) {
+        renderConversation(conversationContainer);
+    }
+
+    const chatId = getCurrentChatId();
+    showUndoToast(removed.length === 1 ? 'Message deleted.' : 'Message and reply deleted.', async () => {
+        if (getCurrentChatId() !== chatId) {
+            showToast('Cannot undo after switching chats', 'warning');
+            return;
+        }
+        if (!restoreMessages(threadId, removed)) {
+            showToast('The thread no longer exists', 'warning');
+            return;
+        }
+        await saveMetadata();
+        if (isViewingThread(threadId)) {
+            renderConversation(conversationContainer);
+        }
+    });
+}
+
+/**
+ * Start a new thread from this thread's messages up to a message, and open it
+ * @param {string} threadId Thread ID
+ * @param {string} messageId Last message to keep
+ */
+async function handleForkFromMessage(threadId, messageId) {
+    const fork = forkThread(threadId, messageId);
+    if (!fork) {
+        showToast('Could not branch the thread', 'error');
+        return;
+    }
+
+    await saveMetadata();
+    openThread(fork.id);
+    refreshSidebarThreadList();
+    showToast(`Branched into "${fork.name}"`, 'success');
+}
+
+/**
+ * Items for the thread actions menu in the conversation header
+ * @param {string} threadId Thread ID
+ * @returns {Array} Menu items
+ */
+function getThreadMenuItems(threadId) {
+    const thread = getThread(threadId);
+    if (!thread) return [];
+
+    const markdown = () => threadToMarkdown(getThread(threadId) || thread, { userLabel: getUserName(SillyTavern.getContext()) });
+    const items = [
+        {
+            label: 'Rename',
+            icon: Icons.edit,
+            onClick: () => handleRenameThread(getThread(threadId) || thread)
+        },
+    ];
+
+    if (thread.messages.length > 0) {
+        items.push({
+            label: 'Rename with AI',
+            icon: Icons.aiRename,
+            onClick: () => handleAiRename(getThread(threadId) || thread)
+        });
+    }
+
+    return [
+        ...items,
+        {
+            label: 'Copy thread as text',
+            icon: Icons.copy,
+            onClick: async () => {
+                try {
+                    await copyTextToClipboard(markdown());
+                    showToast('Thread copied to clipboard', 'success');
+                } catch {
+                    showToast('Failed to copy', 'error');
+                }
+            }
+        },
+        {
+            label: 'Export as Markdown',
+            icon: Icons.download,
+            onClick: () => downloadTextFile(exportFileName(thread.name, 'md'), markdown(), 'text/markdown')
+        },
+        {
+            label: 'Export as JSON',
+            icon: Icons.download,
+            onClick: () => downloadTextFile(exportFileName(thread.name, 'json'), threadsToJson([getThread(threadId) || thread]), 'application/json')
+        },
+        {
+            label: 'Delete thread',
+            icon: Icons.delete,
+            danger: true,
+            onClick: () => handleDeleteCurrentThread(threadId)
+        },
+    ];
+}
+
+/**
+ * Delete the open thread from its header menu, with undo
+ * @param {string} threadId Thread ID
+ */
+async function handleDeleteCurrentThread(threadId) {
+    if (isThreadGenerating(threadId)) {
+        showToast('Wait for the reply to finish before deleting the thread', 'warning');
+        return;
+    }
+
+    const thread = getThread(threadId);
+    if (!thread) return;
+    const index = getThreads().indexOf(thread);
+    const draft = getDraft(threadId);
+    const queued = takeQueuedMessages(threadId);
+
+    deleteThread(threadId);
+    await saveMetadata();
+    goBackToThreadList();
+
+    const chatId = getCurrentChatId();
+    showUndoToast(`Deleted "${thread.name}".`, async () => {
+        if (getCurrentChatId() !== chatId) {
+            showToast('Cannot undo after switching chats', 'warning');
+            return;
+        }
+        if (!restoreThread(thread, index)) return;
+        if (draft) setDraft(threadId, draft);
+        requeueMessages(queued);
+        await saveMetadata();
+        refreshSidebarThreadList();
+        if (!currentThreadId) {
+            import('./threadList.js').then(({ refreshThreadList }) => refreshThreadList());
+        }
+    });
+}
+
+/**
+ * Put messages taken from the queue (by a thread delete) back after undo
+ * @param {Array<{threadId: string, content: string}>} entries Queued messages
+ */
+export function requeueMessages(entries) {
+    if (!entries?.length) return;
+    for (const entry of entries) {
+        enqueueMessage(entry.threadId, entry.content);
+    }
+    // The generation they were waiting on may have finished meanwhile
+    advanceMessageQueue(null, true);
+}
+
+/**
+ * Current SillyTavern chat ID, used to stop undo from crossing chats
+ * @returns {string|null} Chat ID
+ */
+function getCurrentChatId() {
+    try {
+        return SillyTavern.getContext().getCurrentChatId?.() ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Re-render the fullscreen sidebar's thread list, if it's showing
+ */
+function refreshSidebarThreadList() {
+    const sidebarContent = document.querySelector('.sp-fullscreen-sidebar .sp-drawer-content');
+    if (!sidebarContent) return;
+    import('./threadList.js').then(({ renderThreadList }) => renderThreadList(sidebarContent));
+}
+
+/**
+ * Add the saved quick prompts to an empty conversation. Clicking one puts it
+ * in the input, ready to edit or send.
+ * @param {HTMLElement} container Element to append to
+ */
+function appendQuickPrompts(container) {
+    const prompts = getQuickPrompts();
+    if (prompts.length === 0) return;
+
+    const substitute = SillyTavern.getContext().substituteParams || (text => text);
+    const list = document.createElement('div');
+    list.className = 'sp-quick-prompts';
+
+    for (const prompt of prompts) {
+        let text = prompt;
+        try {
+            text = substitute(prompt);
+        } catch {
+            // Keep the raw prompt if macros can't be resolved
+        }
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'sp-quick-prompt';
+        chip.textContent = text;
+        chip.title = 'Put this question in the input';
+        chip.addEventListener('click', () => {
+            const textarea = document.getElementById('sp-message-input');
+            if (!textarea) return;
+            textarea.value = text;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus();
+            textarea.setSelectionRange(text.length, text.length);
+        });
+        list.appendChild(chip);
+    }
+
+    container.appendChild(list);
+}
+
+/**
+ * Show the prompt the next question would send, with its token usage
+ */
+async function handlePreviewPrompt() {
+    const textarea = document.getElementById('sp-message-input');
+    const question = textarea?.value.trim() || '[Your question]';
+    const contextSettings = currentThreadId ? null : getContextSettingsFromUI();
+    const preview = await buildPromptPreview(currentThreadId, question, contextSettings);
+
+    const content = document.createElement('div');
+    content.className = 'sp-prompt-preview';
+
+    const stats = formatPromptStats(preview.stats);
+    if (stats) {
+        const statsEl = document.createElement('div');
+        statsEl.className = 'sp-prompt-preview-stats';
+        statsEl.textContent = stats.detail;
+        content.appendChild(statsEl);
+    }
+
+    const fullText = preview.messages.map(m => `[${m.role}]\n${m.content}`).join('\n\n');
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'menu_button sp-prompt-preview-copy';
+    copyBtn.textContent = 'Copy prompt';
+    copyBtn.addEventListener('click', async () => {
+        try {
+            await copyTextToClipboard(fullText);
+            showToast('Prompt copied to clipboard', 'success');
+        } catch {
+            showToast('Failed to copy', 'error');
+        }
+    });
+    content.appendChild(copyBtn);
+
+    for (const message of preview.messages) {
+        const section = document.createElement('div');
+        section.className = 'sp-prompt-preview-message';
+        const role = document.createElement('div');
+        role.className = 'sp-prompt-preview-role';
+        role.textContent = message.role;
+        const body = document.createElement('pre');
+        body.className = 'sp-prompt-preview-content';
+        body.textContent = message.content;
+        section.append(role, body);
+        content.appendChild(section);
+    }
+
+    const { callGenericPopup, POPUP_TYPE } = SillyTavern.getContext();
+    if (callGenericPopup && POPUP_TYPE) {
+        await callGenericPopup(content, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true, okButton: 'Close' });
+    }
 }
 
 /**
@@ -1260,7 +1703,7 @@ async function submitEditedUserMessage(messageId, editedContent) {
     }
 
     const threadId = currentThreadId;
-    const generationId = startGeneration();
+    const generationId = startGeneration(threadId);
     showGeneratingIndicator(true, handleCancelGeneration);
 
     let streamingMsgEl = null;
@@ -1381,7 +1824,7 @@ async function handleGenerateSwipe(messageId) {
     if (isGenerating() || !currentThreadId) return;
 
     const threadId = currentThreadId;
-    const generationId = startGeneration();
+    const generationId = startGeneration(threadId);
     showGeneratingIndicator(true, handleCancelGeneration);
 
     // Disable swipe arrows during generation
@@ -1530,7 +1973,7 @@ async function handleSendMessage() {
  */
 async function sendMessageToThread(threadId, message) {
     // Start generation and track ID
-    const generationId = startGeneration();
+    const generationId = startGeneration(threadId);
     if (isViewingThread(threadId)) {
         showGeneratingIndicator(true, handleCancelGeneration);
     } else {
@@ -1823,7 +2266,7 @@ async function handleRetry(messageId) {
 
     // Start generation and track ID
     const threadId = currentThreadId;
-    const generationId = startGeneration();
+    const generationId = startGeneration(threadId);
     showGeneratingIndicator(true, handleCancelGeneration);
 
     // Track the new assistant message ID for streaming updates
@@ -2225,6 +2668,26 @@ function showGeneratingIndicator(show, onCancel = null) {
         inputContainer.classList.remove('sp-generating');
     }
     updateSendButtonMode();
+}
+
+/**
+ * Leave a thread's conversation view if it's showing, e.g. after it was deleted
+ * @param {string} threadId Thread ID
+ */
+export function closeThreadIfOpen(threadId) {
+    if (currentThreadId !== threadId) return;
+    goBackToThreadList();
+}
+
+/**
+ * Forget the open thread when it no longer exists (cleared or deleted elsewhere)
+ * @returns {boolean} True if the open thread was missing and has been forgotten
+ */
+export function forgetMissingThread() {
+    if (!currentThreadId || getThread(currentThreadId)) return false;
+    currentThreadId = null;
+    removeViewportHandler();
+    return true;
 }
 
 /**

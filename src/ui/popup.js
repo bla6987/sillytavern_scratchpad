@@ -4,13 +4,15 @@
  */
 
 import { createThread, saveMetadata, getThread } from '../storage.js';
-import { generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse, parseThinking, cancelGeneration } from '../generation.js';
-import { renderMarkdown, createStreamingRenderer, createButton, createSpinner, showToast, Icons, playCompletionSound } from './components.js';
+import { generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse, parseThinking, cancelGeneration, isGenerationActive } from '../generation.js';
+import { renderMarkdown, createStreamingRenderer, createButton, createSpinner, showToast, copyTextToClipboard, Icons, playCompletionSound } from './components.js';
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
 
 let isPopupGenerating = false;
+// Thread a popup or quiet command is generating for
+let popupGenerationThreadId = null;
 
 let popupElement = null;
 let currentPopupThreadId = null;
@@ -26,53 +28,126 @@ export function isPopupGenerationActive() {
 }
 
 /**
+ * Thread the popup or a quiet command is generating for
+ * @returns {string|null} Thread ID while generating
+ */
+export function getPopupGenerationThreadId() {
+    return isPopupGenerating ? popupGenerationThreadId : null;
+}
+
+/**
  * Show the quick popup with a new thread and generate response
  * @param {string} message User's question
+ * @returns {Promise<string>} The reply, or empty string if it failed or was cancelled
  */
 export async function showQuickPopup(message) {
     // Create new thread with current context settings
     const thread = createThread('New Thread', getCurrentContextSettings());
     if (!thread) {
         showToast('Failed to create thread', 'error');
-        return;
+        return '';
     }
 
     currentPopupThreadId = thread.id;
     await saveMetadata();
 
     createPopupElement();
-    await generatePopupResponse(message);
+    return await generatePopupResponse(message) ?? '';
 }
 
+/**
+ * Show the quick popup for a raw prompt (no system prompt or context)
+ * @param {string} message Prompt
+ * @returns {Promise<string>} The reply, or empty string
+ */
 export async function showQuickPopupRaw(message) {
     const thread = createThread('New Thread', getCurrentContextSettings());
     if (!thread) {
         showToast('Failed to create thread', 'error');
-        return;
+        return '';
     }
 
     currentPopupThreadId = thread.id;
     await saveMetadata();
 
     createPopupElement();
-    await generatePopupRawResponse(message);
+    return await generatePopupRawResponse(message) ?? '';
 }
 
+/**
+ * Show the quick popup for a general question without roleplay context
+ * @param {string} message Question
+ * @returns {Promise<string>} The reply, or empty string
+ */
 export async function showQuickPopupAsk(message) {
     const thread = createThread('New Thread', getCurrentContextSettings());
     if (!thread) {
         showToast('Failed to create thread', 'error');
-        return;
+        return '';
     }
 
     currentPopupThreadId = thread.id;
     await saveMetadata();
 
     createPopupElement();
-    await generatePopupRawResponse(message, {
+    return await generatePopupRawResponse(message, {
         generateResponse: generateGeneralAskResponse,
         errorLabel: 'General ask',
-    });
+    }) ?? '';
+}
+
+const QUIET_GENERATORS = Object.freeze({
+    scratchpad: generateScratchPadResponse,
+    ask: generateGeneralAskResponse,
+    raw: generateRawPromptResponse,
+});
+
+/**
+ * Ask in a new thread without showing the popup, for slash command scripts.
+ * The thread is saved like any other.
+ * @param {string} message Question or prompt
+ * @param {'scratchpad'|'ask'|'raw'} kind Which kind of request
+ * @returns {Promise<string>} The reply, or empty string if it failed
+ */
+export async function askQuietly(message, kind = 'scratchpad') {
+    const { isScratchPadGenerating } = await import('./conversation.js');
+    if (isGenerationActive() || isPopupGenerating || isScratchPadGenerating()) {
+        showToast('Scratch Pad is already generating a reply', 'warning');
+        return '';
+    }
+
+    const thread = createThread('New Thread', getCurrentContextSettings());
+    if (!thread) {
+        showToast('Failed to create thread', 'error');
+        return '';
+    }
+
+    // Hold the popup lock for the whole request, so sends from the drawer queue
+    // behind it instead of starting a second generation alongside it
+    isPopupGenerating = true;
+    popupGenerationThreadId = thread.id;
+    let result = null;
+    try {
+        await saveMetadata();
+        result = await (QUIET_GENERATORS[kind] || generateScratchPadResponse)(message, thread.id);
+    } finally {
+        isPopupGenerating = false;
+        popupGenerationThreadId = null;
+        notifyGenerationSettled(thread.id, result?.success === true);
+        import('./index.js')
+            .then(({ refreshScratchPadUI }) => refreshScratchPadUI())
+            .catch(error => console.error('[ScratchPad] Failed to refresh UI:', error));
+    }
+
+    if (!result?.success) {
+        if (!result?.cancelled) {
+            showToast(`Scratch Pad request failed: ${result?.error || 'unknown error'}`, 'error');
+        }
+        return '';
+    }
+
+    playCompletionSound();
+    return result.response || '';
 }
 
 /**
@@ -254,6 +329,24 @@ function createPopupElement() {
     speakBtn.id = 'sp-popup-speak-btn';
     speakBtn.style.display = 'none';
 
+    const copyBtn = createButton({
+        icon: Icons.copy,
+        className: 'sp-popup-copy-btn',
+        ariaLabel: 'Copy response',
+        onClick: async () => {
+            if (!currentPopupResponse) return;
+            try {
+                await copyTextToClipboard(currentPopupResponse);
+                showToast('Copied to clipboard', 'success');
+            } catch {
+                showToast('Failed to copy', 'error');
+            }
+        }
+    });
+    copyBtn.id = 'sp-popup-copy-btn';
+    copyBtn.title = 'Copy response';
+    copyBtn.style.display = 'none';
+
     const dismissBtn = createButton({
         icon: Icons.close,
         text: 'Dismiss',
@@ -265,6 +358,7 @@ function createPopupElement() {
     // Opening the response in the full panel is available while generation continues.
     actions.appendChild(cancelBtn);
     actions.appendChild(openBtn);
+    actions.appendChild(copyBtn);
     actions.appendChild(speakBtn);
     actions.appendChild(dismissBtn);
     sheet.appendChild(actions);
@@ -290,8 +384,10 @@ function updatePopupActionButtons(isGenerating, hasResponse = false) {
     const cancelBtn = document.getElementById('sp-popup-cancel-btn');
     const openBtn = document.getElementById('sp-popup-open-btn');
     const speakBtn = document.getElementById('sp-popup-speak-btn');
+    const copyBtn = document.getElementById('sp-popup-copy-btn');
 
     if (cancelBtn) cancelBtn.style.display = isGenerating ? '' : 'none';
+    if (copyBtn) copyBtn.style.display = (!isGenerating && hasResponse) ? '' : 'none';
     if (openBtn) openBtn.style.display = '';
     if (speakBtn) {
         speakBtn.style.display = (!isGenerating && hasResponse && isTTSAvailable()) ? '' : 'none';
@@ -413,15 +509,19 @@ function renderReasoningHtml(thinking, reasoningMeta) {
 /**
  * Generate response for popup
  * @param {string} message User's message
+ * @returns {Promise<string|null>} The reply, or null if it failed or was cancelled
  */
 async function generatePopupResponse(message) {
     const contentEl = document.getElementById('sp-popup-content');
     const titleEl = document.getElementById('sp-popup-title');
     const threadId = currentPopupThreadId;
 
-    if (!contentEl || !threadId) return;
+    if (!contentEl || !threadId) return null;
+
+    let response = null;
 
     isPopupGenerating = true;
+    popupGenerationThreadId = threadId;
     currentPopupResponse = null;
     updatePopupActionButtons(true);
 
@@ -495,6 +595,7 @@ async function generatePopupResponse(message) {
             injectModelIcons(contentEl);
             // Store response for TTS
             currentPopupResponse = result.response;
+            response = result.response;
             playCompletionSound();
         }
 
@@ -520,10 +621,13 @@ async function generatePopupResponse(message) {
         currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
+        popupGenerationThreadId = null;
         updatePopupActionButtons(false, currentPopupResponse !== null);
         finishTransferredGeneration(threadId);
-        notifyGenerationSettled(threadId, currentPopupResponse !== null);
+        notifyGenerationSettled(threadId, response !== null);
     }
+
+    return response;
 }
 
 async function generatePopupRawResponse(message, options = {}) {
@@ -533,9 +637,12 @@ async function generatePopupRawResponse(message, options = {}) {
     const generateResponse = options.generateResponse || generateRawPromptResponse;
     const errorLabel = options.errorLabel || 'Raw prompt';
 
-    if (!contentEl || !threadId) return;
+    if (!contentEl || !threadId) return null;
+
+    let response = null;
 
     isPopupGenerating = true;
+    popupGenerationThreadId = threadId;
     currentPopupResponse = null;
     updatePopupActionButtons(true);
 
@@ -596,6 +703,7 @@ async function generatePopupRawResponse(message, options = {}) {
             injectModelIcons(contentEl);
             // Store response for TTS
             currentPopupResponse = result.response;
+            response = result.response;
             playCompletionSound();
         }
 
@@ -620,10 +728,13 @@ async function generatePopupRawResponse(message, options = {}) {
         currentPopupResponse = null;
     } finally {
         isPopupGenerating = false;
+        popupGenerationThreadId = null;
         updatePopupActionButtons(false, currentPopupResponse !== null);
         finishTransferredGeneration(threadId);
-        notifyGenerationSettled(threadId, currentPopupResponse !== null);
+        notifyGenerationSettled(threadId, response !== null);
     }
+
+    return response;
 }
 
 function updateTransferredGeneration(threadId, partialResponse, isComplete) {
