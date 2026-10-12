@@ -50,7 +50,7 @@ Send a question directly from the chat input:
 /sp What is the character's motivation for betraying the protagonist?
 ```
 
-This creates a new thread and shows a popup with the AI's response. You can dismiss the popup or open it in the full Scratch Pad interface to continue the conversation.
+This creates a new thread and shows a popup with the AI's response. Use **Copy response** in the bottom action row to copy the reply once generation finishes (without model thinking or timing details). You can dismiss the popup or open it in the full Scratch Pad interface to continue the conversation.
 
 ### Analyzing Main-Chat Swipes
 

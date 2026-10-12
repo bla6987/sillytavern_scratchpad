@@ -331,8 +331,10 @@ function createPopupElement() {
 
     const copyBtn = createButton({
         icon: Icons.copy,
+        text: 'Copy response',
         className: 'sp-popup-copy-btn',
         ariaLabel: 'Copy response',
+        disabled: true,
         onClick: async () => {
             if (!currentPopupResponse) return;
             try {
@@ -345,7 +347,6 @@ function createPopupElement() {
     });
     copyBtn.id = 'sp-popup-copy-btn';
     copyBtn.title = 'Copy response';
-    copyBtn.style.display = 'none';
 
     const dismissBtn = createButton({
         icon: Icons.close,
@@ -378,7 +379,7 @@ function createPopupElement() {
 /**
  * Swap popup action buttons between generating and complete states
  * @param {boolean} isGenerating Whether currently generating
- * @param {boolean} hasResponse Whether a successful response is available for TTS
+ * @param {boolean} hasResponse Whether a successful response is available
  */
 function updatePopupActionButtons(isGenerating, hasResponse = false) {
     const cancelBtn = document.getElementById('sp-popup-cancel-btn');
@@ -387,7 +388,7 @@ function updatePopupActionButtons(isGenerating, hasResponse = false) {
     const copyBtn = document.getElementById('sp-popup-copy-btn');
 
     if (cancelBtn) cancelBtn.style.display = isGenerating ? '' : 'none';
-    if (copyBtn) copyBtn.style.display = (!isGenerating && hasResponse) ? '' : 'none';
+    if (copyBtn) copyBtn.disabled = isGenerating || !hasResponse || !currentPopupResponse;
     if (openBtn) openBtn.style.display = '';
     if (speakBtn) {
         speakBtn.style.display = (!isGenerating && hasResponse && isTTSAvailable()) ? '' : 'none';

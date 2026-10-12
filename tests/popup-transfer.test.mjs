@@ -109,6 +109,8 @@ function createDocument() {
     return document;
 }
 
+let popupModuleId = 0;
+
 async function loadPopupModule(mocks) {
     const sourcePath = new URL('../src/ui/popup.js', import.meta.url);
     let code = fs.readFileSync(sourcePath, 'utf8');
@@ -119,7 +121,7 @@ async function loadPopupModule(mocks) {
             createThread, saveMetadata, getThread,
             generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse,
             parseThinking, cancelGeneration, renderMarkdown, createStreamingRenderer,
-            createButton, createSpinner, showToast, Icons, playCompletionSound,
+            createButton, createSpinner, showToast, copyTextToClipboard, Icons, playCompletionSound,
             speakText, isTTSAvailable, getCurrentContextSettings,
             REASONING_STATE, normalizeReasoningMeta
         } = __popupTransferMocks;
@@ -130,7 +132,7 @@ async function loadPopupModule(mocks) {
 
     globalThis.__popupTransferMocks = mocks;
     try {
-        return await import(`data:text/javascript,${encodeURIComponent(code)}`);
+        return await import(`data:text/javascript,${encodeURIComponent(code)}#${++popupModuleId}`);
     } finally {
         delete globalThis.__popupTransferMocks;
     }
@@ -206,3 +208,96 @@ test('opening a generating popup in Scratch Pad transfers instead of cancelling'
         globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     }
 });
+
+for (const method of ['showQuickPopup', 'showQuickPopupRaw', 'showQuickPopupAsk']) {
+    test(`${method} exposes Copy response and copies only the completed reply`, async () => {
+        const document = createDocument();
+        const originalDocument = globalThis.document;
+        const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+        globalThis.document = document;
+        globalThis.requestAnimationFrame = callback => callback();
+
+        let resolveGeneration;
+        let rejectCopy = false;
+        const copied = [];
+        const toasts = [];
+        const generate = () => new Promise(resolve => { resolveGeneration = resolve; });
+        const mocks = {
+            createThread: () => ({ id: 'copy-thread' }),
+            saveMetadata: async () => {},
+            getThread: () => ({ name: 'Quick reply' }),
+            generateScratchPadResponse: generate,
+            generateRawPromptResponse: generate,
+            generateGeneralAskResponse: generate,
+            parseThinking: response => ({ cleanedResponse: response, thinking: '' }),
+            cancelGeneration() {},
+            renderMarkdown: value => value,
+            createStreamingRenderer: () => ({ schedule() {}, cancel() {} }),
+            createButton: ({ text, ariaLabel, disabled, onClick }) => {
+                const button = document.createElement('button');
+                button.textContent = text || '';
+                button.ariaLabel = ariaLabel;
+                button.disabled = disabled;
+                button.addEventListener('click', onClick);
+                return button;
+            },
+            createSpinner: () => document.createElement('span'),
+            showToast: (...args) => toasts.push(args),
+            copyTextToClipboard: async text => {
+                if (rejectCopy) throw new Error('Clipboard unavailable');
+                copied.push(text);
+            },
+            Icons: { cancel: '', expand: '', copy: '', speak: '', close: '', error: '' },
+            playCompletionSound() {},
+            speakText: async () => true,
+            isTTSAvailable: () => false,
+            getCurrentContextSettings: () => ({}),
+            REASONING_STATE: { HIDDEN: 'hidden' },
+            normalizeReasoningMeta: () => ({ state: '' }),
+            finishTransferredGeneration() {},
+            advanceMessageQueue() {},
+        };
+
+        try {
+            const popup = await loadPopupModule(mocks);
+            const pending = popup[method]('Question');
+            await Promise.resolve();
+            const copyButton = document.getElementById('sp-popup-copy-btn');
+            assert.ok(copyButton);
+            assert.equal(copyButton.textContent, 'Copy response');
+            assert.equal(copyButton.ariaLabel, 'Copy response');
+            assert.notEqual(copyButton.style.display, 'none');
+            assert.equal(copyButton.disabled, true, 'wait for a completed response');
+
+            const reply = '**Answer**\n\n```js\nconst x = 1;\n```';
+            resolveGeneration({ success: true, response: reply, thinking: 'Private reasoning' });
+            await pending;
+            assert.equal(copyButton.disabled, false);
+            await copyButton.click();
+            assert.deepEqual(copied, [reply], 'preserve Markdown without reasoning or UI text');
+            assert.deepEqual(toasts.at(-1), ['Copied to clipboard', 'success']);
+
+            rejectCopy = true;
+            await copyButton.click();
+            assert.deepEqual(toasts.at(-1), ['Failed to copy', 'error']);
+
+            for (const result of [
+                { success: false, error: 'Provider error' },
+                { success: false, cancelled: true },
+                { success: true, response: '' },
+            ]) {
+                const next = popup[method]('Another question');
+                await Promise.resolve();
+                resolveGeneration(result);
+                await next;
+                const nextCopy = document.getElementById('sp-popup-copy-btn');
+                assert.equal(nextCopy.disabled, true, 'no copy for an absent reply');
+                await nextCopy.click();
+                assert.deepEqual(copied, [reply], 'never copy a stale response');
+            }
+        } finally {
+            globalThis.document = originalDocument;
+            globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+        }
+    });
+}
