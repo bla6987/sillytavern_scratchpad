@@ -1,5 +1,30 @@
 # SillyTavern Scratch Pad Extension - Implementation Specification
 
+## Implementation status — reviewed 2026-10-12
+
+The original feature set is implemented in the local extension. The proposal below remains a historical design reference; `README.md` documents current behavior, including features added since this specification.
+
+| Area | Status | Evidence |
+|---|---|---|
+| Scaffold, initialization and settings | Implemented | `index.js`, `src/settings.js`, `settings.html`, `style.css` |
+| Persistent threads/messages and branch-aware inheritance | Implemented | `src/storage.js`; storage regression tests |
+| Drawer, thread list, conversation navigation and rename/delete | Implemented | `src/ui/index.js`, `threadList.js`, `conversation.js` |
+| Non-streaming/streaming responses, title parsing and retry | Implemented | `src/generation.js`, `src/streaming.js`, `src/ui/components.js` |
+| Quick-question popup and swipe-down dismissal | Implemented | `src/ui/popup.js` |
+| Slash commands, including thread-by-name/ID opening | Implemented | `src/commands.js` |
+| Context settings and alternative Connection Manager profiles | Implemented | `src/settings.js`, `src/connectionProfiles.js`, `src/generation.js` |
+| Keyboard viewport handling and mobile thread gestures | Implemented | `conversation.js` viewport subscription; `threadList.js` touch handlers |
+| Long-thread initial rendering limit | Implemented | Last 50 messages are shown initially, with “Load earlier messages” for the rest |
+
+### Remaining work and design differences
+
+- [ ] True lazy loading of stored message bodies is not implemented. Threads/messages are already in chat metadata; only their DOM rendering is deferred. Loading earlier messages renders all remaining messages, rather than maintaining a virtualized window. The original requirement allowed “Load more”, so virtual scrolling is an optional optimization.
+- [ ] Complete the original mobile/API/end-to-end testing checklist on real devices; source and focused regression tests do not establish all those acceptance results.
+- The original “disable Send during generation” behavior has been superseded by an implemented **Queue** action. Queued messages run serially and return to drafts after cancellation/failure.
+- Original delete-confirmation examples have evolved into immediate deletion with **Undo** for threads/messages; Clear All still requires confirmation.
+
+## Original specification
+
 ## Overview
 
 Create a SillyTavern extension called **"Scratch Pad"** that enables out-of-character (OOC) meta-conversations with the AI about the current roleplay. Users can ask questions about character motivations, plot details, "what if" scenarios, request summaries, or discuss the story — all without breaking immersion in the main chat. The AI generates responses using the main chat history as context, and all Q&A is stored in a separate scratch pad that doesn't pollute the main conversation.
