@@ -1716,7 +1716,7 @@ async function submitEditedUserMessage(messageId, editedContent) {
             () => parseThinking(_latestEditResponse).cleanedResponse,
             () => scrollToBottom()
         );
-        const result = await editUserMessageAndRegenerate(currentThreadId, messageId, trimmedContent, (partialResponse, isComplete) => {
+        const generation = editUserMessageAndRegenerate(threadId, messageId, trimmedContent, (partialResponse, isComplete) => {
             _latestEditResponse = partialResponse;
 
             if (!streamingMsgEl) {
@@ -1734,6 +1734,11 @@ async function submitEditedUserMessage(messageId, editedContent) {
                 }
             }
         });
+        // The edit and pending reply are stored before generation's first await.
+        // Close the editor now, including when no streamed tokens arrive.
+        refreshConversation();
+        scrollToBottom();
+        const result = await generation;
         editRenderer.cancel();
         succeeded = result.success === true;
 

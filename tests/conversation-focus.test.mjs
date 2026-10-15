@@ -14,6 +14,7 @@ function createHarness() {
     const document = {
         hasFocus: () => browserFocused,
         createElement: tag => new Element(tag),
+        querySelector: selector => document.body.querySelector(selector),
     };
 
     class Element {
@@ -94,7 +95,12 @@ function createHarness() {
         scrollToBottom = () => {};
         setupViewportHandlers = () => {};
         renderBranchedMessages = () => {};
-        createMessageElement = () => document.createElement('div');
+        createMessageElement = message => {
+            const element = document.createElement('div');
+            element.id = 'message-' + message.id;
+            element.textContent = message.content || '';
+            return element;
+        };
     `, context);
 
     return {
@@ -187,4 +193,50 @@ test('opening delay does not focus a closed view or an inactive browser', () => 
     inactive.browserFocused = false;
     inactive.flushTimers();
     assert.equal(inactive.document.activeElement, inactive.document.body);
+});
+
+test('saving an edit immediately restores the user message while a non-streaming reply is pending', async () => {
+    const h = createHarness();
+    const user = { id: 'user', role: 'user', content: 'Original question', status: 'complete' };
+    h.thread.messages.push(user, { id: 'old-reply', role: 'assistant', status: 'complete' });
+    h.context.getMessage = (threadId, messageId) => h.thread.messages.find(message => message.id === messageId);
+    h.context.getThread = () => h.thread;
+    h.context.isGenerationActive = () => false;
+    h.context.isPopupGenerationActive = () => false;
+    h.context.createStreamingRenderer = () => ({ cancel() {}, schedule() {} });
+    h.context.playCompletionSound = () => {};
+    vm.runInContext('showGeneratingIndicator = () => {}; advanceMessageQueue = () => {};', h.context);
+
+    let finishGeneration;
+    h.context.editUserMessageAndRegenerate = (threadId, messageId, content) => {
+        assert.equal(threadId, h.thread.id);
+        assert.equal(messageId, user.id);
+        user.content = content;
+        h.thread.messages.splice(1);
+        h.thread.messages.push({ id: 'new-reply', role: 'assistant', status: 'pending' });
+        return new Promise(resolve => { finishGeneration = resolve; });
+    };
+
+    h.open();
+    h.flushTimers();
+    const oldMessage = h.container.querySelector('#message-user');
+    const editor = oldMessage.appendChild(h.document.createElement('textarea'));
+    editor.value = 'Updated question';
+
+    const saving = h.context.submitEditedUserMessage(user.id, '  Updated question  ');
+
+    // Assert before resolving generation or delivering any streaming callback.
+    assert.equal(editor.isConnected, false, 'the editor closes immediately');
+    const normalMessage = h.container.querySelector('#message-user');
+    assert.notEqual(normalMessage, oldMessage);
+    assert.equal(normalMessage.textContent, 'Updated question');
+    assert.equal(normalMessage.children.length, 0, 'normal message has no editor');
+    assert.ok(h.container.querySelector('#message-new-reply'), 'pending assistant reply is shown');
+    assert.equal(h.context.isScratchPadGenerating(), true);
+
+    h.thread.messages.at(-1).status = 'complete';
+    finishGeneration({ success: true });
+    await saving;
+    assert.equal(h.container.querySelector('#message-user').textContent, 'Updated question');
+    assert.equal(h.context.isScratchPadGenerating(), false);
 });
