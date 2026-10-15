@@ -463,9 +463,9 @@ function renderContextOptions(container, thread, isNewThread) {
             </select>
         </div>
         <div id="${idPrefix}range_inputs" class="flex-container" style="display: ${contextSettings.chatHistoryRangeMode === 'all' ? 'none' : 'flex'};">
-            <input type="number" id="${idPrefix}range_start" class="text_pole" min="1" step="1" placeholder="Start #" value="${contextSettings.chatHistoryRangeStart ?? ''}">
+            <input type="number" id="${idPrefix}range_start" class="text_pole" min="1" step="1" placeholder="Start #" value="${parseRangeNumber(contextSettings.chatHistoryRangeStart) ?? ''}">
             <span>to</span>
-            <input type="number" id="${idPrefix}range_end" class="text_pole" min="1" step="1" placeholder="End #" value="${contextSettings.chatHistoryRangeEnd ?? ''}">
+            <input type="number" id="${idPrefix}range_end" class="text_pole" min="1" step="1" placeholder="End #" value="${parseRangeNumber(contextSettings.chatHistoryRangeEnd) ?? ''}">
         </div>
 
         <label class="checkbox_label" for="${idPrefix}char_card_only">

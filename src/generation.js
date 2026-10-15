@@ -1717,6 +1717,28 @@ export function isGuidedGenerationsInstalled() {
 }
 
 /**
+ * Make text safe to hand to Guided Generations, which pastes the chat input
+ * unquoted into an STscript command (`/inject ... ${input} |`) and runs it.
+ * Model output could otherwise end that command with `|` and run commands of
+ * its own, open a `{: closure :}`, or expand `{{macros}}`.
+ * - `|`, `{` and `}` get a backslash: the parser reads `\|` and `\{:` as plain
+ *   text and SillyTavern unescapes `\{` and `\}` afterwards, so the guidance
+ *   arrives unchanged.
+ * - Existing backslashes are dropped so none can cancel those escapes (with
+ *   strict escaping on, `\\|` is a literal backslash followed by a real pipe).
+ * - A leading `word=` gets a backslash before `=` so it isn't read as a named
+ *   argument of /inject.
+ * @param {string} text Untrusted text
+ * @returns {string} Text that stays inside one unnamed argument
+ */
+export function neutralizeSlashCommandText(text) {
+    return String(text ?? '')
+        .replace(/\\/g, '')
+        .replace(/[|{}]/g, '\\$&')
+        .replace(/^(\s*\w+)=/, '$1\\=');
+}
+
+/**
  * Trigger Guided Generations swipe with given text
  * @param {string} guidanceText - Text to use as guidance
  * @returns {Promise<Object>} { success, error }
@@ -1733,8 +1755,9 @@ export async function triggerGuidedSwipe(guidanceText) {
     }
 
     try {
-        // Fill the main ST input with guidance
-        input.value = guidanceText;
+        // Fill the main ST input with guidance. Guided Generations runs it as
+        // part of a slash command, so escape anything the parser would act on
+        input.value = neutralizeSlashCommandText(guidanceText);
         input.dispatchEvent(new Event('input', { bubbles: true }));
 
         // Small delay to ensure input is registered
@@ -1767,7 +1790,7 @@ export async function triggerGuidedResponse(guidanceText) {
     }
 
     try {
-        input.value = guidanceText;
+        input.value = neutralizeSlashCommandText(guidanceText);
         input.dispatchEvent(new Event('input', { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 50));
         responseBtn.click();

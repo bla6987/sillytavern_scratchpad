@@ -28,6 +28,16 @@ function getDOMPurify() {
     return _DOMPurify;
 }
 
+// Replies are model output: drop page-wide styles, form controls and IDs that
+// could restyle or clobber SillyTavern's UI. MESSAGE_SANITIZE enables
+// SillyTavern's own hooks, which prefix classes with "custom-" and block
+// external media unless the user allows it.
+const MARKDOWN_SANITIZE_CONFIG = Object.freeze({
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select'],
+    FORBID_ATTR: ['style', 'id'],
+    MESSAGE_SANITIZE: true,
+});
+
 /**
  * Sanitize and render markdown to HTML
  * @param {string} text Markdown text
@@ -36,7 +46,7 @@ function getDOMPurify() {
 export function renderMarkdown(text) {
     if (!text) return '';
     const html = getConverter().makeHtml(text);
-    return getDOMPurify().sanitize(html);
+    return getDOMPurify().sanitize(html, { ...MARKDOWN_SANITIZE_CONFIG });
 }
 
 /**

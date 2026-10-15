@@ -109,15 +109,42 @@ export function parseThreadImport(text, generateId) {
         }));
 }
 
+const IMPORT_ENUM_SETTINGS = {
+    chatHistoryRangeMode: ['all', 'start_to', 'from_to_end', 'between'],
+    swipeContextMode: ['none', 'user', 'assistant', 'both'],
+};
+const IMPORT_RANGE_SETTINGS = ['chatHistoryRangeStart', 'chatHistoryRangeEnd'];
+const IMPORT_BOOLEAN_SETTINGS = [
+    'characterCardOnly',
+    'includeCharacterCard',
+    'includeSystemPrompt',
+    'includeAuthorsNote',
+    'includePersona',
+    'includeWorldInfo',
+    'includeSummary',
+    'includeHiddenMessages',
+];
+
 /**
  * Keep an imported thread's context choices, minus its connection profile:
- * profile IDs belong to the install that exported them.
+ * profile IDs belong to the install that exported them. The file is untrusted,
+ * so only known keys with valid values are kept; missing ones fall back to the
+ * defaults when the thread is read.
  * @param {Object} settings Exported context settings
  * @returns {Object|null} Settings to store
  */
 function importContextSettings(settings) {
     if (!settings || typeof settings !== 'object') return null;
-    const copy = structuredClone(settings);
+    const copy = {};
+    for (const [key, values] of Object.entries(IMPORT_ENUM_SETTINGS)) {
+        if (values.includes(settings[key])) copy[key] = settings[key];
+    }
+    for (const key of IMPORT_RANGE_SETTINGS) {
+        if (settings[key] === null || (Number.isInteger(settings[key]) && settings[key] > 0)) copy[key] = settings[key];
+    }
+    for (const key of IMPORT_BOOLEAN_SETTINGS) {
+        if (typeof settings[key] === 'boolean') copy[key] = settings[key];
+    }
     copy.connectionProfileId = null;
     copy.connectionProfile = null;
     return copy;

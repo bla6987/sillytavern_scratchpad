@@ -7,6 +7,15 @@ import { getSettings } from './settings.js';
 import { parseThinkingFromText } from './reasoning.js';
 
 /**
+ * Get the /speak command registered by SillyTavern's TTS extension
+ * @returns {Object|null} Slash command object, or null if TTS isn't loaded
+ */
+function getSpeakCommand() {
+    const command = SillyTavern.getContext().SlashCommandParser?.commands?.speak;
+    return typeof command?.callback === 'function' ? command : null;
+}
+
+/**
  * Speak text using SillyTavern's TTS system
  * @param {string} text Text to speak
  * @returns {Promise<boolean>} True if successful
@@ -24,9 +33,9 @@ export async function speakText(text) {
     }
 
     try {
-        const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-        if (!executeSlashCommandsWithOptions) {
-            console.error('[ScratchPad TTS] executeSlashCommandsWithOptions not available');
+        const speakCommand = getSpeakCommand();
+        if (!speakCommand) {
+            console.error('[ScratchPad TTS] The /speak command is not available');
             return false;
         }
 
@@ -37,29 +46,11 @@ export async function speakText(text) {
             return false;
         }
 
-        // Sanitize text to prevent command injection via pipe characters or leading slashes
-        const safeText = cleanedText.replace(/\|/g, '').replace(/^\//gm, '');
-
-        // Build the /speak command
-        // Format: /speak voice="name" text
-        // If no voice specified, just use /speak text
-        let command;
-        if (settings.ttsVoice && settings.ttsVoice.trim()) {
-            const safeName = settings.ttsVoice.trim().replace(/"/g, '').replace(/\|/g, '');
-            command = `/speak voice="${safeName}" ${safeText}`;
-        } else {
-            command = `/speak ${safeText}`;
-        }
-
-        const result = await executeSlashCommandsWithOptions(command, {
-            handleParserErrors: false,
-            handleExecutionErrors: false
-        });
-
-        if (result && result.isError) {
-            console.error('[ScratchPad TTS] Command error:', result.errorMessage);
-            return false;
-        }
+        // Call the /speak callback directly instead of running a command string:
+        // the reply is model output, and the STscript parser would run any
+        // pipes, closures or named arguments in it
+        const voice = String(settings.ttsVoice ?? '').trim();
+        await speakCommand.callback(voice ? { voice } : {}, cleanedText);
 
         return true;
     } catch (error) {
@@ -117,6 +108,9 @@ function cleanTextForTTS(text) {
     // Remove HTML tags
     cleaned = cleaned.replace(/<[^>]+>/g, '');
 
+    // Remove macro braces: SillyTavern's TTS substitutes {{macros}} in the text
+    cleaned = cleaned.replace(/\{\{|\}\}/g, '');
+
     // Collapse multiple newlines
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
 
@@ -134,6 +128,5 @@ export function isTTSAvailable() {
     const settings = getSettings();
     if (!settings.ttsEnabled) return false;
 
-    const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-    return !!executeSlashCommandsWithOptions;
+    return !!getSpeakCommand();
 }

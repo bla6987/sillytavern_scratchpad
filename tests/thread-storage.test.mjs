@@ -184,6 +184,38 @@ test('import rejects files that are not Scratch Pad exports', () => {
     assert.throws(() => parseThreadImport('[]', generateId), /No threads/);
 });
 
+test('imported context settings keep only known keys with valid values', () => {
+    const [imported] = parseThreadImport(JSON.stringify({
+        name: 'Hostile',
+        messages: [],
+        contextSettings: {
+            chatHistoryRangeMode: 'between',
+            chatHistoryRangeStart: '"><img src=x onerror=alert(1)>',
+            chatHistoryRangeEnd: 12,
+            swipeContextMode: 'everything',
+            includeSummary: true,
+            includePersona: 'yes',
+            connectionProfileId: 'other-install',
+            extra: { nested: true },
+        },
+    }), generateId);
+
+    assert.deepEqual(imported.contextSettings, {
+        chatHistoryRangeMode: 'between',
+        chatHistoryRangeEnd: 12,
+        includeSummary: true,
+        connectionProfileId: null,
+        connectionProfile: null,
+    });
+
+    const [rangeCleared] = parseThreadImport(JSON.stringify({
+        messages: [],
+        contextSettings: { chatHistoryRangeStart: null, chatHistoryRangeEnd: -3 },
+    }), generateId);
+    assert.equal(rangeCleared.contextSettings.chatHistoryRangeStart, null);
+    assert.equal(Object.hasOwn(rangeCleared.contextSettings, 'chatHistoryRangeEnd'), false);
+});
+
 test('a bare thread object can be imported too', () => {
     const [imported] = parseThreadImport(JSON.stringify({ name: 'Bare', messages: [{ role: 'user', content: 'hi' }] }), generateId);
     assert.equal(imported.name, 'Bare');
