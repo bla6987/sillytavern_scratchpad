@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
+import { regexMock, regex_placement } from './helpers/regex-engine.mjs';
 
 import { GENERAL_ASK_SYSTEM_PROMPT, editUserMessageAndRegenerate, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
@@ -9,6 +10,7 @@ import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
 import { streamGeneration } from '../src/streaming.js';
 
 function setupHarness(overrides = {}) {
+    regexMock.reset();
     const calls = [];
     const context = {
         extensionSettings: {},
@@ -882,6 +884,48 @@ for (const useStandardGeneration of [true, false]) {
                 assert.equal(payload.at(-1).content, 'Compare the swipes');
             }
         });
+
+        test(`prompt regex strips history and both roles' swipes (standard=${useStandardGeneration}, multi=${useMultiMessageFormat})`, async () => {
+            const chat = swipeChatFixture();
+            for (const msg of chat) {
+                const tag = msg.is_user ? 'user-junk' : 'ai-junk';
+                msg.mes += `<${tag}>SECRET_SELECTED</${tag}>`;
+                msg.swipes = msg.swipes?.map(text => `${text}<${tag}>SECRET_SWIPE</${tag}>`);
+            }
+            chat.splice(2, 0, { is_system: true, mes: 'HIDDEN_MIDDLE' });
+            chat.push({ is_system: true, mes: 'HIDDEN_TAIL' });
+            const original = structuredClone(chat);
+            const { calls } = setupHarness({
+                chat,
+                extensionSettings: { scratchPad: { useStandardGeneration, useMultiMessageFormat } },
+            });
+            regexMock.process = (text, placement, options) => {
+                assert.equal(options.isPrompt, true);
+                const pattern = placement === regex_placement.USER_INPUT
+                    ? /<user-junk>.*?<\/user-junk>/g : /<ai-junk>.*?<\/ai-junk>/g;
+                return text.replace(pattern, '');
+            };
+            const thread = createThread('Regex comparison', { swipeContextMode: 'both' });
+            const result = await generateScratchPadResponse('Compare', thread.id);
+            assert.equal(result.success, true, result.error);
+            const call = calls.find(args => args[0] === (useStandardGeneration ? 'generateRaw' : 'sendGenerationRequest'));
+            const payload = useStandardGeneration ? call[1].prompt : call[2].prompt;
+            const text = typeof payload === 'string' ? payload : payload.map(m => m.content).join('\n');
+            assert.match(text, /Bot: Prior story/);
+            assert.match(text, /Player: USER_SELECTED/);
+            assert.match(text, /Bot: AI_SELECTED/);
+            assert.match(text, /Swipe 1:\nUSER_ALTERNATE/);
+            assert.match(text, /Swipe 2:\nAI_ALTERNATE/);
+            assert.doesNotMatch(text, /SECRET_|-junk>|HIDDEN_/);
+            assert.deepEqual(regexMock.calls.map(({ placement, options }) => [placement, options.depth]), [
+                [regex_placement.AI_OUTPUT, 2],
+                [regex_placement.USER_INPUT, 1],
+                [regex_placement.AI_OUTPUT, 0],
+                [regex_placement.USER_INPUT, 1],
+                [regex_placement.AI_OUTPUT, 0],
+            ]);
+            assert.deepEqual(chat, original);
+        });
     }
 }
 
@@ -972,4 +1016,14 @@ test('profile requests and regenerated Scratch Pad replies include main-chat swi
     assert.equal(regenerated.success, true);
     request = calls.find(c => c[0] === 'profileSendRequest');
     assert.match(request[2].map(m => m.content).join('\n'), /Swipe 3:\nNEW_AI_ALTERNATE/);
+});
+
+test('regex processing failures stop generation instead of sending unprocessed context', async () => {
+    const { calls } = setupHarness({ chat: swipeChatFixture() });
+    regexMock.process = () => { throw new Error('Prompt regex failed'); };
+    const thread = createThread('Regex failure', { swipeContextMode: 'both' });
+    const result = await generateScratchPadResponse('Compare', thread.id);
+    assert.equal(result.success, false);
+    assert.match(result.error, /Prompt regex failed/);
+    assert.equal(calls.some(call => ['generateRaw', 'sendGenerationRequest'].includes(call[0])), false);
 });

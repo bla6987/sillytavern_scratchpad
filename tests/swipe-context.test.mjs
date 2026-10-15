@@ -65,3 +65,22 @@ test('handles a missing or invalid selected index without dropping alternatives'
     assert.match(context, /swipe number unavailable\):\nCURRENT/);
     assert.doesNotMatch(context, /Swipe \d+ \(currently selected\)/);
 });
+
+test('every quoted swipe and invalid-index fallback is processed without changing stored data', () => {
+    const msg = message(false, ['VISIBLE<junk>SECRET_A</junk>', '<junk>SECRET_B</junk>'], 0);
+    msg.swipe_id = 9;
+    msg.mes = 'CURRENT<junk>SECRET_C</junk>';
+    const original = structuredClone(msg);
+    const seen = [];
+    const context = buildSwipeContext([msg], 'assistant', (text, source) => {
+        assert.equal(source, msg);
+        seen.push(text);
+        return text.replace(/<junk>.*?<\/junk>/g, '');
+    });
+    assert.match(context, /Swipe 1:\nVISIBLE/);
+    assert.match(context, /Swipe 2:\n\[Empty after prompt regex processing\]/);
+    assert.match(context, /swipe number unavailable\):\nCURRENT/);
+    assert.doesNotMatch(context, /SECRET|<junk>|no alternate swipes/);
+    assert.equal(seen.length, 3);
+    assert.deepEqual(msg, original);
+});

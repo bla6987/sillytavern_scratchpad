@@ -10,6 +10,7 @@ import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandid
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
 import { buildSwipeContext } from './swipeContext.js';
+import { createPromptRegexProcessor } from './promptRegex.js';
 import { buildCharacterCardsContext, buildPersonaContext, buildWorldInfoContext, filterHiddenMessages, formatChatHistory, getLatestSummary, getUserName } from './contextSources.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
@@ -1083,8 +1084,14 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
         systemPrompt += '\n\nAt the very beginning of your first response in this new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**\n\nThen provide your response.';
     }
 
+    const processChatText = settings.characterCardOnly
+        ? text => text
+        : await createPromptRegexProcessor(chat, context.ToolManager?.isToolCallingSupported?.() || false);
     const selectedChat = (!settings.characterCardOnly && chat && chat.length > 0)
-        ? selectChatHistory(chat, settings).slice()
+        ? selectChatHistory(chat, settings).map(message => ({
+            ...message,
+            mes: processChatText(message.mes, message),
+        }))
         : [];
     const scratchpadMessages = (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0)
         ? thread.messages.filter(isCompleteThreadMessage).slice()
@@ -1092,7 +1099,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
     const initialChatCount = selectedChat.length;
     const initialThreadCount = scratchpadMessages.length;
     // Keep requested alternatives intact even when older history is trimmed.
-    const swipeContext = settings.characterCardOnly ? '' : buildSwipeContext(chat, settings.swipeContextMode);
+    const swipeContext = settings.characterCardOnly ? '' : buildSwipeContext(chat, settings.swipeContextMode, processChatText);
     const userName = getUserName(context);
     const tokenBudget = getPromptTokenBudget(context, profileId);
 

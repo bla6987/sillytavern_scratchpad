@@ -1,5 +1,5 @@
-/** Read main-chat swipe alternatives without changing the chat or active swipe. */
-export function buildSwipeContext(chat, mode = 'none') {
+/** Read main-chat swipe alternatives, processing each version before quoting it. */
+export function buildSwipeContext(chat, mode = 'none', processText = text => text) {
     const roles = mode === 'both' ? ['user', 'assistant']
         : mode === 'user' || mode === 'assistant' ? [mode] : [];
     if (!roles.length) return '';
@@ -25,16 +25,19 @@ export function buildSwipeContext(chat, mode = 'none') {
         if (selectedIndex !== null && typeof message.mes === 'string') {
             swipes[selectedIndex] = message.mes;
         }
-        const alternatives = swipes.flatMap((text, index) =>
-            typeof text === 'string' && text.trim()
-                ? [`Swipe ${index + 1}${index === selectedIndex ? ' (currently selected)' : ''}:\n${text}`]
-                : []
-        );
+        const formatText = text => {
+            const processed = processText(text, message);
+            return processed.trim() ? processed : '[Empty after prompt regex processing]';
+        };
+        const alternatives = swipes.flatMap((text, index) => {
+            if (typeof text !== 'string' || !text.trim()) return [];
+            return [`Swipe ${index + 1}${index === selectedIndex ? ' (currently selected)' : ''}:\n${formatText(text)}`];
+        });
         const heading = `Latest ${label} message (#${messageIndex + 1}, ${message.name || label})`;
         if (alternatives.length < 2) return `${heading}: no alternate swipes available.`;
 
         if (selectedIndex === null && typeof message.mes === 'string' && message.mes.trim()) {
-            alternatives.push(`Current displayed message (swipe number unavailable):\n${message.mes}`);
+            alternatives.push(`Current displayed message (swipe number unavailable):\n${formatText(message.mes)}`);
         }
         return `${heading}:\n\n${alternatives.join('\n\n')}`;
     });

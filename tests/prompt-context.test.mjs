@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { regexMock, regex_placement } from './helpers/regex-engine.mjs';
 
 import { buildPromptPreview, generateScratchPadResponse, generateSwipe } from '../src/generation.js';
 import { createThread, updateThreadContextSettings, getThread, ensureSwipeFields, setActiveSwipe } from '../src/storage.js';
 import { getCurrentContextSettings } from '../src/settings.js';
 
 function setupHarness(overrides = {}, scratchPadSettings = {}) {
+    regexMock.reset();
     const calls = [];
     const context = {
         extensionSettings: {},
@@ -217,4 +219,58 @@ test('prompt preview for a new thread uses the settings shown in the view', asyn
     assert.doesNotMatch(text, /Earlier/);
     assert.match(text, /Character Name: Seraphina/);
     assert.match(text, /Title:/, 'first message asks for a title');
+});
+
+test('preview applies regex to history and out-of-range swipes using full-chat depths', async () => {
+    const chat = [
+        { is_user: false, name: 'Bot', mes: 'OLDER<junk>OLD_SECRET</junk>' },
+        { is_system: true, mes: 'HIDDEN' },
+        { is_user: true, mes: 'USER<junk>USER_SECRET</junk>', swipes: ['USER', 'USER_ALT<junk>USER_ALT_SECRET</junk>'] },
+        { is_user: false, mes: 'AI<junk>AI_SECRET</junk>', swipes: ['AI', 'AI_ALT<junk>AI_ALT_SECRET</junk>'] },
+    ];
+    const { calls } = setupHarness({ chat });
+    regexMock.process = (text, placement, { isPrompt, depth }) => {
+        assert.equal(isPrompt, true);
+        return `${placement}:${depth}:${text.replace(/<junk>.*?<\/junk>/g, '')}`;
+    };
+    const thread = createThread('Range', {
+        swipeContextMode: 'both', chatHistoryRangeMode: 'start_to', chatHistoryRangeEnd: 1,
+    });
+    const original = structuredClone(chat);
+    const preview = await buildPromptPreview(thread.id, 'Compare');
+    const text = preview.messages.map(m => m.content).join('\n');
+    assert.match(text, /Bot: 2:2:OLDER/);
+    assert.match(text, /Swipe 1 \(currently selected\):\n1:1:USER/);
+    assert.match(text, /Swipe 2:\n1:1:USER_ALT/);
+    assert.match(text, /Swipe 2:\n2:0:AI_ALT/);
+    assert.doesNotMatch(text, /SECRET|<junk>|HIDDEN/);
+    assert.equal(preview.stats.chatMessages, 1);
+    assert.deepEqual(chat, original);
+    assert.deepEqual(calls, [], 'preview never sends a generation request');
+});
+
+test('regex stripping happens before token budgeting and does not change depth when history is trimmed', async () => {
+    const chat = [
+        { is_user: true, mes: 'OLD_HISTORY '.repeat(150) },
+        { is_user: false, mes: `RECENT<junk>${'STRIPPED '.repeat(1000)}</junk>` },
+        { is_user: true, mes: 'LATEST' },
+    ];
+    const countWords = text => String(text || '').split(/\s+/).filter(Boolean).length;
+    setupHarness({
+        chat,
+        powerUserSettings: {},
+        getTokenCountAsync: async text => countWords(text),
+        chatCompletionSettings: { stream_openai: false, openai_max_context: 100, openai_max_tokens: 10 },
+    });
+    regexMock.process = (text, placement, { depth }) => `${depth}:${text.replace(/<junk>.*?<\/junk>/g, '')}`;
+    const thread = createThread('Budget', { includeCharacterCard: false });
+    const preview = await buildPromptPreview(thread.id, 'Q');
+    const text = preview.messages.map(m => m.content).join('\n');
+    assert.doesNotMatch(text, /OLD_HISTORY|STRIPPED|<junk>/);
+    assert.match(text, /Character: 1:RECENT/);
+    assert.match(text, /Aria: 0:LATEST/);
+    assert.equal(preview.stats.chatMessagesTrimmed, 1);
+    assert.deepEqual(regexMock.calls.map(call => call.options.depth), [2, 1, 0]);
+    assert.equal(regexMock.calls[1].placement, regex_placement.AI_OUTPUT);
+    assert.ok(preview.stats.promptTokens <= 90);
 });

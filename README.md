@@ -58,6 +58,8 @@ Open a Scratch Pad thread, expand **Context Options**, and set **Swipe context**
 
 Scratch Pad includes every available nonempty swipe of the latest message for each selected role, labels them with 1-based swipe numbers, and marks the currently selected version. Alternatives are presented as different versions of one message. Your main chat and selected swipes stay unchanged. If the latest message has no alternatives, Scratch Pad reports that to the model instead of using an older message's swipes.
 
+Both main-chat history and swipe alternatives use SillyTavern's prompt regex processing, with user/AI rules and message depths from the full chat. History ranges and token trimming do not change those depths. Display-only rules do not apply to prompts. A swipe stripped entirely by prompt rules keeps its number and is marked empty; stored messages and swipes are unchanged. **Preview prompt** shows the processed text.
+
 Swipe context uses the latest messages in the full main chat, even when your history range excludes them. It refreshes on every request, including regenerated Scratch Pad replies. Older history can be trimmed to fit the model's context window; if the requested alternatives still cannot fit, generation stops with an error so the comparison does not silently omit swipes. **Character Card Only**, `/sp-ask`, and `/rawprompt` omit swipe context.
 
 The default is **Selected swipes only**, which keeps the existing behavior. Change **Extensions → Scratch Pad → Swipe context** to set the default for new threads and `/sp` popups. Existing threads keep their own choice.
