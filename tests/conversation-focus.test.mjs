@@ -26,7 +26,10 @@ function createHarness() {
             this.value = '';
             this.selectionStart = 0;
             this.selectionEnd = 0;
-            this.classList = { add() {}, remove() {}, toggle() {} };
+            this.classList = {
+                add() {}, remove() {}, toggle() {},
+                contains: name => (this.className || '').split(/\s+/).includes(name),
+            };
         }
 
         get isConnected() {

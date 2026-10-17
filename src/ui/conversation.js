@@ -1712,16 +1712,20 @@ async function submitEditedUserMessage(messageId, editedContent) {
     try {
         let _latestEditResponse = '';
         const editRenderer = createStreamingRenderer(
-            () => streamingMsgEl,
+            () => (isViewingThread(threadId) ? streamingMsgEl : null),
             () => parseThinking(_latestEditResponse).cleanedResponse,
             () => scrollToBottom()
         );
         const generation = editUserMessageAndRegenerate(threadId, messageId, trimmedContent, (partialResponse, isComplete) => {
             _latestEditResponse = partialResponse;
+            if (!isViewingThread(threadId)) return;
 
-            if (!streamingMsgEl) {
+            if (!streamingMsgEl?.isConnected) {
                 refreshConversation();
-                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+                const pendingId = getPendingAssistantMessageId(threadId);
+                streamingMsgEl = pendingId ? conversationContainer.querySelector(
+                    `.sp-message[data-message-id="${pendingId}"] .sp-message-content`
+                ) : null;
             }
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
@@ -1750,13 +1754,13 @@ async function submitEditedUserMessage(messageId, editedContent) {
             playCompletionSound();
         }
 
-        refreshConversation();
-        scrollToBottom();
+        if (isViewingThread(threadId)) {
+            refreshConversation();
+            scrollToBottom();
 
-        const thread = getThread(currentThreadId);
-        if (thread) {
-            const titleEl = document.querySelector('.sp-thread-title');
-            if (titleEl) {
+            const thread = getThread(threadId);
+            const titleEl = conversationContainer.querySelector('.sp-thread-title');
+            if (thread && titleEl) {
                 titleEl.textContent = thread.name;
             }
         }
@@ -1844,17 +1848,18 @@ async function handleGenerateSwipe(messageId) {
     try {
         let _latestSwipeResponse = '';
         const swipeRenderer = createStreamingRenderer(
-            () => streamingContentEl,
+            () => (isViewingThread(threadId) ? streamingContentEl : null),
             () => parseThinking(_latestSwipeResponse).cleanedResponse,
             () => scrollToBottom()
         );
-        const result = await generateSwipe(currentThreadId, messageId, (partialResponse, isComplete) => {
+        const result = await generateSwipe(threadId, messageId, (partialResponse, isComplete) => {
             _latestSwipeResponse = partialResponse;
+            if (!isViewingThread(threadId)) return;
 
-            if (!streamingContentEl) {
+            if (!streamingContentEl?.isConnected) {
                 // Refresh to show the pending state
                 updateSwipeDisplay(messageId);
-                const updatedMsgEl = document.querySelector(`.sp-message[data-message-id="${messageId}"]`);
+                const updatedMsgEl = conversationContainer.querySelector(`.sp-message[data-message-id="${messageId}"]`);
                 if (updatedMsgEl) {
                     streamingContentEl = updatedMsgEl.querySelector('.sp-message-content');
                 }
@@ -1885,7 +1890,7 @@ async function handleGenerateSwipe(messageId) {
             warmEmbeddings(result.response);
         }
 
-        updateSwipeDisplay(messageId);
+        if (isViewingThread(threadId)) updateSwipeDisplay(messageId);
 
     } finally {
         endGeneration(generationId);
@@ -2281,17 +2286,21 @@ async function handleRetry(messageId) {
     try {
         let _latestRetryResponse = '';
         const retryRenderer = createStreamingRenderer(
-            () => streamingMsgEl,
+            () => (isViewingThread(threadId) ? streamingMsgEl : null),
             () => parseThinking(_latestRetryResponse).cleanedResponse,
             () => scrollToBottom()
         );
-        const result = await retryMessage(currentThreadId, messageId, (partialResponse, isComplete) => {
+        const result = await retryMessage(threadId, messageId, (partialResponse, isComplete) => {
             _latestRetryResponse = partialResponse;
+            if (!isViewingThread(threadId)) return;
 
-            // On first callback, refresh to show new pending message
-            if (!streamingMsgEl) {
+            // Returning to the thread replaces its DOM; reconnect to that reply.
+            if (!streamingMsgEl?.isConnected) {
                 refreshConversation();
-                streamingMsgEl = document.querySelector('.sp-message-assistant:last-child .sp-message-content');
+                const pendingId = getPendingAssistantMessageId(threadId);
+                streamingMsgEl = pendingId ? conversationContainer.querySelector(
+                    `.sp-message[data-message-id="${pendingId}"] .sp-message-content`
+                ) : null;
             }
 
             if (streamingMsgEl && streamingMsgEl.isConnected) {
@@ -2317,8 +2326,10 @@ async function handleRetry(messageId) {
             playCompletionSound();
         }
 
-        refreshConversation();
-        scrollToBottom();
+        if (isViewingThread(threadId)) {
+            refreshConversation();
+            scrollToBottom();
+        }
 
     } finally {
         endGeneration(generationId);

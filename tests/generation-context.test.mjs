@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { ReadableStream } from 'node:stream/web';
 import { regexMock, regex_placement } from './helpers/regex-engine.mjs';
 
-import { GENERAL_ASK_SYSTEM_PROMPT, editUserMessageAndRegenerate, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, retryMessage } from '../src/generation.js';
-import { createThread, updateThreadContextSettings, addMessage, getThread } from '../src/storage.js';
+import { GENERAL_ASK_SYSTEM_PROMPT, editUserMessageAndRegenerate, generateGeneralAskResponse, generateRawPromptResponse, generateScratchPadResponse, generateSwipe, isChatActive, isGenerationActive, recoverInterruptedGenerations, retryMessage } from '../src/generation.js';
+import { createThread, updateThreadContextSettings, addMessage, addSwipe, getThread } from '../src/storage.js';
 import { getConnectionProfiles, getSettings, getCurrentContextSettings } from '../src/settings.js';
 import { renderConnectionProfileOptions } from '../src/connectionProfiles.js';
 import { streamGeneration } from '../src/streaming.js';
@@ -53,6 +53,128 @@ function setupHarness(overrides = {}) {
 
     return { context, calls };
 }
+
+test('reloaded pending replies become retryable without changing other saved messages', async () => {
+    const { context, calls } = setupHarness();
+    const thread = createThread('Interrupted');
+    addMessage(thread.id, 'user', 'Original question');
+    const pending = addMessage(thread.id, 'assistant', 'Saved partial text', 'pending');
+    pending.thinking = 'Saved reasoning';
+    pending.extra = { model: 'original-model' };
+    pending.gen_started = '2026-10-16T12:00:00.000Z';
+    pending.gen_finished = null;
+    const other = createThread('Other thread');
+    addMessage(other.id, 'assistant', 'Finished');
+    addMessage(other.id, 'assistant', '', 'failed');
+    addMessage(other.id, 'assistant', '', 'cancelled');
+    addMessage(other.id, 'user', 'User status is not generation state', 'pending');
+    const unchanged = structuredClone(other);
+    // Reloads deserialize metadata into new objects.
+    context.chatMetadata = structuredClone(context.chatMetadata);
+
+    assert.equal(recoverInterruptedGenerations(), 1);
+    const recovered = getThread(thread.id).messages.at(-1);
+    assert.equal(recovered.status, 'failed');
+    assert.match(recovered.error, /interrupted.*refresh.*Retry/);
+    assert.equal(recovered.content, 'Saved partial text');
+    assert.equal(recovered.thinking, 'Saved reasoning');
+    assert.deepEqual(recovered.extra, { model: 'original-model' });
+    assert.equal(recovered.gen_finished, null, 'do not invent a completion time');
+    assert.deepEqual(getThread(other.id), unchanged);
+    assert.equal(recoverInterruptedGenerations(), 0, 'recovery is idempotent');
+    assert.deepEqual(calls, [], 'recovery never requests a new generation');
+
+    const result = await retryMessage(thread.id, recovered.id);
+    assert.equal(result.success, true);
+    assert.deepEqual(getThread(thread.id).messages.map(message => message.content), ['Original question', 'Assistant response']);
+    assert.equal(getThread(thread.id).messages.at(-1).status, 'complete');
+});
+
+test('recovering an interrupted empty swipe restores the latest saved response and its metadata', () => {
+    const { context } = setupHarness();
+    const thread = createThread('Swipe interrupted');
+    const message = addMessage(thread.id, 'assistant', 'First response');
+    addSwipe(thread.id, message.id, 'Latest response', 'Latest reasoning', '2026-10-16T12:00:00.000Z', null, { model: 'saved-model' });
+    message.swipeGenStarted[1] = '2026-10-16T11:59:58.000Z';
+    message.swipeGenFinished[1] = '2026-10-16T12:00:00.000Z';
+    addSwipe(thread.id, message.id, '', null, null, null, { model: 'interrupted-model' });
+    message.status = 'pending';
+    context.chatMetadata = structuredClone(context.chatMetadata);
+
+    assert.equal(recoverInterruptedGenerations(), 1);
+    const recovered = getThread(thread.id).messages[0];
+    assert.equal(recovered.status, 'complete');
+    assert.equal(recovered.swipeId, 1);
+    assert.deepEqual(recovered.swipes, ['First response', 'Latest response']);
+    assert.equal(recovered.content, 'Latest response');
+    assert.equal(recovered.thinking, 'Latest reasoning');
+    assert.equal(recovered.extra.model, 'saved-model');
+    assert.equal(recovered.gen_started, '2026-10-16T11:59:58.000Z');
+    assert.equal(recovered.gen_finished, '2026-10-16T12:00:00.000Z');
+    assert.equal(recoverInterruptedGenerations(), 0);
+});
+
+for (const generate of [generateScratchPadResponse, generateGeneralAskResponse, generateRawPromptResponse]) {
+    test(`recovery preserves a live ${generate.name} through saves and the request`, async () => {
+        let releaseSave;
+        let releaseRequest;
+        let requestStarted;
+        const started = new Promise(resolve => { requestStarted = resolve; });
+        const initialSave = new Promise(resolve => { releaseSave = resolve; });
+        let saves = 0;
+        const { context } = setupHarness({
+            saveMetadata: () => ++saves === 1 ? initialSave : Promise.resolve(),
+            generateRaw: () => {
+                requestStarted();
+                return new Promise(resolve => { releaseRequest = resolve; });
+            },
+        });
+        const thread = createThread('Live request');
+        const generation = generate('Keep running', thread.id);
+        const pendingId = thread.messages.at(-1).id;
+        assert.equal(isGenerationActive(), false, 'request has not reached the API yet');
+        assert.equal(recoverInterruptedGenerations(), 0, 'initial save is still owned');
+        releaseSave();
+        await started;
+        // Switching away and back can reload a fresh copy while the request lives.
+        context.chatMetadata = structuredClone(context.chatMetadata);
+        assert.equal(recoverInterruptedGenerations(), 0, 'live API request is still owned');
+        assert.equal(getThread(thread.id).messages.at(-1).status, 'pending');
+        releaseRequest('Completed live response');
+        assert.equal((await generation).success, true);
+        assert.equal(getThread(thread.id).messages.at(-1).content, 'Completed live response');
+        // Simulate another load with an orphan bearing the same ID: the settled
+        // request must have released ownership.
+        getThread(thread.id).messages.at(-1).status = 'pending';
+        assert.equal(getThread(thread.id).messages.at(-1).id, pendingId);
+        assert.equal(recoverInterruptedGenerations(), 1);
+    });
+}
+
+test('recovery preserves a live swipe while its pending state is being saved', async () => {
+    let releaseSave;
+    let savingStarted;
+    const saving = new Promise(resolve => { savingStarted = resolve; });
+    let saves = 0;
+    setupHarness({
+        saveMetadata: () => {
+            if (++saves !== 1) return Promise.resolve();
+            savingStarted();
+            return new Promise(resolve => { releaseSave = resolve; });
+        },
+    });
+    const thread = createThread('Live swipe');
+    addMessage(thread.id, 'user', 'Question');
+    const message = addMessage(thread.id, 'assistant', 'Original response');
+    const generation = generateSwipe(thread.id, message.id);
+    await saving;
+    assert.equal(message.status, 'pending');
+    assert.equal(recoverInterruptedGenerations(), 0);
+    assert.deepEqual(message.swipes, ['Original response', '']);
+    releaseSave();
+    assert.equal((await generation).success, true);
+    assert.equal(message.content, 'Assistant response');
+});
 
 async function runStandardGeneration({ contextOverrides = {}, threadSettings = {}, seedMessages = [] } = {}) {
     const { calls } = setupHarness(contextOverrides);

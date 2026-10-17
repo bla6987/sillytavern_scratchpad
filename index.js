@@ -3,10 +3,10 @@
  * Main entry point - initialization and event handlers
  */
 
-import { ensureScratchPadExists } from './src/storage.js';
+import { ensureScratchPadExists, saveMetadataDebounced } from './src/storage.js';
 import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize, getDisplayMode } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
-import { isChatActive } from './src/generation.js';
+import { isChatActive, recoverInterruptedGenerations } from './src/generation.js';
 import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen, resetScratchPadUIState } from './src/ui/index.js';
 
 const MODULE_NAME = 'scratchPad';
@@ -163,11 +163,18 @@ function addScratchPadButton(retries = 10) {
 }
 
 /**
- * Handle chat change event
+ * Initialize loaded chat data and clear replies whose requests were interrupted.
  */
-function handleChatChanged() {
-    // Ensure scratch pad data exists for new chat
+function prepareCurrentChat() {
     ensureScratchPadExists();
+    if (recoverInterruptedGenerations() > 0) {
+        saveMetadataDebounced();
+    }
+}
+
+/** Handle chat change event. */
+function handleChatChanged() {
+    prepareCurrentChat();
     resetScratchPadUIState();
 
     // Refresh UI if open
@@ -209,8 +216,8 @@ async function init() {
     // Add button to UI
     addScratchPadButton();
 
-    // Ensure scratch pad exists for current chat
-    ensureScratchPadExists();
+    // Initialize the current chat, including any interrupted replies from reload.
+    prepareCurrentChat();
 
     // Listen for chat changes
     if (eventSource && event_types) {

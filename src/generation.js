@@ -4,7 +4,7 @@
  */
 
 import { getSettings, isGlobalApiProfileForced } from './settings.js';
-import { getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage, getTimestamp } from './storage.js';
+import { getThreads, getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage, getTimestamp } from './storage.js';
 import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProfileId } from './connectionProfiles.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
@@ -953,10 +953,10 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
     const generationInfo = getGenerationInfoForResolution(profileResolution);
     assistantMessage.extra = generationInfoToExtra(generationInfo);
 
-    await saveMetadata();
-
+    pendingGenerationMessageIds.add(assistantMessage.id);
     let genFinished = null;
     try {
+        await saveMetadata();
         const globalSettings = getSettings();
         const result = await runGenerationForThread({
             threadId,
@@ -1040,6 +1040,8 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
         await saveMetadata();
 
         return { success: false, error: error.message };
+    } finally {
+        pendingGenerationMessageIds.delete(assistantMessage.id);
     }
 }
 
@@ -1259,6 +1261,48 @@ export async function buildPromptPreview(threadId, question, contextSettings = n
 let activeGenerationId = null;
 let isCancellationRequested = false;
 let activeAbortController = null;
+// Cover the entire request, including metadata saves and async prompt building.
+// Saved pending messages without an owner in this page cannot finish themselves.
+const pendingGenerationMessageIds = new Set();
+
+/**
+ * Recover saved replies whose requests were lost on refresh or navigation.
+ * Live requests survive switching views/chats and must keep their pending state.
+ * @returns {number} Number of recovered messages (caller persists the changes)
+ */
+export function recoverInterruptedGenerations() {
+    let recovered = 0;
+    for (const thread of getThreads()) {
+        for (const message of thread.messages) {
+            if (message.role !== 'assistant' || message.status !== 'pending'
+                || pendingGenerationMessageIds.has(message.id)) continue;
+
+            // A new swipe is saved empty before requesting it. Restore an older
+            // response when possible, preserving its reasoning and model data.
+            if (Array.isArray(message.swipes) && message.swipes.length > 1) {
+                ensureSwipeFields(message);
+                const interruptedIndex = message.swipeId;
+                const previousIndex = message.swipes.findLastIndex((text, index) =>
+                    index !== interruptedIndex && typeof text === 'string' && text.trim()
+                );
+                if (previousIndex !== -1 && !message.swipes[interruptedIndex]?.trim()
+                    && !message.swipeThinking[interruptedIndex]) {
+                    deleteSwipe(thread.id, message.id, interruptedIndex);
+                    setActiveSwipe(thread.id, message.id, previousIndex > interruptedIndex ? previousIndex - 1 : previousIndex);
+                    message.status = 'complete';
+                    delete message.error;
+                    recovered++;
+                    continue;
+                }
+            }
+
+            message.status = 'failed';
+            message.error = 'Generation interrupted by a page refresh or navigation. Retry to generate a new response.';
+            recovered++;
+        }
+    }
+    return recovered;
+}
 
 /**
  * Cancel any active generation
@@ -1324,10 +1368,10 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
     const generationInfo = getGenerationInfoForResolution(profileResolution);
     assistantMessage.extra = generationInfoToExtra(generationInfo);
 
-    await saveMetadata();
-
+    pendingGenerationMessageIds.add(assistantMessage.id);
     let genFinished = null;
     try {
+        await saveMetadata();
         const currentThread = getThread(threadId);  // Re-fetch to get latest messages
         if (!currentThread) {
             return { success: false, error: 'Thread not found' };
@@ -1422,6 +1466,8 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
         await saveMetadata();
 
         return { success: false, error: error.message };
+    } finally {
+        pendingGenerationMessageIds.delete(assistantMessage.id);
     }
 }
 
@@ -1551,10 +1597,10 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     message.gen_finished = null;
     message.extra = generationInfoToExtra(generationInfo);
     message.status = 'pending';
-    await saveMetadata();
-
+    pendingGenerationMessageIds.add(message.id);
     let genFinished = null;
     try {
+        await saveMetadata();
         const result = await runGenerationForThread({
             threadId,
             promptData,
@@ -1624,6 +1670,8 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         await saveMetadata();
 
         return { success: false, error: error.message };
+    } finally {
+        pendingGenerationMessageIds.delete(message.id);
     }
 }
 

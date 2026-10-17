@@ -107,6 +107,8 @@ Under each reply, **Context: 12.3k / 32k tokens** shows how much of the context 
 
 While a reply is generating, the Send button becomes **Queue**. Messages you send then wait above the input and go out one at a time, each as its own turn, as soon as the reply ahead of it finishes. Queued messages keep sending even if you switch threads or close the drawer.
 
+Going back to the thread list or reopening the drawer reconnects to a running reply. If a page refresh or navigation interrupts the request, the saved reply shows an interruption message with **Retry** when the chat loads again. An interrupted empty swipe restores the last existing response instead of leaving loading dots.
+
 - **Edit** (✎) pulls a queued message back into the input; **Remove** (✕) drops it.
 - If the reply they're waiting on is cancelled or fails, that thread's queued messages are put back into its input instead of being sent, so you can retry or rephrase first. This works even if you're in another thread: the text is waiting in that thread's input, ahead of anything you had typed there, when you open it.
 - The queue lives in memory: it is cleared when you switch chats or reload the page.
