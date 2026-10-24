@@ -182,6 +182,12 @@ Use `/sp` for roleplay-aware Scratch Pad questions. Use `/sp-ask` for general as
 
 Access settings in the Extensions panel under "Scratch Pad":
 
+Settings are grouped into six collapsible sections: **General**, **Context defaults**, **Prompts**, **Voice**, **Search**, and **Connection**. General starts open; each header summarizes its current settings and updates as you edit. You can open or close sections with the keyboard using Tab and Enter or Space.
+
+Voice and connection-profile options appear when their feature is enabled. Search shows provider settings when semantic search is enabled and it is using local configuration. Shared embedding settings remain managed in Chat Manager; if Chat Manager has no configuration available, the existing local fallback stays editable. Cached search data remains accessible even when semantic search is off.
+
+Quick questions and custom OOC instructions live in Prompts. Open **Connection → Advanced** for message formatting and emergency generation controls. Context sources and swipe choices are defaults for new threads; existing threads keep their own choices. The history limit and OOC instructions apply to existing threads too. Collapsing sections or hiding inactive options preserves every saved value.
+
 ### Context Settings
 
 - **Chat History Limit**: Control how many messages from the main chat are included as context (default: all). Only messages that are actually sent count toward the limit.
@@ -216,7 +222,7 @@ Customize the instruction that tells the AI how to respond to out-of-character q
 
 ### Text-to-Speech
 
-Configure a provider and voice map in SillyTavern's TTS extension, then enable **Extensions → Scratch Pad → Text-to-Speech → Enable TTS**.
+Configure a provider and voice map in SillyTavern's TTS extension, then enable **Extensions → Scratch Pad → Voice → Enable TTS**.
 
 - **Auto-generate TTS**: Automatically generate and play speech after each completed reply, including popup responses, retries, edited questions, and newly generated swipes (default: OFF). Streaming replies are spoken once, after completion. Opening saved threads or selecting an existing swipe does not replay it. Commands using `quiet=true` skip automatic speech.
 - **Voice Name**: Use a character name from your TTS voice map, or leave it empty for SillyTavern's default selection. The same voice is used for manual and automatic speech.

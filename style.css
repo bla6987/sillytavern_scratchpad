@@ -1480,7 +1480,125 @@ svg.sp-message-model-icon {
 .scratch_pad_settings_block {
     display: flex;
     flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+    color: var(--sp-text-primary);
+}
+
+.scratch-pad-settings [hidden] {
+    display: none !important;
+}
+
+.sp-settings-intro,
+.sp-settings-note {
+    margin: 0;
+    color: var(--sp-text-secondary);
+    font-size: 0.8em;
+    line-height: 1.5;
+}
+
+.sp-settings-section {
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius);
+    background: var(--sp-bg-secondary);
+    min-width: 0;
+}
+
+.sp-settings-section > summary,
+.sp-settings-advanced > summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.2rem 0.75rem;
+    padding: 0.75rem;
+    min-height: var(--sp-min-touch-target);
+    box-sizing: border-box;
+    cursor: pointer;
+    list-style: none;
+    border-radius: inherit;
+}
+
+.sp-settings-section > summary::-webkit-details-marker,
+.sp-settings-advanced > summary::-webkit-details-marker {
+    display: none;
+}
+
+.sp-settings-section > summary::after,
+.sp-settings-advanced > summary::after {
+    content: '';
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    margin-right: 0.2rem;
+}
+
+.sp-settings-section[open] > summary::after,
+.sp-settings-advanced[open] > summary::after {
+    transform: rotate(45deg);
+}
+
+.sp-settings-section > summary:hover,
+.sp-settings-advanced > summary:hover {
+    background: var(--sp-bg-tertiary);
+}
+
+.sp-settings-section > summary:focus-visible,
+.sp-settings-advanced > summary:focus-visible {
+    outline: 2px solid var(--sp-accent);
+    outline-offset: 2px;
+}
+
+.sp-settings-section-title {
+    font-weight: 600;
+}
+
+.sp-settings-section-summary {
+    grid-column: 1;
+    color: var(--sp-text-secondary);
+    font-size: 0.75em;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.sp-settings-fields {
+    display: flex;
+    flex-direction: column;
     gap: 0.75rem;
+    min-width: 0;
+}
+
+.sp-settings-section > .sp-settings-fields {
+    padding: 0.75rem;
+    border-top: 1px solid var(--sp-border);
+}
+
+.sp-settings-advanced {
+    border-top: 1px solid var(--sp-border);
+}
+
+.sp-settings-advanced > summary {
+    padding: 0.625rem 0;
+    font-size: 0.875em;
+}
+
+.sp-settings-advanced > .sp-settings-fields {
+    padding-top: 0.5rem;
+}
+
+.sp-settings-fields > small {
+    color: var(--sp-text-secondary);
+    font-size: 0.75em;
+    line-height: 1.5;
+}
+
+.sp-settings-fields .text_pole {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .scratch_pad_settings_block h4 {
@@ -1495,14 +1613,26 @@ svg.sp-message-model-icon {
 }
 
 .scratch_pad_settings_block label small {
-    color: var(--sp-text-muted);
-    font-size: 0.6875rem;
+    color: var(--sp-text-secondary);
+    font-size: 0.75em;
+    line-height: 1.5;
 }
 
 .scratch_pad_settings_block .checkbox_label {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 0.5rem;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.25rem 0.5rem;
+}
+
+.scratch_pad_settings_block .checkbox_label input {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin-top: 0.2em;
+}
+
+.scratch_pad_settings_block .checkbox_label small {
+    grid-column: 2;
 }
 
 .scratch_pad_settings_block .checkbox_label span {

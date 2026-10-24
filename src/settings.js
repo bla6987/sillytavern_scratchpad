@@ -3,8 +3,8 @@
  * Handles extension settings management
  */
 
-import { dispatchConnectionProfilesChanged, getConnectionProfiles as getConnectionProfileList, renderConnectionProfileOptions, resolveConnectionProfileId } from './connectionProfiles.js';
-import { getStoredEmbeddingSettings, updateEmbeddingSettings, isUsingSharedConfig, clearEmbeddingCache, getCacheStats } from './embeddings.js';
+import { dispatchConnectionProfilesChanged, getConnectionProfiles as getConnectionProfileList, getConnectionProfileLabel, renderConnectionProfileOptions, resolveConnectionProfileId } from './connectionProfiles.js';
+import { getStoredEmbeddingSettings, getEmbeddingSettings, updateEmbeddingSettings, isUsingSharedConfig, clearEmbeddingCache, getCacheStats } from './embeddings.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -116,6 +116,7 @@ export function updateSettings(updates) {
 
     const { saveSettingsDebounced } = SillyTavern.getContext();
     saveSettingsDebounced();
+    refreshSettingsOverview();
 }
 
 /**
@@ -173,6 +174,51 @@ export function isGlobalApiProfileForced() {
  */
 export function setDisplayMode(mode) {
     updateSettings({ displayMode: mode });
+}
+
+/** Update the collapsed headers without changing any stored settings. */
+function refreshSettingsOverview() {
+    if (typeof document === 'undefined' || !document.getElementById('sp_settings_general_summary')) return;
+    const settings = getSettings();
+    const setSummary = (section, text) => {
+        const element = document.getElementById(`sp_settings_${section}_summary`);
+        if (element && element.textContent !== text) element.textContent = text;
+    };
+
+    const display = { drawer: 'Drawer', pinned: 'Pinned sidebar', fullscreen: 'Fullscreen' }[settings.displayMode] || 'Drawer';
+    setSummary('general', `${display} · ${settings.textSize}px · Sound ${settings.soundOnComplete ? 'on' : 'off'}`);
+
+    let history = settings.chatHistoryLimit > 0 ? `Last ${settings.chatHistoryLimit} messages` : 'All history';
+    if (settings.chatHistoryRangeMode === 'start_to' && settings.chatHistoryRangeEnd) {
+        history = `History through ${settings.chatHistoryRangeEnd}`;
+    } else if (settings.chatHistoryRangeMode === 'from_to_end' && settings.chatHistoryRangeStart) {
+        history = `History from ${settings.chatHistoryRangeStart}`;
+    } else if (settings.chatHistoryRangeMode === 'between' && settings.chatHistoryRangeStart && settings.chatHistoryRangeEnd) {
+        history = `History ${Math.min(settings.chatHistoryRangeStart, settings.chatHistoryRangeEnd)}–${Math.max(settings.chatHistoryRangeStart, settings.chatHistoryRangeEnd)}`;
+    }
+    const sourceCount = ['includeCharacterCard', 'includeSystemPrompt', 'includeAuthorsNote', ...Object.values(CONTEXT_TOGGLE_INPUTS)]
+        .filter(key => settings[key]).length;
+    const swipes = { user: 'User swipes', assistant: 'AI swipes', both: 'User + AI swipes' }[settings.swipeContextMode];
+    setSummary('context', settings.characterCardOnly ? 'Character card only' : [history, `${sourceCount} source${sourceCount === 1 ? '' : 's'}`, swipes].filter(Boolean).join(' · '));
+
+    const prompts = getQuickPrompts().length;
+    setSummary('prompts', `${prompts} quick prompt${prompts === 1 ? '' : 's'} · ${settings.oocSystemPrompt === DEFAULT_OOC_PROMPT ? 'Default' : 'Custom'} instructions`);
+    setSummary('voice', settings.ttsEnabled
+        ? `${settings.ttsAutoGenerate ? 'Automatic' : 'Manual'} · ${String(settings.ttsVoice || '').trim() || 'Default voice'}`
+        : 'Off');
+
+    const embeddings = getEmbeddingSettings();
+    const provider = { openrouter: 'OpenRouter', openai: 'OpenAI', ollama: 'Ollama' }[embeddings.provider] || embeddings.provider;
+    setSummary('search', embeddings.enabled
+        ? `Semantic · ${isUsingSharedConfig() ? 'Chat Manager' : provider} · ${embeddings.model || 'Model not set'}`
+        : 'Keyword search only');
+
+    const profile = settings.connectionProfileId || settings.connectionProfile;
+    setSummary('connection', settings.useAlternativeApi
+        ? `${getConnectionProfileLabel(profile) || 'Choose a connection profile'}${settings.forceGlobalApiProfile ? ' · All threads' : ' · Default for new threads'}`
+        : 'Current SillyTavern profile');
+    const advanced = [settings.useMultiMessageFormat && 'Multi-message format', settings.useStandardGeneration && 'Standard generation'].filter(Boolean);
+    setSummary('advanced', advanced.join(' · ') || 'Compatibility options');
 }
 
 /**
@@ -259,7 +305,7 @@ export function loadSettingsUI() {
     // Connection profile dropdown visibility
     const profileContainer = document.getElementById('sp_profile_container');
     if (profileContainer) {
-        profileContainer.style.display = settings.useAlternativeApi ? 'block' : 'none';
+        profileContainer.hidden = !settings.useAlternativeApi;
     }
 
     const forceGlobalApiToggle = document.getElementById('sp_force_global_api_profile');
@@ -304,7 +350,7 @@ export function loadSettingsUI() {
     // TTS voice container visibility
     const ttsVoiceContainer = document.getElementById('sp_tts_voice_container');
     if (ttsVoiceContainer) {
-        ttsVoiceContainer.style.display = settings.ttsEnabled ? 'block' : 'none';
+        ttsVoiceContainer.hidden = !settings.ttsEnabled;
     }
 
     // Sound on completion toggle
@@ -333,6 +379,7 @@ export function loadSettingsUI() {
 
     // Embeddings / semantic search
     loadEmbeddingSettingsUI();
+    refreshSettingsOverview();
 }
 
 /**
@@ -371,17 +418,28 @@ function updateEmbeddingConfigVisibility() {
     const emb = getStoredEmbeddingSettings();
     const sharing = emb.useSharedConfig && isUsingSharedConfig();
 
+    const options = document.getElementById('sp_emb_options');
+    if (options) options.hidden = !emb.enabled;
+
     const configBlock = document.getElementById('sp_emb_config');
     if (configBlock) {
-        configBlock.style.opacity = sharing ? '0.5' : '1';
+        configBlock.hidden = sharing;
         configBlock.querySelectorAll('input, select').forEach((el) => { el.disabled = sharing; });
+    }
+
+    const sharedNotice = document.getElementById('sp_emb_shared_notice');
+    if (sharedNotice) {
+        sharedNotice.hidden = !emb.useSharedConfig;
+        sharedNotice.textContent = sharing
+            ? 'Provider, model and credentials are managed in Chat Manager. Turn off sharing to configure them here.'
+            : 'Chat Manager has no embedding configuration available. Your local settings below are used.';
     }
 
     const apiKeyWrap = document.getElementById('sp_emb_api_key_wrap');
     const ollamaWrap = document.getElementById('sp_emb_ollama_wrap');
     const isOllama = emb.provider === 'ollama';
-    if (apiKeyWrap) apiKeyWrap.style.display = isOllama ? 'none' : 'block';
-    if (ollamaWrap) ollamaWrap.style.display = isOllama ? 'block' : 'none';
+    if (apiKeyWrap) apiKeyWrap.hidden = isOllama;
+    if (ollamaWrap) ollamaWrap.hidden = !isOllama;
 }
 
 /**
@@ -539,7 +597,7 @@ export function initSettingsListeners() {
         bindOnce(altApiToggle, 'change', (e) => {
             updateSettings({ useAlternativeApi: e.target.checked });
             if (profileContainer) {
-                profileContainer.style.display = e.target.checked ? 'block' : 'none';
+                profileContainer.hidden = !e.target.checked;
             }
             dispatchConnectionProfilesChanged();
         });
@@ -582,7 +640,7 @@ export function initSettingsListeners() {
         bindOnce(ttsEnabledToggle, 'change', (e) => {
             updateSettings({ ttsEnabled: e.target.checked });
             if (ttsVoiceContainer) {
-                ttsVoiceContainer.style.display = e.target.checked ? 'block' : 'none';
+                ttsVoiceContainer.hidden = !e.target.checked;
             }
         });
     }
@@ -642,15 +700,14 @@ function initEmbeddingSettingsListeners() {
     const enabledToggle = document.getElementById('sp_emb_enabled');
     if (enabledToggle) {
         bindOnce(enabledToggle, 'change', (e) => {
-            updateEmbeddingSettings({ enabled: e.target.checked });
+            updateEmbeddingSettingsUI({ enabled: e.target.checked });
         });
     }
 
     const sharedToggle = document.getElementById('sp_emb_use_shared');
     if (sharedToggle) {
         bindOnce(sharedToggle, 'change', (e) => {
-            updateEmbeddingSettings({ useSharedConfig: e.target.checked });
-            updateEmbeddingConfigVisibility();
+            updateEmbeddingSettingsUI({ useSharedConfig: e.target.checked });
             refreshEmbeddingCacheStatus();
         });
     }
@@ -658,29 +715,28 @@ function initEmbeddingSettingsListeners() {
     const providerSelect = document.getElementById('sp_emb_provider');
     if (providerSelect) {
         bindOnce(providerSelect, 'change', (e) => {
-            updateEmbeddingSettings({ provider: e.target.value });
-            updateEmbeddingConfigVisibility();
+            updateEmbeddingSettingsUI({ provider: e.target.value });
         });
     }
 
     const apiKeyInput = document.getElementById('sp_emb_api_key');
     if (apiKeyInput) {
         bindOnce(apiKeyInput, 'input', (e) => {
-            updateEmbeddingSettings({ apiKey: e.target.value.trim() });
+            updateEmbeddingSettingsUI({ apiKey: e.target.value.trim() });
         });
     }
 
     const ollamaUrlInput = document.getElementById('sp_emb_ollama_url');
     if (ollamaUrlInput) {
         bindOnce(ollamaUrlInput, 'input', (e) => {
-            updateEmbeddingSettings({ ollamaUrl: e.target.value.trim() });
+            updateEmbeddingSettingsUI({ ollamaUrl: e.target.value.trim() });
         });
     }
 
     const modelInput = document.getElementById('sp_emb_model');
     if (modelInput) {
         bindOnce(modelInput, 'input', (e) => {
-            updateEmbeddingSettings({ model: e.target.value.trim() });
+            updateEmbeddingSettingsUI({ model: e.target.value.trim() });
         });
     }
 
@@ -697,6 +753,12 @@ function initEmbeddingSettingsListeners() {
             refreshEmbeddingCacheStatus();
         });
     }
+}
+
+function updateEmbeddingSettingsUI(updates) {
+    updateEmbeddingSettings(updates);
+    updateEmbeddingConfigVisibility();
+    refreshSettingsOverview();
 }
 
 let connectionProfileListenersInitialized = false;
@@ -795,6 +857,7 @@ export async function populateConnectionProfiles() {
     if (result.selectedId && settings.connectionProfileId !== result.selectedId) {
         updateSettings({ connectionProfileId: result.selectedId, connectionProfile: '' });
     }
+    refreshSettingsOverview();
 }
 
 /**
