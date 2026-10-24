@@ -2577,6 +2577,7 @@ function removeViewportHandler() {
     const container = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
     if (container) {
         container.style.removeProperty('height');
+        container.style.removeProperty('--sp-viewport-height');
     }
 }
 
@@ -2628,7 +2629,14 @@ function setupViewportHandlers() {
             // Resize the drawer/fullscreen container to match the visual viewport,
             // so the flex layout naturally adjusts the messages area for the keyboard
             if (cachedContainer) {
-                cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
+                if (cachedContainer.classList.contains('sp-drawer')) {
+                    // Let the drawer's layout subtract the toolbar when pinned.
+                    // An inline !important height would override that offset on
+                    // the transition back from mobile/keyboard to desktop.
+                    cachedContainer.style.setProperty('--sp-viewport-height', `${viewportHeight}px`);
+                } else {
+                    cachedContainer.style.setProperty('height', `${viewportHeight}px`, 'important');
+                }
             }
             scrollToBottom();
         });

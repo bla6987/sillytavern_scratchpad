@@ -68,13 +68,13 @@ body.sp-drawer-open:not(.sp-drawer-pinned) {
     position: fixed;
     /* Use inset for positioning */
     inset: 0 0 0 auto;
-    width: 100%;
-    max-width: var(--sp-drawer-width);
+    width: var(--sp-drawer-width);
+    max-width: 100vw;
+    box-sizing: border-box;
     /* Explicit viewport height - !important to override any inherited issues */
     height: 100vh !important;
-    height: 100dvh !important;
-    min-height: 100vh !important;
-    min-height: 100dvh !important;
+    height: var(--sp-viewport-height, 100dvh) !important;
+    min-height: 0 !important;
     background: var(--sp-bg-primary);
     z-index: 99999;
     /* Very high to overlay SillyTavern UI */
@@ -128,6 +128,69 @@ body.sp-drawer-pinned .sp-drawer-backdrop {
 
 .sp-drawer.sp-pinned {
     transform: translateX(0) !important;
+    /* Native toolbar/drawers must remain above a nonmodal Scratch Pad. */
+    top: var(--topBarBlockSize, 40px) !important;
+    height: calc(100vh - var(--topBarBlockSize, 40px)) !important;
+    height: calc(var(--sp-viewport-height, 100dvh) - var(--topBarBlockSize, 40px)) !important;
+    min-height: 0 !important;
+    z-index: 40 !important;
+}
+
+/* Reserve space only while docked. Removing the class restores ST's own layout,
+   including inline dimensions, without changing --sheldWidth or Moving UI state. */
+body.sp-drawer-pinned:not(.movingUI) #sheld {
+    left: 0 !important;
+    right: var(--sp-panel-reserved) !important;
+    width: min(var(--sheldWidth, 50vw), calc(100vw - var(--sp-panel-reserved))) !important;
+    max-width: calc(100vw - var(--sp-panel-reserved)) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+.sp-panel-resize-handle {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 10px;
+    z-index: 2;
+    cursor: ew-resize;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.sp-panel-resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: calc(50% - 20px);
+    width: 3px;
+    height: 40px;
+    border-radius: 3px;
+    background: var(--sp-border);
+}
+
+.sp-panel-resize-handle:hover,
+.sp-panel-resize-handle:focus-visible,
+.sp-resizing .sp-panel-resize-handle {
+    background: color-mix(in srgb, var(--sp-accent) 15%, transparent);
+    outline: none;
+}
+
+.sp-panel-resize-handle:hover::after,
+.sp-panel-resize-handle:focus-visible::after,
+.sp-resizing .sp-panel-resize-handle::after {
+    background: var(--sp-accent);
+}
+
+.sp-panel-resize-handle[hidden] {
+    display: none;
+}
+
+body.sp-panel-resizing,
+body.sp-panel-resizing * {
+    cursor: ew-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
 /* Pin button */

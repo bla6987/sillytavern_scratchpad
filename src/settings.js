@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
     soundOnComplete: false, // Play notification sound when generation finishes
     displayMode: 'drawer', // Display mode: 'drawer' (overlay), 'pinned' (sidebar), 'fullscreen'
+    panelWidth: 400, // Preferred desktop drawer width; viewport clamping does not overwrite it
     useMultiMessageFormat: false, // Send structured multi-message array instead of concatenated prompt
     useStandardGeneration: false // Use ST's generateRaw helper for compatibility mode
 });

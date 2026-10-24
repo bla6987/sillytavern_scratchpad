@@ -1,0 +1,167 @@
+/** Scratch Pad owns its resize gesture and never writes SillyTavern's layout settings. */
+import { getSettings, updateSettings, getDisplayMode } from '../settings.js';
+
+export const DEFAULT_PANEL_WIDTH = 400;
+const MIN_PANEL_WIDTH = 300;
+const MIN_CHAT_WIDTH = 480;
+const PANEL_GAP = 12;
+// SillyTavern switches its native drawers and chat to a mobile layout at 1000px.
+const DOCK_BREAKPOINT = 1000;
+
+export function getPanelGeometry(viewportWidth, preferredWidth, { mobile = false, pinned = false, movingUI = false } = {}) {
+    const docked = pinned && !movingUI && !mobile && viewportWidth > DOCK_BREAKPOINT;
+    const maxWidth = mobile ? viewportWidth : Math.max(0, Math.floor(docked
+        ? viewportWidth - MIN_CHAT_WIDTH - PANEL_GAP
+        : viewportWidth - 48));
+    const minWidth = Math.min(MIN_PANEL_WIDTH, maxWidth);
+    const requested = Number.isFinite(preferredWidth) ? preferredWidth : DEFAULT_PANEL_WIDTH;
+    const width = mobile ? viewportWidth : Math.round(Math.min(maxWidth, Math.max(minWidth, requested)));
+    return { width, minWidth, maxWidth, docked, reserved: docked ? width + PANEL_GAP : 0 };
+}
+
+/**
+ * Attach an accessible left-edge splitter. Dispose before removing the drawer.
+ * @param {HTMLElement} drawer
+ * @param {(docked: boolean) => void} onModeChange
+ */
+export function createPanelLayout(drawer, onModeChange) {
+    let preferredWidth = getSettings().panelWidth;
+    let geometry;
+    let drag = null;
+    let disposed = false;
+    let movingUI = document.body.classList.contains('movingUI');
+    const handle = document.createElement('div');
+    handle.className = 'sp-panel-resize-handle';
+    handle.tabIndex = 0;
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-label', 'Resize Scratch Pad');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-controls', drawer.id);
+    handle.title = 'Drag to resize. Use arrow keys to adjust; double-click to reset.';
+    drawer.appendChild(handle);
+
+    function update() {
+        if (disposed) return;
+        const mobile = window.matchMedia('(max-width: 30rem)').matches;
+        geometry = getPanelGeometry(window.innerWidth, preferredWidth, {
+            mobile,
+            pinned: getDisplayMode() === 'pinned',
+            movingUI: document.body.classList.contains('movingUI'),
+        });
+        if (mobile && drag) cancelDrag();
+        drawer.style.setProperty('--sp-drawer-width', `${geometry.width}px`);
+        handle.hidden = mobile;
+        handle.setAttribute('aria-valuemin', String(geometry.minWidth));
+        handle.setAttribute('aria-valuemax', String(geometry.maxWidth));
+        handle.setAttribute('aria-valuenow', String(geometry.width));
+        handle.setAttribute('aria-valuetext', `${geometry.width} pixels wide`);
+        if (geometry.reserved) {
+            document.body.style.setProperty('--sp-panel-reserved', `${geometry.reserved}px`);
+        } else {
+            document.body.style.removeProperty('--sp-panel-reserved');
+        }
+        onModeChange(geometry.docked);
+    }
+
+    function saveWidth() {
+        // Save only on completion, never on each pointer movement or viewport resize.
+        if (getSettings().panelWidth !== preferredWidth) updateSettings({ panelWidth: preferredWidth });
+    }
+
+    function setWidth(width) {
+        preferredWidth = Math.min(geometry.maxWidth, Math.max(geometry.minWidth, Math.round(width)));
+        update();
+    }
+
+    function finishDrag(commit) {
+        if (!drag) return;
+        const { pointerId, previousWidth } = drag;
+        drag = null;
+        drawer.classList.remove('sp-resizing');
+        document.body.classList.remove('sp-panel-resizing');
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+        if (commit) saveWidth();
+        else {
+            preferredWidth = previousWidth;
+            update();
+        }
+    }
+
+    function cancelDrag() { finishDrag(false); }
+
+    handle.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || !event.isPrimary || handle.hidden || drag) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handle.focus({ preventScroll: true });
+        drag = { pointerId: event.pointerId, x: event.clientX, width: geometry.width, previousWidth: preferredWidth };
+        handle.setPointerCapture(event.pointerId);
+        drawer.classList.add('sp-resizing');
+        document.body.classList.add('sp-panel-resizing');
+    });
+    handle.addEventListener('pointermove', (event) => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setWidth(drag.width + drag.x - event.clientX);
+    });
+    handle.addEventListener('pointerup', (event) => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        finishDrag(true);
+    });
+    handle.addEventListener('pointercancel', cancelDrag);
+    handle.addEventListener('lostpointercapture', cancelDrag);
+    handle.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setWidth(DEFAULT_PANEL_WIDTH);
+        saveWidth();
+    });
+    handle.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && drag) {
+            event.preventDefault();
+            event.stopPropagation();
+            cancelDrag();
+            return;
+        }
+        const step = event.shiftKey ? 50 : 10;
+        const width = {
+            ArrowLeft: geometry.width + step,
+            ArrowRight: geometry.width - step,
+            Home: geometry.minWidth,
+            End: geometry.maxWidth,
+        }[event.key];
+        if (width === undefined || drag) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setWidth(width);
+        saveWidth();
+    });
+    window.addEventListener('blur', cancelDrag);
+
+    // Moving UI can be toggled while Scratch Pad is open. Do not observe our own
+    // classes as layout changes, which would cause a feedback loop while dragging.
+    const observer = new MutationObserver(() => {
+        const nextMovingUI = document.body.classList.contains('movingUI');
+        if (nextMovingUI === movingUI) return;
+        movingUI = nextMovingUI;
+        cancelDrag();
+        update();
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    return {
+        update,
+        dispose() {
+            cancelDrag();
+            disposed = true;
+            observer.disconnect();
+            window.removeEventListener('blur', cancelDrag);
+            handle.remove();
+            document.body.style.removeProperty('--sp-panel-reserved');
+            document.body.classList.remove('sp-panel-resizing');
+        },
+    };
+}

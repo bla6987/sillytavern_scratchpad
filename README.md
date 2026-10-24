@@ -14,6 +14,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Message Queue**: Keep typing while a reply generates — messages you send are queued and sent in order as each reply finishes
 - **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
 - **Mobile Friendly**: Full-screen drawer UI with touch support and bottom sheet popups
+- **Resizable Panel**: Drag the left edge of the desktop drawer or pinned sidebar; your width is remembered
 - **Persistent Storage**: Threads are saved with your chat and inherit properly when branching
 - **Quick Access**: Use `/sp <question>` for quick popup responses, or `quiet=true` to use the reply in STscript
 - **Quick Prompts**: Saved questions you can start a thread with in one click
@@ -41,6 +42,12 @@ git clone https://github.com/bla6987/sillytavern_scratchpad
 - Click the **Scratch Pad** button in the extensions menu
 - Use the `/sp` or `/scratchpad` slash command
 - Use `/sp-view` to open directly to the thread list
+
+### Resizing the Panel
+
+Drag the panel's left edge to change its width. You can also Tab to the resize handle and use **Left/Right Arrow** (10px steps), **Shift + Arrow** (50px steps), or **Home/End** (minimum/maximum width). Double-click the handle to reset to 400px. The desktop width is shared by Drawer and Pinned Sidebar modes and saved when you finish resizing. Press **Escape** during a drag to cancel it.
+
+Pinned Sidebar reserves space beside the main chat and sits below SillyTavern's toolbar and native drawers. It temporarily falls back to an overlay on windows 1000px or narrower or while **Moving UI** is enabled, and docks again when space allows. Phone-sized windows keep the full-width drawer. Resizing the window clamps the panel to fit without overwriting your saved width. Closing or unpinning restores SillyTavern's layout; its saved chat width and movable-panel positions are unchanged.
 
 ### Quick Questions
 
