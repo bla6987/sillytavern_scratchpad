@@ -47,6 +47,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     connectionProfile: '',
     textSize: 14, // Default text size in pixels
     ttsEnabled: false, // Enable TTS for assistant messages
+    ttsAutoGenerate: false, // Automatically speak completed assistant replies
     ttsVoice: '', // Voice name for TTS (from SillyTavern voice map)
     soundOnComplete: false, // Play notification sound when generation finishes
     displayMode: 'drawer', // Display mode: 'drawer' (overlay), 'pinned' (sidebar), 'fullscreen'
@@ -287,6 +288,11 @@ export function loadSettingsUI() {
     const ttsEnabledToggle = document.getElementById('sp_tts_enabled');
     if (ttsEnabledToggle) {
         ttsEnabledToggle.checked = settings.ttsEnabled;
+    }
+
+    const ttsAutoGenerateToggle = document.getElementById('sp_tts_auto_generate');
+    if (ttsAutoGenerateToggle) {
+        ttsAutoGenerateToggle.checked = settings.ttsAutoGenerate;
     }
 
     // TTS voice input
@@ -578,6 +584,13 @@ export function initSettingsListeners() {
             if (ttsVoiceContainer) {
                 ttsVoiceContainer.style.display = e.target.checked ? 'block' : 'none';
             }
+        });
+    }
+
+    const ttsAutoGenerateToggle = document.getElementById('sp_tts_auto_generate');
+    if (ttsAutoGenerateToggle) {
+        bindOnce(ttsAutoGenerateToggle, 'change', (e) => {
+            updateSettings({ ttsAutoGenerate: e.target.checked });
         });
     }
 

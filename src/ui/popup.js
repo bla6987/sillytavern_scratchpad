@@ -135,7 +135,7 @@ export async function askQuietly(message, kind = 'scratchpad') {
     let result = null;
     try {
         await saveMetadata();
-        result = await (QUIET_GENERATORS[kind] || generateScratchPadResponse)(message, thread.id);
+        result = await (QUIET_GENERATORS[kind] || generateScratchPadResponse)(message, thread.id, null, { autoTts: false });
     } finally {
         isPopupGenerating = false;
         popupGenerationThreadId = null;

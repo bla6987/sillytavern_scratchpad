@@ -16,6 +16,24 @@ function getSpeakCommand() {
 }
 
 /**
+ * Automatically speak a completed reply when opted in. Call without awaiting
+ * so speech generation cannot delay the reply UI or the next queued question.
+ * @param {string} text Completed assistant reply
+ * @returns {Promise<boolean>} True if speech was requested successfully
+ */
+export async function autoSpeakText(text) {
+    try {
+        if (typeof text !== 'string' || !text.trim()) return false;
+        const settings = getSettings();
+        if (!settings.ttsAutoGenerate || !isTTSAvailable()) return false;
+        return await speakText(text);
+    } catch (error) {
+        console.error('[ScratchPad TTS] Automatic speech failed:', error);
+        return false;
+    }
+}
+
+/**
  * Speak text using SillyTavern's TTS system
  * @param {string} text Text to speak
  * @returns {Promise<boolean>} True if successful

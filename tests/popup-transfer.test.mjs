@@ -121,7 +121,7 @@ async function loadPopupModule(mocks) {
         const {
             createThread, saveMetadata, getThread,
             generateScratchPadResponse, generateRawPromptResponse, generateGeneralAskResponse,
-            parseThinking, cancelGeneration, renderMarkdown, createStreamingRenderer,
+            parseThinking, cancelGeneration, isGenerationActive, renderMarkdown, createStreamingRenderer,
             createButton, createSpinner, showToast, copyTextToClipboard, Icons, playCompletionSound,
             speakText, isTTSAvailable, getCurrentContextSettings,
             REASONING_STATE, normalizeReasoningMeta
@@ -138,6 +138,28 @@ async function loadPopupModule(mocks) {
         delete globalThis.__popupTransferMocks;
     }
 }
+
+test('quiet commands suppress automatic TTS for every generator', async () => {
+    const requests = [];
+    const generate = async (...args) => { requests.push(args); return { success: true, response: 'Quiet reply' }; };
+    const popup = await loadPopupModule({
+        createThread: () => ({ id: 'quiet-thread' }),
+        saveMetadata: async () => {},
+        getCurrentContextSettings: () => ({}),
+        generateScratchPadResponse: generate,
+        generateGeneralAskResponse: generate,
+        generateRawPromptResponse: generate,
+        isGenerationActive: () => false,
+        isScratchPadGenerating: () => false,
+        advanceMessageQueue() {},
+        refreshScratchPadUI() {},
+        playCompletionSound() {},
+    });
+    for (const kind of ['scratchpad', 'ask', 'raw', 'debug']) {
+        assert.equal(await popup.askQuietly('Question', kind), 'Quiet reply');
+        assert.deepEqual(requests.at(-1), ['Question', 'quiet-thread', null, { autoTts: false }]);
+    }
+});
 
 test('opening a generating popup in Scratch Pad transfers instead of cancelling', async () => {
     const document = createDocument();

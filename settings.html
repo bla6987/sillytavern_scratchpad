@@ -185,10 +185,16 @@
                 <label class="checkbox_label" for="sp_tts_enabled">
                     <input type="checkbox" id="sp_tts_enabled">
                     <span>Enable TTS</span>
-                    <small>Add speak button to assistant messages (uses SillyTavern's TTS)</small>
+                    <small>Use SillyTavern's TTS and add a speak button to assistant messages</small>
                 </label>
 
                 <div id="sp_tts_voice_container" style="display: none;">
+                    <label class="checkbox_label" for="sp_tts_auto_generate">
+                        <input type="checkbox" id="sp_tts_auto_generate">
+                        <span>Auto-generate TTS</span>
+                        <small>Automatically generate and play speech when a reply finishes, including new swipes. Commands using quiet=true skip automatic speech.</small>
+                    </label>
+
                     <label for="sp_tts_voice">
                         <span>Voice Name:</span>
                         <small>Character name from your TTS voice map (leave empty for default)</small>

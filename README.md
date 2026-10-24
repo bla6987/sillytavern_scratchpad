@@ -14,6 +14,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 - **Streaming Responses**: Watch AI responses generate in real-time
 - **Message Queue**: Keep typing while a reply generates — messages you send are queued and sent in order as each reply finishes
 - **Reasoning Capture**: Captures model reasoning/thinking for supported SillyTavern provider formats and configured reasoning tags
+- **Text-to-Speech**: Speak replies on demand or automatically generate and play speech for completed replies using SillyTavern's TTS and your selected voice
 - **Mobile Friendly**: Full-screen drawer UI with touch support and bottom sheet popups
 - **Resizable Panel**: Drag the left edge of the desktop drawer or pinned sidebar; your width is remembered
 - **Persistent Storage**: Threads are saved with your chat and inherit properly when branching
@@ -212,6 +213,15 @@ Customize the instruction that tells the AI how to respond to out-of-character q
 - Act as a neutral observer and writing assistant
 - Answer questions about story, characters, plot, and setting
 - Generate a title for new threads
+
+### Text-to-Speech
+
+Configure a provider and voice map in SillyTavern's TTS extension, then enable **Extensions → Scratch Pad → Text-to-Speech → Enable TTS**.
+
+- **Auto-generate TTS**: Automatically generate and play speech after each completed reply, including popup responses, retries, edited questions, and newly generated swipes (default: OFF). Streaming replies are spoken once, after completion. Opening saved threads or selecting an existing swipe does not replay it. Commands using `quiet=true` skip automatic speech.
+- **Voice Name**: Use a character name from your TTS voice map, or leave it empty for SillyTavern's default selection. The same voice is used for manual and automatic speech.
+
+Speech omits model thinking and non-speech formatting. You can still use each reply's speak button when automatic generation is off.
 
 ### API Settings
 

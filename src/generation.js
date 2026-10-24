@@ -16,6 +16,7 @@ import { buildCharacterCardsContext, buildPersonaContext, buildWorldInfoContext,
 import { isDebugThread } from './threadModes.js';
 import { buildDebugSnapshot, DEBUG_SYSTEM_PROMPT } from './debugContext.js';
 import { readDebugRuntime } from './debugRuntime.js';
+import { autoSpeakText } from './tts.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -945,8 +946,17 @@ function excludeMessagesFromThread(thread, messageIds) {
 
 export const GENERAL_ASK_SYSTEM_PROMPT = 'You are a helpful general-purpose AI assistant. Answer the user directly and do not rely on any prior chat context.';
 
-async function generateNoContextResponse(userPrompt, threadId, onStream = null, systemPrompt = '') {
+// Only newly completed replies trigger speech. Keeping this out of rendering
+// avoids replaying saved messages when opening a thread or changing swipes.
+function speakGeneratedResponse(text, originatingScope, options = {}) {
+    if (options.autoTts === false) return;
+    if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return;
+    void autoSpeakText(text);
+}
+
+async function generateNoContextResponse(userPrompt, threadId, onStream = null, systemPrompt = '', options = {}) {
     const context = SillyTavern.getContext();
+    const originatingScope = chatScope(context);
 
     const thread = getThread(threadId);
     if (!thread) {
@@ -1028,6 +1038,7 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
 
         await saveMetadata();
 
+        speakGeneratedResponse(responseWithoutThinking, originatingScope, options);
         return { success: true, response: responseWithoutThinking, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
@@ -1065,12 +1076,12 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
     }
 }
 
-export async function generateRawPromptResponse(userPrompt, threadId, onStream = null) {
-    return generateNoContextResponse(userPrompt, threadId, onStream, '');
+export async function generateRawPromptResponse(userPrompt, threadId, onStream = null, options = {}) {
+    return generateNoContextResponse(userPrompt, threadId, onStream, '', options);
 }
 
-export async function generateGeneralAskResponse(userPrompt, threadId, onStream = null) {
-    return generateNoContextResponse(userPrompt, threadId, onStream, GENERAL_ASK_SYSTEM_PROMPT);
+export async function generateGeneralAskResponse(userPrompt, threadId, onStream = null, options = {}) {
+    return generateNoContextResponse(userPrompt, threadId, onStream, GENERAL_ASK_SYSTEM_PROMPT, options);
 }
 
 async function buildDebugPrompt(userQuestion, thread, isFirstMessage, profileId) {
@@ -1430,7 +1441,7 @@ function checkAndResetCancellation() {
     return wasCancelled;
 }
 
-async function generateAssistantForUserMessage(threadId, userMessage, isFirstMessage, onStream = null) {
+async function generateAssistantForUserMessage(threadId, userMessage, isFirstMessage, onStream = null, options = {}) {
     const originatingScope = chatScope(SillyTavern.getContext());
     const chatIndexAtQuestion = userMessage.chatMessageIndex ?? (SillyTavern.getContext().chat ? SillyTavern.getContext().chat.length : null);
 
@@ -1519,6 +1530,7 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
 
         await saveMetadata();
 
+        speakGeneratedResponse(finalResponse, originatingScope, options);
         return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
@@ -1560,9 +1572,10 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
  * @param {string} userQuestion User's question
  * @param {string} threadId Thread ID
  * @param {Function} onStream Callback for streaming updates
+ * @param {{autoTts?: boolean}} options Set autoTts to false for quiet script requests
  * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, error }
  */
-export async function generateScratchPadResponse(userQuestion, threadId, onStream = null) {
+export async function generateScratchPadResponse(userQuestion, threadId, onStream = null, options = {}) {
     const context = SillyTavern.getContext();
 
     const thread = getThread(threadId);
@@ -1579,7 +1592,7 @@ export async function generateScratchPadResponse(userQuestion, threadId, onStrea
         return { success: false, error: 'Failed to add user message' };
     }
 
-    return await generateAssistantForUserMessage(threadId, userMessage, !thread.titled, onStream);
+    return await generateAssistantForUserMessage(threadId, userMessage, !thread.titled, onStream, options);
 }
 
 /**
@@ -1738,6 +1751,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         syncSwipeToMessage(message);
         await saveMetadata();
 
+        speakGeneratedResponse(finalResponse, originatingScope);
         return { success: true, response: finalResponse, thinking: combinedThinking, reasoningMeta, swipeIndex: newSwipeIndex, gen_started: genStarted, gen_finished: genFinished, generationInfo: resultGenerationInfo };
 
     } catch (error) {
