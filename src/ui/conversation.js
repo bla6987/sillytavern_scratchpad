@@ -3,6 +3,7 @@
  */
 
 import { getThread, getThreads, getThreadForCurrentBranch, createThread, updateThread, updateThreadContextSettings, getThreadContextSettings, getMessage, saveMetadata, saveMetadataDebounced, DEFAULT_CONTEXT_SETTINGS, ensureSwipeFields, setActiveSwipe, deleteSwipe, syncSwipeToMessage, deleteThread, restoreThread, forkThread, removeMessages, restoreMessages, getMessageIdsToDelete } from '../storage.js';
+import { isDebugThread } from '../threadModes.js';
 import { generateScratchPadResponse, editUserMessageAndRegenerate, retryMessage, regenerateMessage, generateSwipe, parseThinking, generateThreadTitle, cancelGeneration, isGenerationActive, isGuidedGenerationsInstalled, triggerGuidedSwipe, buildPromptPreview } from '../generation.js';
 import { warmEmbeddings } from '../semanticSearch.js';
 import { formatTimestamp, renderMarkdown, createStreamingRenderer, copyTextToClipboard, createButton, createMenuButton, showPromptDialog, showConfirmDialog, showToast, showUndoToast, createSpinner, debounce, downloadTextFile, formatPromptStats, Icons, playCompletionSound } from './components.js';
@@ -184,7 +185,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
 
     const subtitleEl = document.createElement('span');
     subtitleEl.className = 'sp-subtitle';
-    subtitleEl.textContent = 'Out of Character';
+    subtitleEl.textContent = isDebugThread(thread) ? '🔧 Troubleshooting · Settings only' : 'Out of Character';
     titleContainer.appendChild(subtitleEl);
 
     header.appendChild(titleContainer);
@@ -255,7 +256,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
             const emptyState = document.createElement('div');
             emptyState.className = 'sp-empty-state';
             emptyState.innerHTML = `<p>No messages yet. Ask a question below.</p>`;
-            appendQuickPrompts(emptyState);
+            if (!isDebugThread(thread)) appendQuickPrompts(emptyState);
             messagesContainer.appendChild(emptyState);
         }
         renderBranchedMessages(thread, messagesContainer, hasBranchedMessages);
@@ -288,7 +289,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
     const textarea = document.createElement('textarea');
     textarea.className = 'sp-message-input';
     textarea.id = 'sp-message-input';
-    textarea.placeholder = 'Ask a question...';
+    textarea.placeholder = isDebugThread(thread) ? 'Describe a settings or context problem...' : 'Ask a question...';
     textarea.rows = 2;
     textarea.value = getDraft(draftKey);
     textarea.addEventListener('input', () => {
@@ -377,6 +378,10 @@ export function renderConversation(container, isNewThread = false, focusInput = 
  * @param {boolean} isNewThread Whether this is a new thread
  */
 function renderContextOptions(container, thread, isNewThread) {
+    if (isDebugThread(thread)) {
+        renderDebugOptions(container, thread);
+        return;
+    }
     const contextSection = document.createElement('div');
     contextSection.className = 'sp-context-options';
     contextSection.id = 'sp-context-options';
@@ -532,6 +537,41 @@ function renderContextOptions(container, thread, isNewThread) {
     };
     window.addEventListener(PROFILE_CHANGE_EVENT, refreshProfiles);
     registerCleanup(() => window.removeEventListener(PROFILE_CHANGE_EVENT, refreshProfiles));
+}
+
+function renderDebugOptions(container, thread) {
+    const section = document.createElement('div');
+    section.className = 'sp-context-options sp-debug-banner';
+    const notice = document.createElement('p');
+    notice.textContent = 'Troubleshooting mode is fixed for this thread. Sends a fresh settings snapshot plus this discussion. The snapshot omits story/prompt text, credentials, and URLs. Suggestions require manual changes.';
+    section.appendChild(notice);
+
+    const label = document.createElement('label');
+    label.textContent = 'Connection profile';
+    label.htmlFor = 'sp_thread_connection_profile';
+    const select = document.createElement('select');
+    select.id = 'sp_thread_connection_profile';
+    select.className = 'text_pole';
+    select.disabled = isGlobalApiProfileForced();
+    select.addEventListener('change', () => {
+        updateThreadContextSettings(thread.id, { connectionProfileId: select.value || null, connectionProfile: null });
+        saveMetadataDebounced();
+    });
+    section.append(label, select);
+    const refresh = () => {
+        select.disabled = isGlobalApiProfileForced();
+        populateThreadProfileDropdown(select.disabled ? null : getConfiguredProfileValue(getThreadContextSettings(thread.id)), 'sp_thread_');
+    };
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.className = 'menu_button sp-preview-prompt-btn';
+    preview.textContent = 'Preview diagnostic prompt';
+    preview.addEventListener('click', () => handlePreviewPrompt().catch(error => showToast(error.message, 'error')));
+    section.appendChild(preview);
+    container.appendChild(section);
+    refresh();
+    window.addEventListener(PROFILE_CHANGE_EVENT, refresh);
+    registerCleanup(() => window.removeEventListener(PROFILE_CHANGE_EVENT, refresh));
 }
 
 function getConfiguredProfileValue(contextSettings) {
@@ -2222,7 +2262,8 @@ function updateSendButtonMode() {
 
     const textarea = document.getElementById('sp-message-input');
     if (textarea) {
-        textarea.placeholder = queueing ? 'Queue a message...' : 'Ask a question...';
+        textarea.placeholder = queueing ? 'Queue a message...'
+            : isDebugThread(currentThreadId ? getThread(currentThreadId) : null) ? 'Describe a settings or context problem...' : 'Ask a question...';
     }
 }
 

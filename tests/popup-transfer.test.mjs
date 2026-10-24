@@ -116,6 +116,7 @@ async function loadPopupModule(mocks) {
     let code = fs.readFileSync(sourcePath, 'utf8');
     code = code.replace(/^import .*;$/gm, '');
     code = `
+        import { isDebugThread, THREAD_MODE } from ${JSON.stringify(new URL('../src/threadModes.js', import.meta.url).href)};
         const __popupTransferMocks = globalThis.__popupTransferMocks;
         const {
             createThread, saveMetadata, getThread,

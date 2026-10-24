@@ -9,6 +9,7 @@ import { renderMarkdown, createStreamingRenderer, createButton, createSpinner, s
 import { speakText, isTTSAvailable } from '../tts.js';
 import { getCurrentContextSettings } from '../settings.js';
 import { REASONING_STATE, normalizeReasoningMeta } from '../reasoning.js';
+import { isDebugThread, THREAD_MODE } from '../threadModes.js';
 
 let isPopupGenerating = false;
 // Thread a popup or quiet command is generating for
@@ -40,9 +41,9 @@ export function getPopupGenerationThreadId() {
  * @param {string} message User's question
  * @returns {Promise<string>} The reply, or empty string if it failed or was cancelled
  */
-export async function showQuickPopup(message) {
+export async function showQuickPopup(message, mode = THREAD_MODE.STORY) {
     // Create new thread with current context settings
-    const thread = createThread('New Thread', getCurrentContextSettings());
+    const thread = createThread(mode === THREAD_MODE.DEBUG ? 'Troubleshooting' : 'New Thread', getCurrentContextSettings(), mode);
     if (!thread) {
         showToast('Failed to create thread', 'error');
         return '';
@@ -53,6 +54,10 @@ export async function showQuickPopup(message) {
 
     createPopupElement();
     return await generatePopupResponse(message) ?? '';
+}
+
+export async function showQuickPopupDebug(message) {
+    return showQuickPopup(message, THREAD_MODE.DEBUG);
 }
 
 /**
@@ -100,13 +105,14 @@ const QUIET_GENERATORS = Object.freeze({
     scratchpad: generateScratchPadResponse,
     ask: generateGeneralAskResponse,
     raw: generateRawPromptResponse,
+    debug: generateScratchPadResponse,
 });
 
 /**
  * Ask in a new thread without showing the popup, for slash command scripts.
  * The thread is saved like any other.
  * @param {string} message Question or prompt
- * @param {'scratchpad'|'ask'|'raw'} kind Which kind of request
+ * @param {'scratchpad'|'ask'|'raw'|'debug'} kind Which kind of request
  * @returns {Promise<string>} The reply, or empty string if it failed
  */
 export async function askQuietly(message, kind = 'scratchpad') {
@@ -116,7 +122,7 @@ export async function askQuietly(message, kind = 'scratchpad') {
         return '';
     }
 
-    const thread = createThread('New Thread', getCurrentContextSettings());
+    const thread = createThread(kind === 'debug' ? 'Troubleshooting' : 'New Thread', getCurrentContextSettings(), kind === 'debug' ? THREAD_MODE.DEBUG : THREAD_MODE.STORY);
     if (!thread) {
         showToast('Failed to create thread', 'error');
         return '';
@@ -264,12 +270,12 @@ function createPopupElement() {
     const titleEl = document.createElement('div');
     titleEl.className = 'sp-popup-title';
     titleEl.id = 'sp-popup-title';
-    titleEl.textContent = 'Scratch Pad';
+    titleEl.textContent = isDebugThread(getThread(currentPopupThreadId)) ? '🔧 Troubleshooting' : 'Scratch Pad';
     header.appendChild(titleEl);
 
     const subtitleEl = document.createElement('div');
     subtitleEl.className = 'sp-popup-subtitle';
-    subtitleEl.textContent = 'Out of Character';
+    subtitleEl.textContent = isDebugThread(getThread(currentPopupThreadId)) ? 'Settings snapshot · No story context' : 'Out of Character';
     header.appendChild(subtitleEl);
 
     sheet.appendChild(header);
@@ -603,7 +609,7 @@ async function generatePopupResponse(message) {
         // Update title with thread name
         const thread = getThread(threadId);
         if (thread && titleEl) {
-            titleEl.textContent = thread.name;
+            titleEl.textContent = isDebugThread(thread) ? `🔧 Troubleshooting: ${thread.name}` : thread.name;
         }
 
     } catch (error) {
@@ -710,7 +716,7 @@ async function generatePopupRawResponse(message, options = {}) {
 
         const thread = getThread(threadId);
         if (thread && titleEl) {
-            titleEl.textContent = thread.name;
+            titleEl.textContent = isDebugThread(thread) ? `🔧 Troubleshooting: ${thread.name}` : thread.name;
         }
 
     } catch (error) {

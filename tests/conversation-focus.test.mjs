@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { isDebugThread } from '../src/threadModes.js';
 
 const source = fs.readFileSync(new URL('../src/ui/conversation.js', import.meta.url), 'utf8')
     .replace(/^import .*;$/gm, '')
@@ -77,6 +78,7 @@ function createHarness() {
     const otherInput = document.body.appendChild(new Element('textarea'));
     const thread = { id: 'thread-1', name: 'Test', messages: [] };
     const context = vm.createContext({
+        isDebugThread,
         document,
         setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
         clearTimeout(id) { timers.delete(id); },

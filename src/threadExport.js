@@ -2,6 +2,8 @@
  * Thread export (Markdown and JSON) and JSON import. Pure functions, no DOM.
  */
 
+import { getThreadMode, isDebugThread } from './threadModes.js';
+
 export const EXPORT_FORMAT = 'sillytavern-scratchpad-threads';
 export const EXPORT_VERSION = 1;
 
@@ -22,6 +24,7 @@ function isExportableMessage(message) {
  */
 export function threadToMarkdown(thread, { userLabel = 'You' } = {}) {
     const lines = [`# ${thread?.name || 'Scratch Pad Thread'}`, ''];
+    if (isDebugThread(thread)) lines.push('Mode: Troubleshooting', '');
 
     for (const message of (thread?.messages || []).filter(isExportableMessage)) {
         const label = message.role === 'user' ? userLabel : 'Assistant';
@@ -93,6 +96,7 @@ export function parseThreadImport(text, generateId) {
         .map(thread => ({
             id: generateId(),
             name: typeof thread.name === 'string' && thread.name.trim() ? thread.name.trim() : 'Imported Thread',
+            mode: getThreadMode(thread),
             createdAt: typeof thread.createdAt === 'string' ? thread.createdAt : now,
             updatedAt: now,
             messages: thread.messages

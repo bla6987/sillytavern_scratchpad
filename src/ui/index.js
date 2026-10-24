@@ -12,7 +12,7 @@ import { createPanelLayout } from './panelLayout.js';
 
 export { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
 export { openThread, startNewThread, getCurrentThreadId } from './conversation.js';
-export { showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, dismissPopup, isPopupVisible } from './popup.js';
+export { showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, showQuickPopupDebug, dismissPopup, isPopupVisible } from './popup.js';
 export { isFullscreenMode, getConversationContainer, resetScratchPadUIState };
 
 let drawerElement = null;

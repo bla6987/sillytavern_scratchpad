@@ -5,6 +5,7 @@ A SillyTavern extension that enables out-of-character (OOC) meta-conversations w
 ## Features
 
 - **Meta Conversations**: Have OOC discussions about your roleplay without affecting the main chat
+- **Separate Troubleshooting Mode**: Use `/sp-debug` to discuss configuration and context problems with a fresh, filtered settings snapshot, without automatically sharing story text
 - **Threaded Discussions**: Organize different lines of inquiry into separate threads
 - **Semantic Search**: Search threads by *meaning*, not just keywords, using embeddings (OpenRouter / OpenAI / Ollama). Reuses the Chat Manager extension's embedding key by default.
 - **Full Context**: AI responses are informed by your chat history, character cards (every member in group chats), your persona, and optionally World Info and the chat summary
@@ -70,6 +71,28 @@ Both main-chat history and swipe alternatives use SillyTavern's prompt regex pro
 Swipe context uses the latest messages in the full main chat, even when your history range excludes them. It refreshes on every request, including regenerated Scratch Pad replies. Older history can be trimmed to fit the model's context window; if the requested alternatives still cannot fit, generation stops with an error so the comparison does not silently omit swipes. **Character Card Only**, `/sp-ask`, and `/rawprompt` omit swipe context.
 
 The default is **Selected swipes only**, which keeps the existing behavior. Change **Extensions → Scratch Pad → Swipe context** to set the default for new threads and `/sp` popups. Existing threads keep their own choice.
+
+### Troubleshooting Configuration and Context
+
+Use a separate command to start a diagnostic conversation:
+
+```text
+/sp-debug
+/sp-debug Why are my replies getting cut short?
+/sp-debug quiet=true Check my context limits
+```
+
+With no question, `/sp-debug` opens a new **🔧 Troubleshooting** thread. Its **Preview diagnostic prompt** button shows what the next question would send. With a question, it generates a popup response; `quiet=true` returns the reply for scripts without the popup. Open a popup in Scratch Pad to continue the diagnostic conversation or preview its next request.
+
+Troubleshooting is a fixed thread purpose, not a checkbox. Reopening, branching, editing/retrying a question, generating another swipe, and JSON export/import preserve the mode. Ordinary `/sp` conversations and the **New Thread** button continue to use story mode. A wrench label identifies diagnostic threads in both the list and conversation header. Story context controls are replaced by a diagnostic notice, a connection-profile selector, and preview.
+
+Every diagnostic question gathers a fresh snapshot of the active API/model, configured generation limits and samplers, Prompt Manager order/roles/depths and text lengths, formatting flags, Author's Note/persona placement and lengths, available World Info settings, regex flags, extension versions, selected summarization/vector settings, and Scratch Pad defaults. When Scratch Pad uses a Connection Manager profile, the snapshot identifies that selection and its available preset settings separately from the main-chat configuration. Diagnostics use the usual Scratch Pad API selection, including the forced-global profile override.
+
+The snapshot uses explicit allowlists. It excludes main-chat history, character and persona names/descriptions, prompt and Author's Note text, lorebook content, regex patterns/replacements, stop-string content, API credentials, server URLs, custom request bodies/headers, and arbitrary extension settings. Relevant configuration labels such as model/preset names are included with bounded lengths and basic credential/URL redaction. Only this diagnostic thread's questions and answers accompany the snapshot; anything you deliberately paste into the discussion is sent as part of it. Snapshots are rebuilt, rather than saved as extra story context.
+
+The assistant diagnoses and recommends manual, reversible changes; it cannot change settings. It cannot inspect server configuration or provider logs, capture the actual main-chat request, prove that a provider honored a setting, or inspect excluded prompt content. Optional module data is marked unavailable when it cannot be read on the installed SillyTavern build. Other extensions and provider-side processing can still alter requests after Scratch Pad constructs them.
+
+Troubleshooting always uses its own instructions, independently of the story OOC prompt and context toggles. The emergency standard-generation toggle does not reroute diagnostic Chat Completion requests through the raw prompt pipeline. Text Completion diagnostics use plain role labels with character instruct formatting disabled; literal macro openers are separated to prevent later expansion. Connection Manager diagnostics also disable instruct formatting. Older diagnostic turns can be trimmed for space; if the fresh snapshot and current question alone do not fit, generation stops with an error before sending.
 
 ### Searching Threads
 
@@ -140,6 +163,7 @@ Going back to the thread list or reopening the drawer reconnects to a running re
 |---------|---------|-------------|
 | `/scratchpad [message]` | `/sp` | Open scratch pad, or quick-ask with popup if message provided |
 | `/sp-ask <question>` | - | Ask a general AI question with no chat, character, author note, or Scratch Pad thread context |
+| `/sp-debug [question]` | - | Open a dedicated troubleshooting thread, or ask about configuration with a filtered settings snapshot |
 | `/rawprompt <prompt>` | `/rp` | Send a strict raw prompt with no system prompt or injected context |
 | `/scratchpad-view` | `/sp-view` | Open scratch pad thread list |
 | `/scratchpad-clear` | `/sp-clear` | Delete all threads (with confirmation) |
@@ -147,7 +171,7 @@ Going back to the thread list or reopening the drawer reconnects to a running re
 
 Use `/sp` for roleplay-aware Scratch Pad questions. Use `/sp-ask` for general assistant questions without roleplay context. Use `/rawprompt` when you want the prompt sent directly without even a general assistant system prompt.
 
-`/sp <message>`, `/sp-ask` and `/rawprompt` return the reply, so you can pipe it into other commands. Add `quiet=true` to skip the popup (the reply is still saved as a thread):
+`/sp <message>`, `/sp-debug <question>`, `/sp-ask` and `/rawprompt` return the reply, so you can pipe it into other commands. Add `quiet=true` to skip the popup (the reply is still saved as a thread):
 
 ```
 /sp quiet=true Summarize the last scene in one sentence | /setvar key=summary

@@ -702,6 +702,20 @@ body.sp-fullscreen-open {
     padding: 0.25rem;
 }
 
+.sp-debug-banner p {
+    margin: 0 0 0.5em;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.sp-debug-banner .sp-preview-prompt-btn {
+    margin-top: 0.5em;
+}
+
+.sp-debug-badge {
+    white-space: nowrap;
+}
+
 .sp-thread-name-row {
     display: flex;
     align-items: center;

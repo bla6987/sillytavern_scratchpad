@@ -9,6 +9,7 @@ import { formatTimestamp, truncateText, createButton, showPromptDialog, showToas
 import { getDraft, setDraft } from '../draftStore.js';
 import { takeQueuedMessages } from '../messageQueue.js';
 import { parseThreadImport } from '../threadExport.js';
+import { isDebugThread } from '../threadModes.js';
 import { isPinnedMode, togglePinnedMode } from './index.js';
 import { isSemanticSearchEnabled } from '../embeddings.js';
 import { searchThreadsSemantic, resetQueryCache } from '../semanticSearch.js';
@@ -694,6 +695,13 @@ function createThreadItem(thread, options = {}) {
     nameEl.className = 'sp-thread-name';
     nameEl.textContent = thread.name;
     nameRowEl.appendChild(nameEl);
+
+    if (isDebugThread(thread)) {
+        const badge = document.createElement('span');
+        badge.className = 'sp-message-badge sp-debug-badge';
+        badge.textContent = '🔧 Troubleshooting';
+        nameRowEl.appendChild(badge);
+    }
 
     // Profile override indicator
     const threadProfile = thread.contextSettings?.connectionProfileId || thread.contextSettings?.connectionProfile;

@@ -6,6 +6,7 @@
 import { createReasoningMeta, normalizeReasoningMeta } from './reasoning.js';
 import { resolveConnectionProfileId } from './connectionProfiles.js';
 import { deleteDraft, clearDrafts } from './draftStore.js';
+import { getThreadMode, THREAD_MODE } from './threadModes.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -169,9 +170,10 @@ export function findThreadByName(searchName) {
  * Create a new thread
  * @param {string} [name] Optional thread name
  * @param {Object} [contextSettings] Optional initial context settings
+ * @param {'story'|'debug'} [mode] Fixed thread purpose; legacy threads are story threads
  * @returns {Object} The created thread
  */
-export function createThread(name = 'New Thread', contextSettings = null) {
+export function createThread(name = 'New Thread', contextSettings = null, mode = THREAD_MODE.STORY) {
     const data = ensureScratchPadExists();
     if (!data) {
         return null;
@@ -181,6 +183,7 @@ export function createThread(name = 'New Thread', contextSettings = null) {
     const thread = {
         id: generateId(),
         name: name,
+        mode: getThreadMode({ mode }),
         createdAt: timestamp,
         updatedAt: timestamp,
         messages: [],
@@ -202,7 +205,9 @@ export function updateThread(threadId, updates) {
     const thread = getThread(threadId);
     if (!thread) return null;
 
-    Object.assign(thread, updates, { updatedAt: getTimestamp() });
+    // A rename/settings update must never convert an existing conversation.
+    const { mode: ignoredMode, ...properties } = updates;
+    Object.assign(thread, properties, { updatedAt: getTimestamp() });
     return thread;
 }
 
@@ -774,6 +779,7 @@ export function forkThread(threadId, messageId) {
     const thread = {
         id: generateId(),
         name: `${source.name} (branch)`,
+        mode: getThreadMode(source),
         createdAt: timestamp,
         updatedAt: timestamp,
         messages: source.messages.slice(0, index + 1)

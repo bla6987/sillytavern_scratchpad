@@ -13,6 +13,9 @@ import { buildSwipeContext, getSwipeMessageIndices } from './swipeContext.js';
 import { chatScope, captureChatContext, fingerprintChatMessage, previousContext, contextChangeNotice, prepareContextSnapshot, recordSuccessfulContext, CONTEXT_REFERENCE_INSTRUCTION } from './contextTracking.js';
 import { createPromptRegexProcessor } from './promptRegex.js';
 import { buildCharacterCardsContext, buildPersonaContext, buildWorldInfoContext, filterHiddenMessages, formatChatHistory, getLatestSummary, getUserName } from './contextSources.js';
+import { isDebugThread } from './threadModes.js';
+import { buildDebugSnapshot, DEBUG_SYSTEM_PROMPT } from './debugContext.js';
+import { readDebugRuntime } from './debugRuntime.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -477,9 +480,9 @@ function buildReasoningPayload(responseText, streamReasoning = null, resultReaso
     };
 }
 
-function buildMessagesForGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null }) {
+function buildMessagesForGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null, debug = false }) {
     const context = SillyTavern.getContext();
-    const substitute = context.substituteParams || ((text) => text);
+    const substitute = debug ? (text => text) : (context.substituteParams || (text => text));
 
     if (prebuiltMessages) {
         const msgs = [];
@@ -566,7 +569,7 @@ async function reportProfileTokenUsage(inputText, generationResult, profile) {
     }
 }
 
-async function callConnectionProfileGeneration({ profileId, systemPrompt = '', prompt = '', messages: prebuiltMessages = null, onToken }) {
+async function callConnectionProfileGeneration({ profileId, systemPrompt = '', prompt = '', messages: prebuiltMessages = null, onToken, debug = false }) {
     const context = SillyTavern.getContext();
     const service = context.ConnectionManagerRequestService;
     const profile = getConnectionProfile(profileId, context);
@@ -575,7 +578,7 @@ async function callConnectionProfileGeneration({ profileId, systemPrompt = '', p
         throw new Error(`Connection profile with ID "${profileId}" not found.`);
     }
 
-    const requestMessages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+    const requestMessages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
     const inputText = [
         systemPrompt || '',
         ...requestMessages.map(message => message?.content || ''),
@@ -590,6 +593,7 @@ async function callConnectionProfileGeneration({ profileId, systemPrompt = '', p
             const response = await service.sendRequest(profileId, requestMessages, undefined, {
                 extractData: true,
                 includePreset: true,
+                ...(debug ? { includeInstruct: false } : {}),
                 stream,
                 signal: controller.signal,
             });
@@ -658,7 +662,7 @@ async function callConnectionProfileGeneration({ profileId, systemPrompt = '', p
  * @param {Function} [options.onToken] Callback for streaming tokens: (accumulatedText, false)
  * @returns {Promise<{text: string, streamReasoning: Object|null, resultReasoning: Object|null}>}
  */
-async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages, onToken }) {
+async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages, onToken, debug = false }) {
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
     let generationResult;
@@ -667,7 +671,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     // Try streaming first when supported and a token callback is provided
     if (onToken && currentApi === 'openai' && isStreamingSupported()) {
         try {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
 
             const controller = new AbortController();
             activeAbortController = controller;
@@ -703,7 +707,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     // Non-streaming path
     if (!generationResult && currentApi === 'openai') {
         try {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
 
             const data = await context.sendGenerationRequest('quiet', { prompt: messages });
             const text = context.extractMessageFromData(data) || '';
@@ -713,10 +717,12 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
             if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
                 throw err;
             }
+            // Diagnostics must not fall back into macro/instruct prompt construction.
+            if (debug) throw err;
             console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
             if (prebuiltMessages) {
                 // For multi-message mode, pass the messages array to generateRaw
-                const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+                const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
                 const result = await context.generateRaw({ prompt: messages });
                 generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
             } else {
@@ -727,8 +733,15 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
     }
 
     if (!generationResult) {
-        if (prebuiltMessages) {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages });
+        if (debug) {
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
+            // A system-only raw message avoids character names; disabling instruct
+            // avoids roleplay text embedded in the user's formatting templates.
+            const content = (messages.map(message => `[${message.role.toUpperCase()}]\n${message.content}`).join('\n\n') + '\n\n[ASSISTANT]\n').replace(/\{\{/g, '{\u200b{');
+            const result = await context.generateRaw({ prompt: [{ role: 'system', content }], instructOverride: true, trimNames: false });
+            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+        } else if (prebuiltMessages) {
+            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
             const result = await context.generateRaw({ prompt: messages });
             generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
         } else {
@@ -859,14 +872,16 @@ async function runGenerationForThread({ threadId, promptData, onStream = null, u
                 prompt: promptData.prompt,
                 messages: promptData.messages,
                 onToken,
+                debug: promptData.debug === true,
             })
-            : useStandardGeneration
+            : useStandardGeneration && !promptData.debug
                 ? await callStandardGeneration(promptData)
                 : await callGeneration({
                     systemPrompt: promptData.systemPrompt,
                     prompt: promptData.prompt,
                     messages: promptData.messages,
                     onToken,
+                    debug: promptData.debug === true,
                 });
 
         if (onStream) onStream(result.text, true);
@@ -1058,6 +1073,43 @@ export async function generateGeneralAskResponse(userPrompt, threadId, onStream 
     return generateNoContextResponse(userPrompt, threadId, onStream, GENERAL_ASK_SYSTEM_PROMPT);
 }
 
+async function buildDebugPrompt(userQuestion, thread, isFirstMessage, profileId) {
+    const context = SillyTavern.getContext();
+    const resolution = getEffectiveProfileResolution(thread.contextSettings);
+    const profile = getConnectionProfile(profileId, context);
+    const api = getConnectionProfileApiMap(profile, context)?.selected;
+    const preset = profile?.preset ? context.getPresetManager?.(api)?.getCompletionPresetByName?.(profile.preset) : null;
+    const snapshot = buildDebugSnapshot(context, { profile, preset, resolution, runtime: await readDebugRuntime() });
+    const tokenBudget = getPromptTokenBudget(context, profileId);
+    const history = buildThreadMessages(thread.messages);
+    const initialCount = history.length;
+    const systemPrompt = DEBUG_SYSTEM_PROMPT + (isFirstMessage
+        ? '\nBegin with a brief troubleshooting title on its own line: **Title: [3-6 words]**'
+        : '');
+    // Keep literal macros as reference text, even on ST's raw text backend path.
+    // A zero-width separator prevents subsequent macro expansion or execution.
+    const literal = value => String(value).replace(/\{\{/g, '{\u200b{');
+    const reference = `--- CURRENT CONFIGURATION SNAPSHOT (REFERENCE DATA) ---\n${JSON.stringify(snapshot, null, 2)}`;
+    const assemble = () => ({
+        debug: true, systemPrompt,
+        messages: [
+            ...history,
+            { role: 'user', content: `${reference}\n\n--- TROUBLESHOOTING QUESTION ---\n${userQuestion}` },
+        ].map(message => ({ ...message, content: literal(message.content) })),
+    });
+    let data = assemble();
+    let tokens = await countPromptTokens(promptDataToTokenText(data));
+    while (tokenBudget && tokens > tokenBudget && history.length) {
+        history.shift();
+        if (history[0]?.role === 'assistant') history.shift();
+        data = assemble();
+        tokens = await countPromptTokens(promptDataToTokenText(data));
+    }
+    if (tokenBudget && tokens > tokenBudget) throw new Error('The configuration snapshot and question exceed the available prompt budget. Increase the context window or shorten the question.');
+    data.stats = { promptTokens: tokens, tokenBudget, chatMessages: 0, chatMessagesTrimmed: 0, threadMessagesTrimmed: initialCount - history.length };
+    return data;
+}
+
 /**
  * Build the complete prompt for scratch pad generation
  * @param {string} userQuestion User's question
@@ -1067,6 +1119,8 @@ export async function generateGeneralAskResponse(userPrompt, threadId, onStream 
  * @returns {Promise<Object>} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
  */
 async function buildPrompt(userQuestion, thread, isFirstMessage = false, profileId = null) {
+    // Fixed thread purpose takes precedence over every story-context toggle.
+    if (isDebugThread(thread)) return buildDebugPrompt(userQuestion, thread, isFirstMessage, profileId);
     const context = SillyTavern.getContext();
     const { chat } = context;
     const globalSettings = getSettings();
@@ -1590,6 +1644,7 @@ async function buildPromptForSwipe(threadId, messageId, profileId = null) {
  * @returns {Promise<Object>} { success, response, thinking, reasoningMeta, swipeIndex, error, cancelled }
  */
 export async function generateSwipe(threadId, messageId, onStream = null) {
+    const originatingScope = chatScope(SillyTavern.getContext());
     const thread = getThread(threadId);
     if (!thread) return { success: false, error: 'Thread not found' };
 
@@ -1615,7 +1670,8 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     }
 
     // Initialize swipe fields and add empty swipe
-    if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed before generation started.' };
+    if (promptData.contextTracking?.capture.scope && originatingScope !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed before generation started.' };
+    if (originatingScope && originatingScope !== chatScope(SillyTavern.getContext())) return { success: false, error: 'Chat changed before generation started.' };
     ensureSwipeFields(message);
     const previousSwipeId = message.swipeId;
     addSwipe(threadId, messageId, '', null, null, null, generationInfoToExtra(generationInfo));
@@ -1632,7 +1688,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     let genFinished = null;
     try {
         await saveMetadata();
-        if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed before generation started.' };
+        if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return { success: false, error: 'Chat changed before generation started.' };
         const result = await runGenerationForThread({
             threadId,
             promptData,
@@ -1643,7 +1699,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         });
         const resultGenerationInfo = result.generationInfo || generationInfo;
 
-        if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed during generation; context comparison was not updated.' };
+        if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return { success: false, error: 'Chat changed during generation; context comparison was not updated.' };
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1917,7 +1973,7 @@ Respond with ONLY the title, nothing else. Do not use quotes or formatting.`;
 
         const { text: response } = await runGenerationForThread({
             threadId: thread.id,
-            promptData: { systemPrompt, prompt },
+            promptData: { systemPrompt, prompt, debug: isDebugThread(thread) },
             useStandardGeneration: getSettings().useStandardGeneration,
         });
 

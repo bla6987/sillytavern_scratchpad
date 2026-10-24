@@ -3,10 +3,12 @@
  * Handles slash command registration
  */
 
-import { clearAllThreads, findThreadByName, getThread, saveMetadata } from './storage.js';
-import { openScratchPad, showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, refreshScratchPadUI } from './ui/index.js';
+import { clearAllThreads, createThread, findThreadByName, getThread, saveMetadata } from './storage.js';
+import { openScratchPad, showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, showQuickPopupDebug, refreshScratchPadUI } from './ui/index.js';
 import { askQuietly } from './ui/popup.js';
 import { isChatActive } from './generation.js';
+import { THREAD_MODE } from './threadModes.js';
+import { getCurrentContextSettings } from './settings.js';
 
 /**
  * Whether a slash command's quiet=true argument was given
@@ -84,6 +86,38 @@ export function registerCommands() {
                 Returns the reply text, so it can be piped into other commands.
             </div>
         `
+    }));
+
+    // Deliberate entry point: never a toggle on a story thread.
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'sp-debug',
+        callback: async (namedArgs, unnamedArgs) => {
+            if (!isChatActive()) {
+                toastr.warning('Open a chat to use Scratch Pad troubleshooting');
+                return '';
+            }
+            const message = unnamedArgs ? unnamedArgs.toString().trim() : '';
+            if (!message) {
+                const thread = createThread('Troubleshooting', getCurrentContextSettings(), THREAD_MODE.DEBUG);
+                if (!thread) return '';
+                await saveMetadata();
+                openScratchPad(thread.id);
+                return '';
+            }
+            return isQuiet(namedArgs)
+                ? await askQuietly(message, 'debug')
+                : await showQuickPopupDebug(message);
+        },
+        returns: 'the troubleshooting reply, when a question is given',
+        namedArgumentList: [quietArgument()],
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: 'Optional configuration/context troubleshooting question; opens a dedicated thread when omitted',
+            typeList: [ARGUMENT_TYPE.STRING], isRequired: false,
+        })],
+        helpString: `<div>Starts a separate, permanently labeled Troubleshooting thread. Each question sends a fresh, filtered configuration snapshot and this diagnostic conversation. Main-chat history, character/persona text, prompt contents, credentials, and URLs are excluded. Settings are never changed automatically.</div>
+            <ul><li><code>/sp-debug</code> — Open a new troubleshooting thread; preview its prompt before sending.</li>
+            <li><code>/sp-debug Why are replies cut short?</code> — Ask with a popup.</li>
+            <li><code>/sp-debug quiet=true Check my context limits</code> — Return the reply without a popup.</li></ul>`,
     }));
 
     // /sp-ask [message]
