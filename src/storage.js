@@ -545,6 +545,8 @@ export function syncSwipeToMessage(message) {
     delete nextExtra.api;
     delete nextExtra.model;
     delete nextExtra.promptStats;
+    delete nextExtra.contextSnapshotKey;
+    delete nextExtra.contextComparisonSkipped;
     if (activeExtra) {
         Object.assign(nextExtra, activeExtra);
     }

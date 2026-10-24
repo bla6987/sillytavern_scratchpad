@@ -74,7 +74,7 @@ test('persona is sent by default and user messages use the persona name', async 
     });
     await ask();
     assert.match(calls[0].prompt, /--- USER PERSONA ---\n\nName: Aria\n\nDescription: A wandering bard\./);
-    assert.match(calls[0].prompt, /Aria: Hi there/);
+    assert.match(calls[0].prompt, /\[Message #0 \| Aria\]\nHi there/);
     assert.doesNotMatch(calls[0].prompt, /User: Hi there/);
 });
 
@@ -207,7 +207,7 @@ test('prompt preview builds the next prompt without changing the thread', async 
     assert.equal(preview.messages[0].role, 'system');
     assert.match(preview.messages[0].content, /OOC PROMPT/);
     const userMessage = preview.messages.at(-1).content;
-    assert.match(userMessage, /Aria: Earlier/);
+    assert.match(userMessage, /\[Message #0 \| Aria\]\nEarlier/);
     assert.match(userMessage, /--- USER QUESTION ---\n\nWhat next\?/);
     assert.equal(preview.stats.promptTokens, 42);
 });
@@ -216,7 +216,7 @@ test('prompt preview for a new thread uses the settings shown in the view', asyn
     setupHarness({ chat: [{ is_user: true, name: 'Aria', mes: 'Earlier' }] });
     const preview = await buildPromptPreview(null, 'Q', { ...getCurrentContextSettings(), characterCardOnly: true });
     const text = preview.messages.map(m => m.content).join('\n');
-    assert.doesNotMatch(text, /Earlier/);
+    assert.doesNotMatch(text, /\nEarlier\n/);
     assert.match(text, /Character Name: Seraphina/);
     assert.match(text, /Title:/, 'first message asks for a title');
 });
@@ -239,12 +239,12 @@ test('preview applies regex to history and out-of-range swipes using full-chat d
     const original = structuredClone(chat);
     const preview = await buildPromptPreview(thread.id, 'Compare');
     const text = preview.messages.map(m => m.content).join('\n');
-    assert.match(text, /Bot: 2:2:OLDER/);
-    assert.match(text, /Swipe 1 \(currently selected\):\n1:1:USER/);
+    assert.match(text, /\[Message #0 \| Bot\]\n2:2:OLDER/);
+    assert.match(text, /\[Message #2 \| Aria\]\n1:1:USER/);
     assert.match(text, /Swipe 2:\n1:1:USER_ALT/);
     assert.match(text, /Swipe 2:\n2:0:AI_ALT/);
     assert.doesNotMatch(text, /SECRET|<junk>|HIDDEN/);
-    assert.equal(preview.stats.chatMessages, 1);
+    assert.equal(preview.stats.chatMessages, 3);
     assert.deepEqual(chat, original);
     assert.deepEqual(calls, [], 'preview never sends a generation request');
 });
@@ -260,17 +260,17 @@ test('regex stripping happens before token budgeting and does not change depth w
         chat,
         powerUserSettings: {},
         getTokenCountAsync: async text => countWords(text),
-        chatCompletionSettings: { stream_openai: false, openai_max_context: 100, openai_max_tokens: 10 },
+        chatCompletionSettings: { stream_openai: false, openai_max_context: 160, openai_max_tokens: 10 },
     });
     regexMock.process = (text, placement, { depth }) => `${depth}:${text.replace(/<junk>.*?<\/junk>/g, '')}`;
     const thread = createThread('Budget', { includeCharacterCard: false });
     const preview = await buildPromptPreview(thread.id, 'Q');
     const text = preview.messages.map(m => m.content).join('\n');
     assert.doesNotMatch(text, /OLD_HISTORY|STRIPPED|<junk>/);
-    assert.match(text, /Character: 1:RECENT/);
-    assert.match(text, /Aria: 0:LATEST/);
+    assert.match(text, /\[Message #1 \| Character\]\n1:RECENT/);
+    assert.match(text, /\[Message #2 \| Aria\]\n0:LATEST/);
     assert.equal(preview.stats.chatMessagesTrimmed, 1);
     assert.deepEqual(regexMock.calls.map(call => call.options.depth), [2, 1, 0]);
     assert.equal(regexMock.calls[1].placement, regex_placement.AI_OUTPUT);
-    assert.ok(preview.stats.promptTokens <= 90);
+    assert.ok(preview.stats.promptTokens <= 150);
 });

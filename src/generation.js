@@ -9,7 +9,8 @@ import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProf
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
 import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
-import { buildSwipeContext } from './swipeContext.js';
+import { buildSwipeContext, getSwipeMessageIndices } from './swipeContext.js';
+import { chatScope, captureChatContext, fingerprintChatMessage, previousContext, contextChangeNotice, prepareContextSnapshot, recordSuccessfulContext, CONTEXT_REFERENCE_INSTRUCTION } from './contextTracking.js';
 import { createPromptRegexProcessor } from './promptRegex.js';
 import { buildCharacterCardsContext, buildPersonaContext, buildWorldInfoContext, filterHiddenMessages, formatChatHistory, getLatestSummary, getUserName } from './contextSources.js';
 
@@ -55,7 +56,7 @@ function getStSystemPrompt(context = SillyTavern.getContext()) {
 function selectChatHistory(chat, settings) {
     if (!chat || chat.length === 0) return [];
 
-    const keepVisible = messages => settings.includeHiddenMessages ? messages : filterHiddenMessages(messages);
+    const keepVisible = messages => settings.includeHiddenMessages ? messages.filter(Boolean) : filterHiddenMessages(messages);
     const range = selectChatRange(chat, settings);
     if (range) return keepVisible(range);
 
@@ -246,8 +247,9 @@ function removeOldestVariableContext(chatMessages, scratchpadMessages) {
         return 'thread';
     }
 
-    if (chatMessages.length > 0) {
-        chatMessages.shift();
+    const removable = chatMessages.findIndex(message => !message.scratchPadRequired);
+    if (removable !== -1) {
+        chatMessages.splice(removable, 1);
         return 'chat';
     }
 
@@ -901,6 +903,9 @@ function getSwipeContext(threadId, messageId) {
 
     // Create context thread sliced to before the target, without the triggering user msg
     const contextThread = { ...thread, messages: thread.messages.slice(0, messageIndex) };
+    // Alternate replies compare against the selected reply they replace. Its
+    // own snapshot follows the selected Scratch Pad swipe, including after reload.
+    contextThread.contextComparisonMessage = thread.messages[messageIndex];
     let userIdx = -1;
     for (let i = contextThread.messages.length - 1; i >= 0; i--) {
         if (contextThread.messages[i].role === 'user') { userIdx = i; break; }
@@ -1080,28 +1085,44 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
 
     // OOC system instruction
     let systemPrompt = settings.oocSystemPrompt;
+    systemPrompt += `\n\n${CONTEXT_REFERENCE_INSTRUCTION}`;
 
     // Add title instruction only for first message
     if (isFirstMessage) {
         systemPrompt += '\n\nAt the very beginning of your first response in this new conversation, provide a brief title (3-6 words) for this discussion on its own line, formatted as: **Title: [Your Title Here]**\n\nThen provide your response.';
     }
 
-    const processChatText = settings.characterCardOnly
+    const processRegexText = settings.characterCardOnly
         ? text => text
         : await createPromptRegexProcessor(chat, context.ToolManager?.isToolCallingSupported?.() || false);
-    const selectedChat = (!settings.characterCardOnly && chat && chat.length > 0)
-        ? selectChatHistory(chat, settings).map(message => ({
-            ...message,
-            mes: processChatText(message.mes, message),
-        }))
-        : [];
+    const capture = captureChatContext(context);
+    const resolvedText = new Map();
+    const resolveText = text => {
+        const value = String(text ?? '');
+        if (!resolvedText.has(value)) resolvedText.set(value, context.substituteParams?.(value) ?? value);
+        const resolved = resolvedText.get(value);
+        if (resolved.includes('{{')) capture.ambiguousText = true;
+        return resolved;
+    };
+    const processChatText = (text, message) => resolveText(processRegexText(text, message));
+    const previous = previousContext(thread, context);
+    const requiredIndices = settings.characterCardOnly ? [] : getSwipeMessageIndices(chat, settings.swipeContextMode).filter(index => index >= 0);
+    const selectedSources = settings.characterCardOnly ? [] : selectChatHistory(chat, settings);
+    const selectedNumbers = new Set(selectedSources.map(message => chat.indexOf(message)));
+    requiredIndices.forEach(index => selectedNumbers.add(index));
+    const selectedChat = await Promise.all([...selectedNumbers].sort((a, b) => a - b).map(async number => {
+        const message = chat[number];
+        const processed = { ...message, name: message.name ? resolveText(message.name) : message.name, mes: processChatText(message.mes, message), scratchPadMessageNumber: number, scratchPadRequired: requiredIndices.includes(number) };
+        processed.scratchPadContextEntry = { id: capture.identities[number], number, hash: await fingerprintChatMessage(processed, getUserName(context)) };
+        return processed;
+    }));
     const scratchpadMessages = (!settings.characterCardOnly && thread && thread.messages && thread.messages.length > 0)
         ? thread.messages.filter(isCompleteThreadMessage).slice()
         : [];
     const initialChatCount = selectedChat.length;
     const initialThreadCount = scratchpadMessages.length;
     // Keep requested alternatives intact even when older history is trimmed.
-    const swipeContext = settings.characterCardOnly ? '' : buildSwipeContext(chat, settings.swipeContextMode, processChatText);
+    const swipeContext = settings.characterCardOnly ? '' : buildSwipeContext(chat, settings.swipeContextMode, processChatText, { selectedInHistory: true });
     const userName = getUserName(context);
     const tokenBudget = getPromptTokenBudget(context, profileId);
 
@@ -1123,6 +1144,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
     }
 
     function buildPromptData(chatMessages, previousScratchpadMessages) {
+        const changeNotice = contextChangeNotice(capture, chatMessages.map(message => message.scratchPadContextEntry), previous);
         // Multi-message format: return structured messages array
         if (globalSettings.useMultiMessageFormat) {
             const messages = [];
@@ -1149,7 +1171,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
             if (chatMessages.length > 0) {
                 const chatHistory = formatChatHistory(chatMessages, userName);
                 if (chatHistory) {
-                    messages.push({ role: 'system', content: `Roleplay chat history:\n\n${chatHistory}` });
+                    messages.push({ role: 'system', content: `--- ROLEPLAY CHAT HISTORY ---\n\n${chatHistory}` });
                 }
             }
 
@@ -1164,7 +1186,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
             }
 
             // Current user question
-            messages.push({ role: 'user', content: userQuestion });
+            messages.push({ role: 'user', content: `${changeNotice}\n\n--- USER QUESTION ---\n\n${userQuestion}` });
 
             return { systemPrompt, messages };
         }
@@ -1193,6 +1215,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
         addSection('PREVIOUS SCRATCH PAD DISCUSSION', formatThreadHistory(previousScratchpadMessages));
 
         // User question
+        parts.push(changeNotice);
         parts.push('--- USER QUESTION ---');
         parts.push(userQuestion);
 
@@ -1230,6 +1253,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
         chatMessagesTrimmed: initialChatCount - selectedChat.length,
         threadMessagesTrimmed: initialThreadCount - scratchpadMessages.length,
     };
+    promptData.contextTracking = await prepareContextSnapshot(capture, selectedChat.map(message => message.scratchPadContextEntry));
 
     return promptData;
 }
@@ -1353,6 +1377,7 @@ function checkAndResetCancellation() {
 }
 
 async function generateAssistantForUserMessage(threadId, userMessage, isFirstMessage, onStream = null) {
+    const originatingScope = chatScope(SillyTavern.getContext());
     const chatIndexAtQuestion = userMessage.chatMessageIndex ?? (SillyTavern.getContext().chat ? SillyTavern.getContext().chat.length : null);
 
     const assistantMessage = addMessage(threadId, 'assistant', '', 'pending', chatIndexAtQuestion);
@@ -1372,6 +1397,7 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
     let genFinished = null;
     try {
         await saveMetadata();
+        if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return { success: false, error: 'Chat changed before generation started.' };
         const currentThread = getThread(threadId);  // Re-fetch to get latest messages
         if (!currentThread) {
             return { success: false, error: 'Thread not found' };
@@ -1379,6 +1405,7 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
         const promptThread = excludeMessagesFromThread(currentThread, [userMessage.id, assistantMessage.id]);
         const globalSettings = getSettings();
         const promptData = await buildPrompt(userMessage.content, promptThread, isFirstMessage, profileResolution.profileId);
+        if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return { success: false, error: 'Chat changed before generation started.' };
         const result = await runGenerationForThread({
             threadId,
             promptData,
@@ -1388,6 +1415,8 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
             generationInfo,
         });
         const resultGenerationInfo = result.generationInfo || generationInfo;
+
+        if (originatingScope && chatScope(SillyTavern.getContext()) !== originatingScope) return { success: false, error: 'Chat changed during generation; context comparison was not updated.' };
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1415,7 +1444,7 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
                 reasoningMeta,
                 gen_started: assistantMessage.gen_started,
                 gen_finished: genFinished,
-                extra: generationInfoToExtra(resultGenerationInfo, promptData.stats),
+                extra: { ...generationInfoToExtra(resultGenerationInfo, promptData.stats), contextComparisonSkipped: true },
                 status: responseText ? 'complete' : 'cancelled'
             });
             await saveMetadata();
@@ -1429,7 +1458,8 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
             reasoningMeta,
             gen_started: assistantMessage.gen_started,
             gen_finished: genFinished,
-            extra: generationInfoToExtra(resultGenerationInfo, promptData.stats),
+            extra: finalResponse.trim() ? recordSuccessfulContext(promptData.contextTracking, generationInfoToExtra(resultGenerationInfo, promptData.stats))
+                : { ...generationInfoToExtra(resultGenerationInfo, promptData.stats), contextComparisonSkipped: true },
             status: 'complete'
         });
 
@@ -1585,6 +1615,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     }
 
     // Initialize swipe fields and add empty swipe
+    if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed before generation started.' };
     ensureSwipeFields(message);
     const previousSwipeId = message.swipeId;
     addSwipe(threadId, messageId, '', null, null, null, generationInfoToExtra(generationInfo));
@@ -1601,6 +1632,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
     let genFinished = null;
     try {
         await saveMetadata();
+        if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed before generation started.' };
         const result = await runGenerationForThread({
             threadId,
             promptData,
@@ -1610,6 +1642,8 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             generationInfo,
         });
         const resultGenerationInfo = result.generationInfo || generationInfo;
+
+        if (promptData.contextTracking.capture.scope && chatScope(SillyTavern.getContext()) !== promptData.contextTracking.capture.scope) return { success: false, error: 'Chat changed during generation; context comparison was not updated.' };
 
         genFinished = new Date().toISOString();
         const responseText = result.text || '';
@@ -1642,7 +1676,8 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
         message.swipeTimestamps[newSwipeIndex] = new Date().toISOString();
         message.swipeGenStarted[newSwipeIndex] = genStarted;
         message.swipeGenFinished[newSwipeIndex] = genFinished;
-        message.swipeExtra[newSwipeIndex] = generationInfoToExtra(resultGenerationInfo, promptData.stats);
+        message.swipeExtra[newSwipeIndex] = finalResponse.trim() ? recordSuccessfulContext(promptData.contextTracking, generationInfoToExtra(resultGenerationInfo, promptData.stats))
+            : { ...generationInfoToExtra(resultGenerationInfo, promptData.stats), contextComparisonSkipped: true };
         message.status = 'complete';
         syncSwipeToMessage(message);
         await saveMetadata();

@@ -114,9 +114,9 @@ export function filterHiddenMessages(chat) {
 export function formatChatHistory(chat, userName = 'User') {
     if (!chat || chat.length === 0) return '';
 
-    return chat.map(msg => {
+    return chat.map((msg, index) => {
         const role = msg.is_user ? (msg.name || userName) : (msg.name || 'Character');
-        return `${role}: ${msg.mes}`;
+        return `[Message #${msg.scratchPadMessageNumber ?? index} | ${role}]\n${msg.mes}`;
     }).join('\n\n');
 }
 

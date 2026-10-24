@@ -15,8 +15,8 @@ test('finds the latest message of each role, skips system messages, and keeps ch
     ];
     const original = structuredClone(chat);
     const context = buildSwipeContext(chat, 'both');
-    assert.match(context, /Latest user message \(#2, Player\)/);
-    assert.match(context, /Latest AI message \(#3, Character\)/);
+    assert.match(context, /Latest user message \(#1, Player\)/);
+    assert.match(context, /Latest AI message \(#2, Character\)/);
     assert.match(context, /Swipe 2 \(currently selected\):\nUSER_B/);
     assert.match(context, /Swipe 1 \(currently selected\):\nAI_A/);
     assert.match(context, /not consecutive story events/);
@@ -39,7 +39,7 @@ test('does not fall back to older swiped messages when the latest has no alterna
     const chat = [message(false, ['OLDER_A', 'OLDER_B']), { is_user: false, mes: 'Latest' }];
     const context = buildSwipeContext(chat, 'both');
     assert.match(context, /Latest user message: unavailable/);
-    assert.match(context, /Latest AI message \(#2, AI\): no alternate swipes available/);
+    assert.match(context, /Latest AI message \(#1, AI\): no alternate swipes available/);
     assert.doesNotMatch(context, /OLDER_/);
     assert.match(buildSwipeContext([message(true, ['Only', '', null])], 'user'), /no alternate swipes available/);
 });

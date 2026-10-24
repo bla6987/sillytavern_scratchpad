@@ -268,7 +268,7 @@ test('standard generation trims oldest context to fit SillyTavern prompt budget'
         contextOverrides: {
             chatCompletionSettings: {
                 stream_openai: false,
-                openai_max_context: 70,
+                openai_max_context: 120,
                 openai_max_tokens: 10,
             },
             getTokenCountAsync: async (text) => countWords(text),
@@ -294,7 +294,7 @@ test('standard generation trims oldest context to fit SillyTavern prompt budget'
     assert.equal(rawArgs.prompt.includes('old chat marker'), false);
     assert.equal(rawArgs.prompt.includes('middle chat marker'), true);
     assert.equal(rawArgs.prompt.includes('recent chat marker'), true);
-    assert.ok(countWords(`${rawArgs.systemPrompt}\n\n${rawArgs.prompt}`) <= 60);
+    assert.ok(countWords(`${rawArgs.systemPrompt}\n\n${rawArgs.prompt}`) <= 110);
 });
 
 test('custom generation does not duplicate the current question in thread history', async () => {
@@ -979,6 +979,8 @@ function swipeChatFixture() {
     ];
 }
 
+const withoutContextIds = chat => chat.map(({ scratchPadContextId, ...message }) => message);
+
 for (const useStandardGeneration of [true, false]) {
     for (const useMultiMessageFormat of [true, false]) {
         test(`swipe context reaches generation (standard=${useStandardGeneration}, multi=${useMultiMessageFormat})`, async () => {
@@ -997,13 +999,14 @@ for (const useStandardGeneration of [true, false]) {
             const payload = useStandardGeneration ? call[1].prompt : call[2].prompt;
             const text = typeof payload === 'string' ? payload : payload.map(m => m.content).join('\n');
             assert.match(text, /Swipe 1:\nUSER_ALTERNATE/);
-            assert.match(text, /Swipe 2 \(currently selected\):\nUSER_SELECTED/);
+            assert.match(text, /Swipe 2 \(currently selected\): see Message #1/);
+            assert.equal((text.match(/USER_SELECTED/g) || []).length, 1);
             assert.match(text, /Swipe 2:\nAI_ALTERNATE/);
-            assert.deepEqual(chat, original);
+            assert.deepEqual(withoutContextIds(chat), original);
             if (useMultiMessageFormat) {
                 const block = payload.find(m => m.content.includes('MAIN CHAT SWIPE ALTERNATIVES'));
                 assert.equal(block.role, 'system');
-                assert.equal(payload.at(-1).content, 'Compare the swipes');
+                assert.match(payload.at(-1).content, /--- USER QUESTION ---\n\nCompare the swipes$/);
             }
         });
 
@@ -1033,9 +1036,9 @@ for (const useStandardGeneration of [true, false]) {
             const call = calls.find(args => args[0] === (useStandardGeneration ? 'generateRaw' : 'sendGenerationRequest'));
             const payload = useStandardGeneration ? call[1].prompt : call[2].prompt;
             const text = typeof payload === 'string' ? payload : payload.map(m => m.content).join('\n');
-            assert.match(text, /Bot: Prior story/);
-            assert.match(text, /Player: USER_SELECTED/);
-            assert.match(text, /Bot: AI_SELECTED/);
+            assert.match(text, /\[Message #0 \| Bot\]\nPrior story/);
+            assert.match(text, /\[Message #1 \| Player\]\nUSER_SELECTED/);
+            assert.match(text, /\[Message #3 \| Bot\]\nAI_SELECTED/);
             assert.match(text, /Swipe 1:\nUSER_ALTERNATE/);
             assert.match(text, /Swipe 2:\nAI_ALTERNATE/);
             assert.doesNotMatch(text, /SECRET_|-junk>|HIDDEN_/);
@@ -1046,7 +1049,7 @@ for (const useStandardGeneration of [true, false]) {
                 [regex_placement.USER_INPUT, 1],
                 [regex_placement.AI_OUTPUT, 0],
             ]);
-            assert.deepEqual(chat, original);
+            assert.deepEqual(withoutContextIds(chat), original);
         });
     }
 }
@@ -1098,7 +1101,7 @@ test('swipe alternatives survive history trimming and fail clearly if they canno
     assert.match(prompt, /USER_ALTERNATE/);
     assert.match(prompt, /AI_ALTERNATE/);
     assert.ok(countWords(prompt + calls.find(c => c[0] === 'generateRaw')[1].systemPrompt) <= 240);
-    assert.deepEqual(context.chat, original);
+    assert.deepEqual(withoutContextIds(context.chat), original);
     calls.length = 0;
     context.chat[2].swipes.push('OVERSIZED_ALTERNATIVE '.repeat(500));
     const oversizedChat = structuredClone(context.chat);

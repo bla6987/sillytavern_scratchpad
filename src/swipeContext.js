@@ -1,5 +1,17 @@
+export function getSwipeMessageIndices(chat, mode = 'none') {
+    const roles = mode === 'both' ? ['user', 'assistant']
+        : mode === 'user' || mode === 'assistant' ? [mode] : [];
+    return roles.map(role => {
+        for (let i = (chat?.length || 0) - 1; i >= 0; i--) {
+            const message = chat[i];
+            if (message && !message.is_system && Boolean(message.is_user) === (role === 'user')) return i;
+        }
+        return -1;
+    });
+}
+
 /** Read main-chat swipe alternatives, processing each version before quoting it. */
-export function buildSwipeContext(chat, mode = 'none', processText = text => text) {
+export function buildSwipeContext(chat, mode = 'none', processText = text => text, { selectedInHistory = false } = {}) {
     const roles = mode === 'both' ? ['user', 'assistant']
         : mode === 'user' || mode === 'assistant' ? [mode] : [];
     if (!roles.length) return '';
@@ -31,13 +43,16 @@ export function buildSwipeContext(chat, mode = 'none', processText = text => tex
         };
         const alternatives = swipes.flatMap((text, index) => {
             if (typeof text !== 'string' || !text.trim()) return [];
+            if (selectedInHistory && index === selectedIndex) return [`Swipe ${index + 1} (currently selected): see Message #${messageIndex} in the current chat history.`];
             return [`Swipe ${index + 1}${index === selectedIndex ? ' (currently selected)' : ''}:\n${formatText(text)}`];
         });
-        const heading = `Latest ${label} message (#${messageIndex + 1}, ${message.name || label})`;
+        const heading = `Latest ${label} message (#${messageIndex}, ${message.name || label})`;
         if (alternatives.length < 2) return `${heading}: no alternate swipes available.`;
 
         if (selectedIndex === null && typeof message.mes === 'string' && message.mes.trim()) {
-            alternatives.push(`Current displayed message (swipe number unavailable):\n${formatText(message.mes)}`);
+            alternatives.push(selectedInHistory
+                ? `Current displayed message (swipe number unavailable): see Message #${messageIndex} in the current chat history.`
+                : `Current displayed message (swipe number unavailable):\n${formatText(message.mes)}`);
         }
         return `${heading}:\n\n${alternatives.join('\n\n')}`;
     });

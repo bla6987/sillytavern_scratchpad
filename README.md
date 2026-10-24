@@ -105,6 +105,20 @@ A new or empty thread shows your saved questions. Click one to put it in the inp
 
 ### Checking What Gets Sent
 
+Main-chat history uses labels such as **[Message #42 | Mira]**. These match SillyTavern's visible message IDs, starting at **#0**. Hidden messages, history ranges, and token trimming leave gaps rather than renumbering the included text. The existing history-range controls still use 1-based positions. Swipe comparisons quote the current selected text once in chronological history and refer back to it from the alternatives section; swipe numbers themselves remain 1-based.
+
+Each contextual question includes a short **CHANGES SINCE YOUR PREVIOUS REPLY** notice, calculated by the extension:
+
+- **New**, **Changed**, and **Removed** identify additions, edits/selected-swipe changes, and actual deletions. Removed messages use their previous numbers; the notice explains when surviving messages have been renumbered.
+- **Included now** means an existing message was previously omitted. **Not included now** means the message still exists but is outside this request's context. Changing history settings or hitting a token limit does not imply deletion.
+- First use says that no previous context is recorded; an unchanged view says so. Legacy replies, missing comparison records, chat/branch switches, lost or duplicated identities, unresolved macros, and ambiguous replacements explicitly report **Previous context unavailable for comparison**. A successful reply establishes a fresh reference.
+
+The current main-chat text takes precedence over older Scratch Pad answers. These notices are reference context: the model should answer your question normally, without writing a change report unless you ask for one. Old main-chat wording is not added to the notice.
+
+The reference follows the selected successful contextual reply in that thread. Generating an alternate Scratch Pad swipe compares against the selected reply it replaces; switching between Scratch Pad swipes restores that swipe's reference. Editing a question uses its preceding reply. A Scratch Pad thread branch retains the copied replies' references. Previews, failed/cancelled requests, empty replies, and raw/general-ask requests do not advance the reference. Selecting Card Only records that main-chat text was omitted.
+
+Comparison records persist with the chat. Successful requests save internal message identities and shared compact hash manifests, not full copies of the story or old message wording; identical contexts share a manifest. The record covers Scratch Pad's processed context after filtering, prompt regex, resolved macros, and token trimming. Later prompt rewrites by another extension are outside this comparison. Simultaneous missing and unfamiliar identities are treated as ambiguous rather than guessed to be an edit or a deletion plus addition.
+
 Under each reply, **Context: 12.3k / 32k tokens** shows how much of the context window its prompt used. If older messages had to be dropped to fit, it says how many (hover for details).
 
 **Context Options → Preview prompt** shows the full prompt the next question would send, with its token count, without sending anything.

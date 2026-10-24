@@ -72,9 +72,9 @@ test('hidden messages are dropped and speakers are named', () => {
         { is_user: false, name: 'Seraphina', mes: 'Welcome' },
         { is_user: true, mes: 'No name stored' },
     ];
-    const visible = filterHiddenMessages(chat);
+    const visible = filterHiddenMessages(chat.map((message, number) => ({ ...message, scratchPadMessageNumber: number })));
     assert.equal(visible.length, 3);
-    assert.equal(formatChatHistory(visible, 'Aria'), 'Aria: Hello\n\nSeraphina: Welcome\n\nAria: No name stored');
+    assert.equal(formatChatHistory(visible, 'Aria'), '[Message #0 | Aria]\nHello\n\n[Message #2 | Seraphina]\nWelcome\n\n[Message #3 | Aria]\nNo name stored');
 });
 
 test('latest summary comes from the newest message carrying one', () => {
