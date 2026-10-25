@@ -27,6 +27,7 @@ let threadListContainer = null;
 let currentSearchQuery = '';
 let currentSearchMode = 'text'; // 'text' (instant keyword) | 'semantic' (embeddings)
 let searchDebounceTimer = null;
+let searchAbortController = null;
 let searchRequestId = 0; // guards against stale async (semantic) renders
 const searchIndexCache = new Map();
 const SEARCH_DEBOUNCE_MS = 180;
@@ -37,6 +38,10 @@ const SNIPPET_RADIUS = 42;
  * Reset transient thread-list state when closing Scratch Pad or changing chats.
  */
 export function resetThreadListState() {
+    searchAbortController?.abort();
+    searchAbortController = null;
+    threadListContainer?.removeEventListener?.('sp-thread-list-dispose', resetThreadListState);
+    threadListContainer = null;
     currentSearchQuery = '';
     currentSearchMode = 'text';
     clearTimeout(searchDebounceTimer);
@@ -51,7 +56,12 @@ export function resetThreadListState() {
  * @param {HTMLElement} container Container element
  */
 export function renderThreadList(container) {
+    searchAbortController?.abort();
+    clearTimeout(searchDebounceTimer);
+    threadListContainer?.removeEventListener?.('sp-thread-list-dispose', resetThreadListState);
+    if (container.classList?.contains('sp-conversation-view')) container.dispatchEvent?.(new Event('sp-conversation-dispose'));
     threadListContainer = container;
+    container.addEventListener('sp-thread-list-dispose', resetThreadListState);
 
     container.innerHTML = '';
     // Preserve sp-drawer-content class while adding view-specific class
@@ -159,6 +169,8 @@ export function renderThreadList(container) {
 
     searchInput.addEventListener('input', (e) => {
         const nextQuery = e.target.value;
+        searchAbortController?.abort();
+        searchRequestId++;
         clearTimeout(searchDebounceTimer);
         searchDebounceTimer = setTimeout(() => {
             currentSearchQuery = nextQuery;
@@ -227,6 +239,8 @@ export function renderThreadList(container) {
  * @param {string} query Current search query
  */
 function renderThreadContent(listContainer, searchMeta, query = '') {
+    searchAbortController?.abort();
+    searchAbortController = null;
     const requestId = ++searchRequestId;
     listContainer.innerHTML = '';
     const trimmedQuery = query.trim();
@@ -354,11 +368,14 @@ async function renderSemanticResults(listContainer, searchMeta, query, requestId
     listContainer.appendChild(loading);
     searchMeta.textContent = 'Embedding…';
 
+    const controller = new AbortController();
+    searchAbortController = controller;
     let results;
     try {
-        results = await searchThreadsSemantic(query, { maxResults: MAX_SEARCH_RESULTS });
+        results = await searchThreadsSemantic(query, { maxResults: MAX_SEARCH_RESULTS, signal: controller.signal });
     } catch (err) {
-        if (requestId !== searchRequestId) return; // stale
+        if (requestId !== searchRequestId || controller.signal.aborted) return; // stale
+        if (err?.name === 'AbortError') { listContainer.innerHTML = ''; searchMeta.textContent = 'Search cancelled'; return; }
         console.error('[ScratchPad] Semantic search error:', err);
         listContainer.innerHTML = '';
         searchMeta.textContent = '';
@@ -377,7 +394,8 @@ async function renderSemanticResults(listContainer, searchMeta, query, requestId
         return;
     }
 
-    if (requestId !== searchRequestId) return; // a newer search superseded this one
+    if (requestId !== searchRequestId || controller.signal.aborted) return; // superseded or closed
+    if (searchAbortController === controller) searchAbortController = null;
 
     listContainer.innerHTML = '';
     searchMeta.textContent = `${results.length} result${results.length !== 1 ? 's' : ''}`;
@@ -983,7 +1001,7 @@ async function handleImportThreads(file) {
  * Refresh the thread list
  */
 export function refreshThreadList() {
-    if (threadListContainer) {
+    if (threadListContainer?.isConnected) {
         renderThreadList(threadListContainer);
     }
 }
@@ -995,3 +1013,4 @@ async function closeScratchPadDrawer() {
     const { closeScratchPad } = await import('./index.js');
     closeScratchPad();
 }
+

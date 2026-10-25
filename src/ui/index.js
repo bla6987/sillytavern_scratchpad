@@ -1,13 +1,14 @@
+import { subscribeToViewport } from './viewportSubscription.js';
 /**
  * UI module index for Scratch Pad extension
  * Exports all UI components and manages the drawer
  */
 
 import { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
-import { openThread, startNewThread, getCurrentThreadId, renderConversation, resetConversationState, forgetMissingThread } from './conversation.js';
+import { openThread, startNewThread, getCurrentThreadId, renderConversation, resetConversationState, forgetMissingThread, disposeConversationView } from './conversation.js';
 import { showQuickPopup, showQuickPopupRaw, showQuickPopupAsk, dismissPopup, isPopupVisible } from './popup.js';
 import { getDisplayMode, setDisplayMode } from '../settings.js';
-import { Icons, createButton } from './components.js';
+import { Icons, createButton, closeMenu } from './components.js';
 import { createPanelLayout } from './panelLayout.js';
 
 export { renderThreadList, refreshThreadList, resetThreadListState } from './threadList.js';
@@ -239,9 +240,11 @@ export function openScratchPad(threadId = null) {
     panelLayout.update();
 
     // Add open class to trigger CSS animation
+    const openingDrawer = drawerElement;
     requestAnimationFrame(() => {
-        drawerElement.classList.add('open');
-        drawerElement.style.transform = 'translateX(0)';
+        if (drawerElement !== openingDrawer || !openingDrawer.isConnected || currentDisplayMode === null) return;
+        openingDrawer.classList.add('open');
+        openingDrawer.style.transform = 'translateX(0)';
     });
 
     // Render appropriate view
@@ -372,6 +375,7 @@ function openFullscreen(threadId = null) {
  * @param {HTMLElement} container Main content container
  */
 function showFullscreenEmptyState(container) {
+    disposeConversationView({ clearSelection: true });
     container.innerHTML = '';
     container.className = 'sp-drawer-content';
     const empty = document.createElement('div');
@@ -387,9 +391,11 @@ function showFullscreenEmptyState(container) {
  * Close the fullscreen display
  */
 function closeFullscreen() {
+    closeMenu();
+    disposeConversationView({ clearSelection: true });
+    resetThreadListState();
     if (!overlayElement) return;
 
-    resetThreadListState();
     overlayElement.classList.remove('visible');
     document.body.classList.remove('sp-fullscreen-open');
     currentDisplayMode = null;
@@ -412,6 +418,9 @@ export function closeScratchPad() {
         closeFullscreen();
         return;
     }
+    closeMenu();
+    disposeConversationView({ clearSelection: true });
+    resetThreadListState();
 
     panelLayout?.dispose();
     panelLayout = null;
@@ -419,7 +428,6 @@ export function closeScratchPad() {
         return;
     }
 
-    resetThreadListState();
     drawerElement.classList.remove('open');
     drawerElement.classList.remove('sp-pinned');
     drawerElement.style.transform = '';
@@ -517,6 +525,9 @@ function isDialogOpen() {
  * Initialize the UI
  */
 export function initUI() {
+    closeMenu();
+    disposeConversationView({ clearSelection: true });
+    resetThreadListState();
     panelLayout?.dispose();
     panelLayout = null;
     if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
@@ -589,12 +600,7 @@ export function initUI() {
             panelLayout?.update();
         });
     };
-    const runtimeBus = window.STRuntimeBus;
-    if (runtimeBus?.viewport?.subscribe) {
-        resizeBusUnsubscribe = runtimeBus.viewport.subscribe('layout', () => resizeHandler());
-    } else {
-        window.addEventListener('resize', resizeHandler);
-    }
+    resizeBusUnsubscribe = subscribeToViewport('layout', resizeHandler, window);
 }
 
 /**
@@ -602,6 +608,9 @@ export function initUI() {
  * Call on extension unload or hot-reload to prevent leaks.
  */
 export function disposeUI() {
+    closeMenu();
+    disposeConversationView({ clearSelection: true });
+    resetThreadListState();
     panelLayout?.dispose();
     panelLayout = null;
     if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
@@ -668,3 +677,4 @@ export function togglePinnedMode() {
 export function isPinnedMode() {
     return getDisplayMode() === 'pinned';
 }
+

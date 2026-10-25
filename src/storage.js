@@ -8,6 +8,10 @@ import { resolveConnectionProfileId } from './connectionProfiles.js';
 import { deleteDraft, clearDrafts } from './draftStore.js';
 import { getThreadMode, THREAD_MODE } from './threadModes.js';
 
+import { chatScope } from './contextTracking.js';
+import { preserveSnapshotsForUndo, restoreSnapshotsForUndo, pruneContextSnapshots } from './contextSnapshotStore.js';
+import { cloneWithSharedText } from './immutableTextClone.js';
+
 const MODULE_NAME = 'scratchPad';
 
 function normalizeExtra(extra) {
@@ -223,7 +227,10 @@ export function deleteThread(threadId) {
     const index = data.threads.findIndex(t => t.id === threadId);
     if (index === -1) return false;
 
+    const removed = data.threads[index];
+    preserveSnapshotsForUndo(removed, removed.messages, data, chatScope(SillyTavern.getContext()));
     data.threads.splice(index, 1);
+    pruneContextSnapshots(data);
     // Every delete path goes through here, so this keeps drafts from piling up
     deleteDraft(threadId);
     return true;
@@ -238,6 +245,7 @@ export function clearAllThreads() {
     if (!data) return false;
 
     data.threads = [];
+    delete data.contextSnapshots;
     clearDrafts();
     return true;
 }
@@ -331,6 +339,7 @@ export function deleteMessage(threadId, messageId) {
 
     thread.messages.splice(index, 1);
     thread.updatedAt = getTimestamp();
+    pruneContextSnapshots(getScratchPadData());
 
     return true;
 }
@@ -589,6 +598,7 @@ export function addSwipe(threadId, messageId, content, thinking = null, timestam
 
     const thread = getThread(threadId);
     if (thread) thread.updatedAt = getTimestamp();
+    pruneContextSnapshots(getScratchPadData());
 
     return message;
 }
@@ -665,6 +675,7 @@ export function deleteSwipe(threadId, messageId, index) {
 
     const thread = getThread(threadId);
     if (thread) thread.updatedAt = getTimestamp();
+    pruneContextSnapshots(getScratchPadData());
 
     return message;
 }
@@ -757,7 +768,7 @@ export function setThreadPinned(threadId, pinned) {
  * @returns {Object} Copy
  */
 function cloneMessage(message) {
-    return { ...structuredClone(message), id: generateId() };
+    return { ...cloneWithSharedText(message), id: generateId() };
 }
 
 /**
@@ -810,8 +821,11 @@ export function removeMessages(threadId, messageIds) {
     });
     if (removed.length === 0) return [];
 
+    const data = getScratchPadData();
+    preserveSnapshotsForUndo(removed, removed.map(item => item.message), data, chatScope(SillyTavern.getContext()));
     thread.messages = thread.messages.filter(message => !ids.has(message.id));
     thread.updatedAt = getTimestamp();
+    pruneContextSnapshots(data);
     return removed;
 }
 
@@ -825,6 +839,7 @@ export function restoreMessages(threadId, removed) {
     const thread = getThread(threadId);
     if (!thread) return false;
 
+    restoreSnapshotsForUndo(removed, getScratchPadData(), chatScope(SillyTavern.getContext()));
     for (const { index, message } of [...removed].sort((a, b) => a.index - b.index)) {
         if (thread.messages.some(m => m.id === message.id)) continue;
         thread.messages.splice(Math.min(index, thread.messages.length), 0, message);
@@ -864,6 +879,7 @@ export function restoreThread(thread, index) {
     const data = ensureScratchPadExists();
     if (!data || !thread || data.threads.some(t => t.id === thread.id)) return false;
 
+    restoreSnapshotsForUndo(thread, data, chatScope(SillyTavern.getContext()));
     data.threads.splice(Math.min(Math.max(0, index), data.threads.length), 0, thread);
     return true;
 }
@@ -880,3 +896,4 @@ export function addImportedThreads(threads) {
     data.threads.unshift(...threads);
     return threads.length;
 }
+

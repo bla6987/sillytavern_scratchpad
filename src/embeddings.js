@@ -1,3 +1,5 @@
+import { createEmbeddingRequestQueue, throwIfAborted, abortError } from './embeddingRequests.js';
+
 /**
  * Embedding service for Scratch Pad semantic search.
  *
@@ -39,6 +41,22 @@ export const DEFAULT_EMBEDDING_SETTINGS = Object.freeze({
 let embeddingCache = null;
 /** @type {Map<string, any>|null} In-memory fallback when localforage is unavailable. */
 let memoryCache = null;
+let memoryCacheBytes = 0;
+const MEMORY_CACHE_BUDGET = 16 * 1024 * 1024;
+const memorySizes = new Map();
+
+export function isEmbeddingVector(vector) {
+    return Array.isArray(vector) || (ArrayBuffer.isView(vector) && typeof vector.length === 'number' && !(vector instanceof BigInt64Array) && !(vector instanceof BigUint64Array));
+}
+
+export function getEmbeddingRecipeKey(settings = getEmbeddingSettings()) {
+    return JSON.stringify([settings.provider, settings.model, settings.provider === 'ollama' ? settings.ollamaUrl.replace(/\/+$/, '') : '', fnv1aHash32(settings.apiKey || '')]);
+}
+
+function assertEmbeddingOperation(settings, signal) {
+    throwIfAborted(signal);
+    if (getEmbeddingRecipeKey(settings) !== getEmbeddingRecipeKey()) throw abortError();
+}
 
 class EmbeddingDimensionMismatchError extends Error {
     constructor(expected, actual) {
@@ -166,6 +184,7 @@ export function getEmbeddingSettings() {
 export function updateEmbeddingSettings(updates) {
     const settings = ensureEmbeddingSettings();
     Object.assign(settings, updates);
+    embeddingRequests.cancel();
     SillyTavern.getContext().saveSettingsDebounced();
 }
 
@@ -199,22 +218,68 @@ export function isUsingSharedConfig() {
 /*  Cache                                                             */
 /* ------------------------------------------------------------------ */
 
-function getEmbeddingCache() {
-    if (embeddingCache) return embeddingCache;
-    const localforage = SillyTavern.libs?.localforage;
-    if (localforage?.createInstance) {
-        embeddingCache = localforage.createInstance({ name: CACHE_DB_NAME });
-        return embeddingCache;
-    }
+function createMemoryCache() {
     // Fallback: minimal localforage-compatible shim over an in-memory Map.
     if (!memoryCache) memoryCache = new Map();
-    embeddingCache = {
-        getItem: async (k) => (memoryCache.has(k) ? memoryCache.get(k) : null),
-        setItem: async (k, v) => { memoryCache.set(k, v); return v; },
-        removeItem: async (k) => { memoryCache.delete(k); },
-        clear: async () => { memoryCache.clear(); },
+    return {
+        getItem: async (k) => {
+            const value = memoryCache.get(k);
+            if (value) { memoryCache.delete(k); memoryCache.set(k, value); }
+            return value ?? null;
+        },
+        setItem: async (k, v) => {
+            // A tiny subarray must not pin an arbitrarily large backing buffer.
+            if (v?.vector) v = { ...v, vector: validateVector(v.vector) };
+            memoryCacheBytes -= memorySizes.get(k) || 0;
+            memoryCache.delete(k); memorySizes.delete(k);
+            const bytes = (v?.vector?.byteLength || (v?.vector?.length || 0) * 8) + (v?.text?.length || 0) * 2 + 256;
+            if (bytes <= MEMORY_CACHE_BUDGET) {
+                memoryCache.set(k, v); memorySizes.set(k, bytes); memoryCacheBytes += bytes;
+                while (memoryCacheBytes > MEMORY_CACHE_BUDGET) {
+                    const oldest = memoryCache.keys().next().value;
+                    memoryCacheBytes -= memorySizes.get(oldest) || 0;
+                    memorySizes.delete(oldest); memoryCache.delete(oldest);
+                }
+            }
+            return v;
+        },
+        removeItem: async (k) => { memoryCacheBytes -= memorySizes.get(k) || 0; memorySizes.delete(k); memoryCache.delete(k); },
+        clear: async () => { memoryCache.clear(); memorySizes.clear(); memoryCacheBytes = 0; },
         iterate: async (fn) => { let i = 0; for (const [k, v] of memoryCache) fn(v, k, i++); },
     };
+}
+
+function getEmbeddingCache() {
+    if (embeddingCache) return embeddingCache;
+    let persistent = null;
+    let fallback = null;
+    const useFallback = error => {
+        if (persistent) console.warn('[Scratch Pad] Embedding cache unavailable; using bounded memory cache.', error);
+        persistent = null;
+        return fallback ??= createMemoryCache();
+    };
+    try {
+        const localforage = SillyTavern.libs?.localforage;
+        if (typeof localforage?.createInstance === 'function') persistent = localforage.createInstance({ name: CACHE_DB_NAME });
+    } catch (error) {
+        useFallback(error);
+    }
+    const call = async (method, ...args) => {
+        const current = persistent;
+        if (current) {
+            try {
+                const result = await current[method](...args);
+                if (persistent === current) return result;
+                // Another concurrent cache operation failed. Replay this write
+                // or lookup against the same fallback used by subsequent calls.
+            } catch (error) {
+                useFallback(error);
+            }
+        }
+        return (fallback ??= createMemoryCache())[method](...args);
+    };
+    embeddingCache = Object.fromEntries(['getItem', 'setItem', 'removeItem', 'clear', 'iterate']
+        .map(method => [method, (...args) => call(method, ...args)]));
     return embeddingCache;
 }
 
@@ -250,7 +315,7 @@ function sleep(ms) {
 }
 
 function validateVector(vector) {
-    if (!Array.isArray(vector) || vector.length === 0) {
+    if (!isEmbeddingVector(vector) || vector.length === 0) {
         throw new Error('Embedding API returned an empty/invalid vector.');
     }
     for (let i = 0; i < vector.length; i++) {
@@ -258,7 +323,10 @@ function validateVector(vector) {
             throw new Error('Embedding API returned non-numeric vector values.');
         }
     }
-    return vector;
+    const compact = vector instanceof Float32Array && vector.byteOffset === 0 && vector.byteLength === vector.buffer.byteLength
+        ? vector : Float32Array.from(vector);
+    if (!compact.every(Number.isFinite)) throw new Error('Embedding vector exceeds numeric range.');
+    return compact;
 }
 
 /**
@@ -272,19 +340,23 @@ function isUsableCacheEntry(cached, settings, expectedDims, text) {
     if (!cached || typeof cached !== 'object') return false;
     if (cached.model !== settings.model) return false;
     if (cached.provider && cached.provider !== settings.provider) return false;
+    if (cached.recipe && cached.recipe !== getEmbeddingRecipeKey(settings)) return false;
+    if (!cached.recipe && settings.provider === 'ollama' && settings.ollamaUrl.replace(/\/+$/, '') !== 'http://localhost:11434') return false;
     if (typeof cached.text !== 'string' || cached.text !== text) return false;
-    if (!Array.isArray(cached.vector) || cached.vector.length === 0) return false;
+    if (!isEmbeddingVector(cached.vector) || cached.vector.length === 0) return false;
     if (!Number.isInteger(cached.dims) || cached.dims <= 0) return false;
     if (cached.dims !== cached.vector.length) return false;
     if (expectedDims != null && cached.dims !== expectedDims) return false;
     return true;
 }
 
-async function batchCacheGet(cache, items, concurrency = 50) {
+async function batchCacheGet(cache, items, concurrency = 32, signal) {
     const results = new Array(items.length);
     for (let i = 0; i < items.length; i += concurrency) {
+        throwIfAborted(signal);
         const chunk = items.slice(i, i + concurrency);
         const values = await Promise.all(chunk.map(item => cache.getItem(item.hash)));
+        throwIfAborted(signal);
         for (let j = 0; j < chunk.length; j++) {
             results[i + j] = values[j];
         }
@@ -297,17 +369,18 @@ async function batchCacheGet(cache, items, concurrency = 50) {
  * @param {string[]} texts
  * @returns {Promise<(number[]|null)[]>}
  */
-export async function getCachedEmbeddingsForTexts(texts) {
-    const settings = getEmbeddingSettings();
+export async function getCachedEmbeddingsForTexts(texts, { signal, settings = getEmbeddingSettings() } = {}) {
+    assertEmbeddingOperation(settings, signal);
     const expectedDims = Number.isInteger(settings.dimensions) && settings.dimensions > 0 ? settings.dimensions : null;
     const cache = getEmbeddingCache();
     const items = texts.map(t => {
         const normalized = String(t ?? '');
         return { hash: makeTextCacheKey(normalized), text: normalized };
     });
-    const cached = await batchCacheGet(cache, items);
+    const cached = await batchCacheGet(cache, items, 32, signal);
+    assertEmbeddingOperation(settings, signal);
     return cached.map((value, i) =>
-        isUsableCacheEntry(value, settings, expectedDims, items[i].text) ? value.vector : null,
+        isUsableCacheEntry(value, settings, expectedDims, items[i].text) ? validateVector(value.vector) : null,
     );
 }
 
@@ -324,14 +397,17 @@ function extractErrorMessage(payload) {
     return '';
 }
 
-async function postJson(url, body, extraHeaders = {}) {
+async function postJson(url, body, extraHeaders = {}, signal) {
     const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...extraHeaders },
         body: JSON.stringify(body),
+        signal,
     });
 
+    throwIfAborted(signal);
     const raw = await response.text();
+    throwIfAborted(signal);
     let payload = null;
     if (raw) {
         try { payload = JSON.parse(raw); } catch { payload = null; }
@@ -344,12 +420,13 @@ async function postJson(url, body, extraHeaders = {}) {
     return payload;
 }
 
-async function embedOpenAICompatible(provider, settings, texts) {
+async function embedOpenAICompatible(provider, settings, texts, signal) {
     const endpoint = OPENAI_COMPAT_ENDPOINTS[provider];
     const payload = await postJson(
         endpoint,
         { model: settings.model, input: texts },
         { Authorization: `Bearer ${settings.apiKey}` },
+        signal,
     );
     if (!Array.isArray(payload?.data)) {
         throw new Error('Embedding API returned unexpected payload format.');
@@ -364,20 +441,20 @@ async function embedOpenAICompatible(provider, settings, texts) {
     return ordered;
 }
 
-let ollamaBatchSupported = true;
+const ollamaBatchUnsupported = new Set();
 
-async function embedOllamaBatch(settings, texts) {
+async function embedOllamaBatch(settings, texts, signal) {
     const baseUrl = settings.ollamaUrl.replace(/\/+$/, '');
-    const payload = await postJson(`${baseUrl}/api/embed`, { model: settings.model, input: texts });
+    const payload = await postJson(`${baseUrl}/api/embed`, { model: settings.model, input: texts }, {}, signal);
     if (!Array.isArray(payload?.embeddings) || payload.embeddings.length !== texts.length) {
         throw new Error(`Ollama /api/embed returned ${payload?.embeddings?.length ?? 0} vectors for ${texts.length} texts.`);
     }
     return payload.embeddings.map(v => validateVector(v));
 }
 
-async function embedOllamaSingle(settings, text) {
+async function embedOllamaSingle(settings, text, signal) {
     const baseUrl = settings.ollamaUrl.replace(/\/+$/, '');
-    const payload = await postJson(`${baseUrl}/api/embeddings`, { model: settings.model, prompt: text });
+    const payload = await postJson(`${baseUrl}/api/embeddings`, { model: settings.model, prompt: text }, {}, signal);
     return validateVector(payload?.embedding);
 }
 
@@ -413,6 +490,8 @@ async function maybeHandleModelChange(provider, model) {
  * @returns {Promise<number[][]>}
  */
 export async function embedTexts(texts, options = {}) {
+    const signal = options.signal;
+    throwIfAborted(signal);
     if (!Array.isArray(texts)) {
         throw new Error('embedTexts(texts) expects an array of strings.');
     }
@@ -430,6 +509,8 @@ export async function embedTexts(texts, options = {}) {
     const cache = getEmbeddingCache();
 
     await maybeHandleModelChange(provider, String(settings.model).trim());
+    assertEmbeddingOperation(settings, signal);
+    settings.dimensions = getEmbeddingSettings().dimensions;
 
     const vectors = new Array(total);
     let completed = 0;
@@ -454,14 +535,16 @@ export async function embedTexts(texts, options = {}) {
     };
 
     const uniqueItems = [...uniqueByText.values()];
-    const cachedValues = await batchCacheGet(cache, uniqueItems);
+    const cachedValues = await batchCacheGet(cache, uniqueItems, 32, signal);
+    assertEmbeddingOperation(settings, signal);
     const pending = [];
     for (let ci = 0; ci < uniqueItems.length; ci++) {
         const item = uniqueItems[ci];
         const cached = cachedValues[ci];
         if (isUsableCacheEntry(cached, settings, dimensionState.expected, item.text)) {
             updateDimensionState(cached.dims, dimensionState);
-            for (const idx of item.indices) vectors[idx] = cached.vector;
+            const vector = validateVector(cached.vector);
+            for (const idx of item.indices) vectors[idx] = vector;
             completed += item.indices.length;
         } else {
             pending.push(item);
@@ -475,23 +558,27 @@ export async function embedTexts(texts, options = {}) {
         for (let i = 0; i < pending.length; i += batchSize) {
             const batch = pending.slice(i, i + batchSize);
             await sleep(0); // yield so the UI stays responsive
-            const batchVectors = await embedBatch(provider, settings, batch.map(it => it.text));
+            assertEmbeddingOperation(settings, signal);
+            const batchVectors = await embeddingRequests.request(batch.map(it => it.text), getEmbeddingRecipeKey(settings), settings, { signal });
+            assertEmbeddingOperation(settings, signal);
             const writes = [];
             for (let j = 0; j < batch.length; j++) {
                 const item = batch[j];
                 const vector = batchVectors[j];
-                const dims = Array.isArray(vector) ? vector.length : 0;
+                const dims = isEmbeddingVector(vector) ? vector.length : 0;
                 updateDimensionState(dims, dimensionState);
                 writes.push(cache.setItem(item.hash, {
                     vector, dims,
                     model: settings.model,
                     provider: settings.provider,
+                    recipe: getEmbeddingRecipeKey(settings),
                     text: item.text,
                 }));
                 for (const idx of item.indices) vectors[idx] = vector;
                 completed += item.indices.length;
             }
             await Promise.all(writes);
+            assertEmbeddingOperation(settings, signal);
             notify();
         }
     } catch (error) {
@@ -508,6 +595,7 @@ export async function embedTexts(texts, options = {}) {
         throw error;
     }
 
+    assertEmbeddingOperation(settings, signal);
     const finalDims = dimensionState.expected ?? dimensionState.observed;
     if (finalDims) {
         const raw = ensureEmbeddingSettings();
@@ -533,20 +621,25 @@ function updateDimensionState(dims, state) {
     }
 }
 
-async function embedBatch(provider, settings, texts) {
+async function embedBatch(provider, settings, texts, signal) {
+    assertEmbeddingOperation(settings, signal);
     if (provider !== 'ollama') {
-        return embedOpenAICompatible(provider, settings, texts);
+        return embedOpenAICompatible(provider, settings, texts, signal);
     }
-    if (ollamaBatchSupported) {
+    const endpoint = settings.ollamaUrl.replace(/\/+$/, '');
+    if (!ollamaBatchUnsupported.has(endpoint)) {
         try {
-            return await embedOllamaBatch(settings, texts);
-        } catch {
-            ollamaBatchSupported = false;
+            return await embedOllamaBatch(settings, texts, signal);
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (ollamaBatchUnsupported.size >= 16) ollamaBatchUnsupported.delete(ollamaBatchUnsupported.values().next().value);
+            ollamaBatchUnsupported.add(endpoint);
         }
     }
     const out = [];
     for (const text of texts) {
-        out.push(await embedOllamaSingle(settings, text));
+        assertEmbeddingOperation(settings, signal);
+        out.push(await embedOllamaSingle(settings, text, signal));
     }
     return out;
 }
@@ -563,6 +656,7 @@ export async function embedText(text, options = {}) {
 }
 
 export async function clearEmbeddingCache() {
+    embeddingRequests.cancel();
     const cache = getEmbeddingCache();
     await cache.clear();
 }
@@ -576,10 +670,17 @@ export async function getCacheStats() {
     let estimatedBytes = 0;
     await cache.iterate((value, key) => {
         if (key === CACHE_META_KEY) return;
-        if (value && typeof value === 'object' && Array.isArray(value.vector)) {
+        if (value && typeof value === 'object' && isEmbeddingVector(value.vector)) {
             count += 1;
-            estimatedBytes += (value.vector.length * 4) + (value.model ? value.model.length * 2 : 0) + 32;
+            estimatedBytes += (value.vector.byteLength || value.vector.length * 8) + (value.text?.length || 0) * 2 + (value.model ? value.model.length * 2 : 0) + 128;
         }
     });
     return { count, estimatedSizeKB: Math.round((estimatedBytes / 1024) * 10) / 10 };
 }
+
+
+const embeddingRequests = createEmbeddingRequestQueue(async (settings, texts, signal) => {
+    const vectors = await embedBatch(settings.provider, settings, texts, signal);
+    assertEmbeddingOperation(settings, signal);
+    return vectors;
+});

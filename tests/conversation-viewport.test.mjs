@@ -1,3 +1,4 @@
+import { subscribeToViewport } from '../src/ui/viewportSubscription.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -24,6 +25,7 @@ function harness(fullscreen = false) {
         removeEventListener: name => handlers.delete(name),
     };
     const context = vm.createContext({
+        subscribeToViewport,
         document: { querySelector: selector => selector === (fullscreen ? '.sp-fullscreen' : '.sp-drawer') ? container : null },
         window: { visualViewport: viewport },
         requestAnimationFrame: callback => frames.push(callback),
@@ -65,3 +67,4 @@ test('fullscreen retains its existing viewport handling and resets on exit', () 
     h.context.removeViewportHandler();
     assert.equal(h.properties.size, 0);
 });
+

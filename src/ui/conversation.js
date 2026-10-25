@@ -1,3 +1,4 @@
+import { subscribeToViewport } from './viewportSubscription.js';
 /**
  * Conversation View component for Scratch Pad extension
  */
@@ -33,6 +34,12 @@ let lastRenderedThreadId = null;
 let lastRenderedMessageCount = -1;
 let lastRenderedMessageStatus = null;
 let lastRenderedMessageId = null;
+const MESSAGE_PAGE_SIZE = 50;
+let messagePageEnd = null;
+let conversationViewRevision = 0;
+let scrollFrame = null;
+let viewportFrame = null;
+let viewportRevision = 0;
 
 // Thread context checkboxes that map straight onto a boolean setting
 const THREAD_CONTEXT_TOGGLES = Object.freeze({
@@ -98,6 +105,33 @@ function runCleanups() {
     cleanupFunctions = [];
 }
 
+/** Release the view without cancelling a reply that belongs to its thread. */
+export function disposeConversationView({ clearSelection = false } = {}) {
+    conversationViewRevision++;
+    runCleanups();
+    removeViewportHandler();
+    if (scrollFrame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollFrame);
+    scrollFrame = null;
+    _scrollPending = false;
+    _scrollContainer = null;
+    conversationContainer?.replaceChildren?.();
+    conversationContainer = null;
+    messagePageEnd = null;
+    lastRenderedThreadId = null;
+    lastRenderedMessageCount = -1;
+    lastRenderedMessageStatus = null;
+    lastRenderedMessageId = null;
+    if (pendingMessage) {
+        prependToDraft(currentThreadId ?? NEW_THREAD_DRAFT_KEY, pendingMessage);
+        pendingMessage = null;
+    }
+    if (clearSelection) currentThreadId = null;
+}
+
+function onConversationViewDisposed() {
+    disposeConversationView({ clearSelection: true });
+}
+
 /**
  * Open a thread in conversation view
  * @param {string} threadId Thread ID
@@ -133,10 +167,16 @@ export function startNewThread() {
  * @param {boolean} focusInput Whether explicitly opening the view should focus its input
  */
 export function renderConversation(container, isNewThread = false, focusInput = false) {
+    if (container.classList?.contains('sp-thread-list-view')) container.dispatchEvent?.(new Event('sp-thread-list-dispose'));
+    if (lastRenderedThreadId !== currentThreadId || focusInput) messagePageEnd = null;
     conversationContainer = container;
-
+    conversationViewRevision++;
+    if (scrollFrame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollFrame);
+    scrollFrame = null; _scrollPending = false; _scrollContainer = null;
     // Run cleanup functions from previous render
     runCleanups();
+    container.addEventListener('sp-conversation-dispose', onConversationViewDisposed);
+    registerCleanup(() => container.removeEventListener?.('sp-conversation-dispose', onConversationViewDisposed));
 
     // Use branch-filtered thread for display (hides messages from "future" branches)
     const thread = currentThreadId ? getThreadForCurrentBranch(currentThreadId) : null;
@@ -230,24 +270,7 @@ export function renderConversation(container, isNewThread = false, focusInput = 
     messagesContainer.id = 'sp-messages';
 
     if (thread && thread.messages.length > 0) {
-        // Implement virtual scrolling for large threads
-        const messagesToShow = thread.messages.length > 50
-            ? thread.messages.slice(-50)
-            : thread.messages;
-
-        if (thread.messages.length > 50) {
-            const loadMoreBtn = createButton({
-                text: `Load ${thread.messages.length - 50} earlier messages`,
-                className: 'sp-load-more-btn',
-                onClick: () => loadAllMessages(thread)
-            });
-            messagesContainer.appendChild(loadMoreBtn);
-        }
-
-        messagesToShow.forEach(msg => {
-            const msgEl = createMessageElement(msg);
-            messagesContainer.appendChild(msgEl);
-        });
+        renderMessageWindow(thread, messagesContainer);
 
         renderBranchedMessages(thread, messagesContainer);
     } else if (!isNewThread && thread) {
@@ -882,10 +905,20 @@ function renderBranchedMessages(thread, container, autoExpand = false) {
 
     const content = document.createElement('div');
     content.className = 'sp-branched-messages-content';
-    thread.branchedMessages.forEach(msg => {
-        const msgEl = createMessageElement(msg);
-        content.appendChild(msgEl);
-    });
+    const threadId = thread.id;
+    let end = null;
+    const renderPage = () => {
+        content.replaceChildren();
+        if (!details.open) return;
+        const messages = getThreadForCurrentBranch(threadId)?.branchedMessages || [];
+        const stop = Math.min(end ?? messages.length, messages.length);
+        const start = Math.max(0, stop - MESSAGE_PAGE_SIZE);
+        if (start > 0) content.appendChild(createButton({ text: 'Earlier branch messages', className: 'sp-load-more-btn', onClick: () => { end = start; renderPage(); } }));
+        for (const message of messages.slice(start, stop)) content.appendChild(createMessageElement(message));
+        if (stop < messages.length) content.appendChild(createButton({ text: 'Newer branch messages', className: 'sp-load-more-btn', onClick: () => { end = Math.min(messages.length, stop + MESSAGE_PAGE_SIZE); renderPage(); } }));
+    };
+    details.addEventListener('toggle', renderPage);
+    if (details.open) renderPage();
     details.appendChild(content);
 
     container.appendChild(details);
@@ -2152,6 +2185,7 @@ export function advanceMessageQueue(threadId, succeeded) {
  * Drop queued messages and unsent drafts; they belong to the previous chat's threads
  */
 export function resetConversationState() {
+    disposeConversationView({ clearSelection: true });
     clearMessageQueue();
     clearDrafts();
     renderMessageQueue();
@@ -2457,8 +2491,7 @@ async function handleAiRename(thread) {
  * Go back to thread list
  */
 function goBackToThreadList() {
-    currentThreadId = null;
-    removeViewportHandler();
+    disposeConversationView({ clearSelection: true });
 
     if (isFullscreenMode()) {
         // In fullscreen mode on mobile, show sidebar and hide main
@@ -2564,22 +2597,31 @@ export function finishTransferredGeneration(threadId) {
     scrollToBottom();
 }
 
-/**
- * Load all messages (for large threads)
- * @param {Object} thread Thread object
- */
-function loadAllMessages(thread) {
-    const messagesContainer = document.getElementById('sp-messages');
-    if (!messagesContainer) return;
+/** Render a fixed-size history window; paging never accumulates message DOM. */
+function renderMessageWindow(thread, messagesContainer) {
+    const total = thread.messages.length;
+    const end = Math.min(messagePageEnd ?? total, total);
+    const start = Math.max(0, end - MESSAGE_PAGE_SIZE);
+    if (start > 0) messagesContainer.appendChild(createButton({
+        text: `Earlier messages (${start} remaining)`, className: 'sp-load-more-btn',
+        onClick: () => showMessagePage(start),
+    }));
+    for (const message of thread.messages.slice(start, end)) messagesContainer.appendChild(createMessageElement(message));
+    if (end < total) messagesContainer.appendChild(createButton({
+        text: `Newer messages (${total - end} remaining)`, className: 'sp-load-more-btn',
+        onClick: () => showMessagePage(Math.min(total, end + MESSAGE_PAGE_SIZE)),
+    }));
+}
 
+function showMessagePage(end) {
+    const messagesContainer = conversationContainer?.querySelector('#sp-messages');
+    const thread = currentThreadId ? getThreadForCurrentBranch(currentThreadId) : null;
+    if (!messagesContainer || !thread) return;
+    messagePageEnd = end >= thread.messages.length ? null : end;
     messagesContainer.innerHTML = '';
-
-    thread.messages.forEach(msg => {
-        const msgEl = createMessageElement(msg);
-        messagesContainer.appendChild(msgEl);
-    });
-
-    scrollToBottom();
+    renderMessageWindow(thread, messagesContainer);
+    renderBranchedMessages(thread, messagesContainer);
+    messagesContainer.scrollTop = 0;
 }
 
 /**
@@ -2591,7 +2633,10 @@ let _scrollContainer = null;
 function scrollToBottom() {
     if (_scrollPending) return;
     _scrollPending = true;
-    requestAnimationFrame(() => {
+    const revision = conversationViewRevision;
+    scrollFrame = requestAnimationFrame(() => {
+        if (revision !== conversationViewRevision) return;
+        scrollFrame = null;
         _scrollPending = false;
         if (!_scrollContainer || !_scrollContainer.isConnected) {
             _scrollContainer = document.getElementById('sp-messages');
@@ -2606,6 +2651,9 @@ function scrollToBottom() {
  * Remove viewport resize handler if one exists
  */
 function removeViewportHandler() {
+    viewportRevision++;
+    if (viewportFrame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(viewportFrame);
+    viewportFrame = null;
     if (currentViewportBusUnsubscribe) {
         currentViewportBusUnsubscribe();
         currentViewportBusUnsubscribe = null;
@@ -2640,21 +2688,22 @@ function setupViewportHandlers() {
     removeViewportHandler();
 
     const runtimeBus = window.STRuntimeBus;
-    if (!window.visualViewport && !runtimeBus?.viewport?.subscribe) {
-        return;
-    }
+    if (!window.visualViewport && typeof runtimeBus?.viewport?.subscribe !== 'function') return;
 
     // Cache container reference and last height to avoid redundant DOM updates
     let cachedContainer = document.querySelector('.sp-drawer') || document.querySelector('.sp-fullscreen');
     let lastHeight = 0;
     let viewportRafPending = false;
+    const revision = viewportRevision;
 
     // Create and store new handler - coalesce with rAF instead of debounce
     // to avoid firing multiple times during keyboard animation
     currentViewportHandler = () => {
         if (viewportRafPending) return;
         viewportRafPending = true;
-        requestAnimationFrame(() => {
+        viewportFrame = requestAnimationFrame(() => {
+            if (revision !== viewportRevision) return;
+            viewportFrame = null;
             viewportRafPending = false;
             const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
 
@@ -2683,11 +2732,7 @@ function setupViewportHandlers() {
         });
     };
 
-    if (runtimeBus?.viewport?.subscribe) {
-        currentViewportBusUnsubscribe = runtimeBus.viewport.subscribe('keyboard', currentViewportHandler);
-    } else if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', currentViewportHandler);
-    }
+    currentViewportBusUnsubscribe = subscribeToViewport('keyboard', currentViewportHandler, window);
 }
 
 /**
@@ -2762,3 +2807,4 @@ export function forgetMissingThread() {
 export function getCurrentThreadId() {
     return currentThreadId;
 }
+

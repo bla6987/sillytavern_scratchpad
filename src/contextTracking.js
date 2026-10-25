@@ -1,5 +1,6 @@
 /** Compact, reply-specific records of the main-chat context actually sent. */
 import { hashContextValue as fingerprint, newContextIdentity } from './contextHash.js';
+import { pruneContextSnapshots } from './contextSnapshotStore.js';
 const VERSION = 1;
 const ID_FIELD = 'scratchPadContextId';
 const transientIds = new WeakMap();
@@ -115,16 +116,7 @@ export function recordSuccessfulContext(tracking, extra) {
     data.contextSnapshots[key] = snapshot;
     // Shared manifests deduplicate identical requests across threads and swipes;
     // no old message text is saved. Keep referenced snapshots only.
-    const referenced = new Set([key]);
-    for (const thread of data.threads || []) {
-        for (const message of thread.messages || []) {
-            for (const metadata of [message.extra, ...(message.swipeExtra || [])]) {
-                if (metadata?.contextSnapshotKey) referenced.add(metadata.contextSnapshotKey);
-            }
-        }
-    }
-    for (const stored of Object.keys(data.contextSnapshots)) {
-        if (!referenced.has(stored)) delete data.contextSnapshots[stored];
-    }
+    pruneContextSnapshots(data, [key]);
     return { ...extra, contextSnapshotKey: key };
 }
+

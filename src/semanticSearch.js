@@ -11,7 +11,8 @@
  */
 
 import { getThreads, getCurrentChatLength } from './storage.js';
-import { embedTexts, embedText, getCachedEmbeddingsForTexts, isSemanticSearchEnabled } from './embeddings.js';
+import { throwIfAborted, abortError } from './embeddingRequests.js';
+import { embedTexts, embedText, getCachedEmbeddingsForTexts, isSemanticSearchEnabled, isEmbeddingVector, getEmbeddingRecipeKey } from './embeddings.js';
 
 const MAX_EMBED_CHARS = 8000;
 const SNIPPET_RADIUS = 42;
@@ -23,6 +24,9 @@ export const MIN_COMBINED_SCORE = 0.2;
 /** In-memory query → vector cache (small LRU-ish). */
 const queryEmbeddingCache = new Map();
 const QUERY_CACHE_LIMIT = 32;
+const SEARCH_BATCH_SIZE = 32;
+const SEARCH_BATCH_CHARS = 131072;
+let queryCacheGeneration = 0;
 
 /* ------------------------------------------------------------------ */
 /*  Pure math / scoring (unit-tested)                                */
@@ -35,7 +39,7 @@ const QUERY_CACHE_LIMIT = 32;
  * @returns {number}
  */
 export function cosineSimilarity(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) {
+    if (!isEmbeddingVector(a) || !isEmbeddingVector(b) || a.length !== b.length || a.length === 0) {
         return 0;
     }
     let dot = 0;
@@ -76,7 +80,7 @@ export function scoreEntries(entries, vectorFor, queryVector, query) {
     const scored = [];
     for (const entry of entries) {
         const vector = vectorFor(entry.text);
-        if (!Array.isArray(vector) || vector.length === 0) continue;
+        if (!isEmbeddingVector(vector) || vector.length === 0) continue;
         const semantic = cosineSimilarity(queryVector, vector);
         const textLower = entry.text.toLowerCase();
         const matchIndex = queryLower ? textLower.indexOf(queryLower) : -1;
@@ -198,7 +202,7 @@ export async function ensureIndex(texts, options = {}) {
     const cached = await getCachedEmbeddingsForTexts(texts);
     const missing = [];
     for (let i = 0; i < texts.length; i++) {
-        if (Array.isArray(cached[i]) && cached[i].length) {
+        if (isEmbeddingVector(cached[i]) && cached[i].length) {
             map.set(texts[i], cached[i]);
         } else {
             missing.push(texts[i]);
@@ -208,7 +212,7 @@ export async function ensureIndex(texts, options = {}) {
     if (missing.length) {
         const vectors = await embedTexts(missing, options);
         for (let i = 0; i < missing.length; i++) {
-            if (Array.isArray(vectors[i]) && vectors[i].length) {
+            if (isEmbeddingVector(vectors[i]) && vectors[i].length) {
                 map.set(missing[i], vectors[i]);
             }
         }
@@ -217,13 +221,17 @@ export async function ensureIndex(texts, options = {}) {
     return map;
 }
 
-async function getQueryVector(query) {
+async function getQueryVector(query, { signal } = {}) {
+    throwIfAborted(signal);
+    const recipe = getEmbeddingRecipeKey();
+    const generation = queryCacheGeneration;
     const trimmed = String(query || '').trim();
-    if (queryEmbeddingCache.has(trimmed)) {
-        return queryEmbeddingCache.get(trimmed);
-    }
-    const vector = await embedText(trimmed);
-    queryEmbeddingCache.set(trimmed, vector);
+    const key = `${recipe}:${trimmed}`;
+    if (queryEmbeddingCache.has(key)) return queryEmbeddingCache.get(key);
+    const vector = await embedText(trimmed, { signal });
+    throwIfAborted(signal);
+    if (recipe !== getEmbeddingRecipeKey() || generation !== queryCacheGeneration) throw abortError();
+    queryEmbeddingCache.set(key, vector);
     if (queryEmbeddingCache.size > QUERY_CACHE_LIMIT) {
         const firstKey = queryEmbeddingCache.keys().next().value;
         queryEmbeddingCache.delete(firstKey);
@@ -233,6 +241,7 @@ async function getQueryVector(query) {
 
 /** Clear the transient query-embedding cache (e.g. on chat change). */
 export function resetQueryCache() {
+    queryCacheGeneration++;
     queryEmbeddingCache.clear();
 }
 
@@ -271,36 +280,112 @@ function createSnippet(text, query, matchIndex) {
  * @param {{ maxResults?: number, onProgress?: (completed:number, total:number)=>void }} [options]
  * @returns {Promise<Array<{thread:object, snippet:string, matchType:string, branchLabel:string, score:number}>>}
  */
+function* iterateCorpusEntries(threads, currentLength) {
+    for (const thread of threads) {
+        const title = truncateForEmbedding(thread.name || '');
+        if (title.trim()) yield { threadId: thread.id, text: title, branchLabel: 'Current branch', isTitle: true };
+        for (const message of thread.messages || []) {
+            const branchLabel = getMessageBranchLabel(message, currentLength);
+            for (const variant of getMessageSearchTexts(message)) {
+                const text = truncateForEmbedding(variant);
+                if (text.trim()) yield { threadId: thread.id, text, branchLabel, isTitle: false };
+            }
+        }
+    }
+}
+
+function searchableContentFingerprint(thread, currentLength) {
+    // Retain two scalar hashes, not a second copy of message/swipe text. Check
+    // the complete searchable content at publication, including same-tick edits
+    // whose updatedAt value may not change.
+    let first = 0x811c9dc5, second = 0x9e3779b1, count = 0;
+    const append = value => {
+        const text = String(value);
+        for (let index = 0; index < text.length; index++) {
+            first = Math.imul(first ^ text.charCodeAt(index), 0x01000193) >>> 0;
+            second = Math.imul(second ^ text.charCodeAt(index), 0x85ebca6b) >>> 0;
+        }
+        first = Math.imul(first ^ text.length, 0x01000193) >>> 0;
+        second = Math.imul(second ^ text.length, 0x85ebca6b) >>> 0;
+    };
+    for (const entry of iterateCorpusEntries([thread], currentLength)) {
+        append(entry.isTitle); append(entry.branchLabel); append(entry.text); count++;
+    }
+    return `${first}:${second}:${count}`;
+}
+
 export async function searchThreadsSemantic(query, options = {}) {
     const trimmed = String(query || '').trim();
     if (!trimmed) return [];
-
-    const { entries, threadsById, texts } = buildCorpus();
-    if (!entries.length) return [];
-
-    const [vectorMap, queryVector] = await Promise.all([
-        ensureIndex(texts, { onProgress: options.onProgress }),
-        getQueryVector(trimmed),
-    ]);
-
-    if (!Array.isArray(queryVector) || queryVector.length === 0) return [];
-
-    const scored = scoreEntries(entries, (text) => vectorMap.get(text), queryVector, trimmed);
-    const best = reduceToBestPerThread(scored)
-        .filter(entry => entry.combined >= MIN_COMBINED_SCORE || entry.keywordHit);
-
-    const limit = Number.isInteger(options.maxResults) ? options.maxResults : best.length;
-    const results = [];
-    for (const entry of best.slice(0, limit)) {
-        const thread = threadsById.get(entry.threadId);
-        if (!thread) continue;
-        results.push({
-            thread,
-            snippet: createSnippet(entry.text, trimmed.toLowerCase(), entry.matchIndex),
-            matchType: 'Semantic',
-            branchLabel: entry.branchLabel,
-            score: entry.combined,
-        });
+    const signal = options.signal;
+    const threads = getThreads();
+    throwIfAborted(signal);
+    if (!threads.length) return [];
+    const recipe = getEmbeddingRecipeKey();
+    const currentLength = getCurrentChatLength();
+    const revisions = threads.map(thread => ({ thread, id: thread.id, name: thread.name,
+        updatedAt: thread.updatedAt, messages: thread.messages, length: thread.messages?.length,
+        fingerprint: searchableContentFingerprint(thread, currentLength) }));
+    const check = () => {
+        throwIfAborted(signal);
+        if (threads !== getThreads() || threads.length !== revisions.length || currentLength !== getCurrentChatLength()
+            || recipe !== getEmbeddingRecipeKey()) throw abortError();
+    };
+    const checkRevisions = (verifyContent = false) => {
+        check();
+        for (let index = 0; index < revisions.length; index++) {
+            const revision = revisions[index], thread = threads[index];
+            if (revision.thread !== thread || revision.id !== thread.id || revision.name !== thread.name
+                || revision.updatedAt !== thread.updatedAt || revision.messages !== thread.messages
+                || revision.length !== thread.messages?.length
+                || (verifyContent && revision.fingerprint !== searchableContentFingerprint(thread, currentLength))) throw abortError();
+        }
+    };
+    check();
+    const queryVector = await getQueryVector(trimmed, { signal });
+    checkRevisions();
+    if (!isEmbeddingVector(queryVector) || !queryVector.length) return [];
+    const bestByThread = new Map();
+    let batch = [], chars = 0, completed = 0;
+    let total = 0;
+    if (options.onProgress) for (const entry of iterateCorpusEntries(threads, currentLength)) total++;
+    const scoreBatch = async entries => {
+        checkRevisions();
+        const texts = [...new Set(entries.map(entry => entry.text))];
+        // Embed/cache only this batch. No full-corpus vector Map survives scoring.
+        const vectors = await embedTexts(texts, { signal });
+        checkRevisions();
+        const byText = new Map(texts.map((text, index) => [text, vectors[index]]));
+        for (const entry of scoreEntries(entries, text => byText.get(text), queryVector, trimmed)) {
+            const previous = bestByThread.get(entry.threadId);
+            if (!previous || entry.combined > previous.score) {
+                bestByThread.set(entry.threadId, {
+                    threadId: entry.threadId,
+                    snippet: createSnippet(entry.text, trimmed.toLowerCase(), entry.matchIndex),
+                    branchLabel: entry.branchLabel,
+                    score: entry.combined,
+                    keywordHit: entry.keywordHit,
+                });
+            }
+        }
+        completed += entries.length;
+        options.onProgress?.(completed, total);
+    };
+    for (const entry of iterateCorpusEntries(threads, currentLength)) {
+        check();
+        if (batch.length && (batch.length >= SEARCH_BATCH_SIZE || chars + entry.text.length > SEARCH_BATCH_CHARS)) {
+            await scoreBatch(batch); batch = []; chars = 0;
+        }
+        batch.push(entry); chars += entry.text.length;
     }
-    return results;
+    if (batch.length) await scoreBatch(batch);
+    checkRevisions(true);
+    const limit = Number.isInteger(options.maxResults) ? Math.max(0, options.maxResults) : bestByThread.size;
+    const threadsById = new Map(threads.map(thread => [thread.id, thread]));
+    return [...bestByThread.values()]
+        .filter(entry => threadsById.has(entry.threadId) && (entry.score >= MIN_COMBINED_SCORE || entry.keywordHit))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(entry => ({ thread: threadsById.get(entry.threadId), snippet: entry.snippet,
+            matchType: 'Semantic', branchLabel: entry.branchLabel, score: entry.score }));
 }

@@ -102,7 +102,9 @@ The thread list has a search box with two modes, toggled by the **Text / Semanti
 - **Text** (default): instant, offline keyword/fuzzy search over thread titles and message content.
 - **Semantic**: embedding-based search that ranks threads by meaning. Searching a paraphrase (e.g. "why did she leave") surfaces threads about a character's departure even if those exact words never appear. Results combine semantic similarity with keyword matches (`0.7 * semantic + 0.3 * keyword`).
 
-Semantic mode requires embeddings to be enabled and configured (see Settings → Semantic Search). The first semantic search in a chat embeds the threads (cached afterward, so repeats are instant); new messages are indexed in the background as you go.
+Semantic mode requires embeddings to be enabled and configured (see Settings → Semantic Search). The first semantic search embeds missing text in bounded batches; later searches reuse cached vectors while scoring the current threads. New messages are indexed in the background as you go. A replacement query, closing the view, changing embedding settings, or changing the searched history prevents obsolete results from appearing. Identical concurrent embedding requests share work, and cancelling one caller does not cancel another caller that still needs it.
+
+Each title or message variant keeps the existing 8,000-character semantic embedding limit. Text mode remains available for ordinary full-text search. Semantic search includes all saved threads and swipe alternatives in the current chat, including messages outside the currently displayed history page.
 
 ### Managing Threads
 
@@ -266,6 +268,20 @@ Scratch pad data is stored in `chatMetadata.scratchPad` for each chat:
 - When you branch a chat, the new branch inherits all existing threads
 - Subsequent activity in either branch stays separate
 
+## Memory and long histories
+
+Version 1.3 displays conversation history in windows of 50 messages. Use **Earlier messages** and **Newer messages** to move through the complete history. Other-branch history creates message elements only while expanded and uses the same bounded paging. Paging changes what is rendered; it does not remove saved messages, swipes, or export content.
+
+Every drawer and fullscreen close releases the conversation DOM, thread-list results, listeners, viewport subscriptions, and search work. Drafts and an already-running reply remain available when the view is reopened. Scratch Pad works without a shared runtime extension; compatible viewport subscriptions are optional, with native browser events as the fallback.
+
+Semantic scoring retains vectors for a small batch at a time instead of building a complete in-memory vector index. Provider requests contain at most 32 texts and allow at most two concurrent batches. Vectors use compact Float32 storage. If persistent browser cache operations fail, the derived embedding cache falls back to a 16 MiB memory budget; original thread text remains in chat metadata. Cached inputs can be evicted and embedded again later.
+
+Deleting messages, swipes, or threads also prunes context-comparison manifests that are no longer referenced, while Undo restores the manifests it needs. Branching copies mutable structures independently and reuses immutable text values without changing history or JSON export semantics. The authoritative saved threads still reside in chat metadata, so their memory grows with retained history; this release does not introduce a shared persistent branch-history format.
+
+### Development checks
+
+Run `node --test --test-isolation=none tests/*.test.mjs` with a recent Node.js release. The regression suite covers close/reopen, complete paged history, independent/partial runtime environments, search cancellation and in-place edits, bounded embedding batches, blocked-cache fallback, provider changes, Undo, branches, and exports. Browser memory and mobile/Firefox layout acceptance remain separate checks; no fixed RAM reduction is implied by the automated results.
+
 ## Keyboard Shortcuts
 
 - **Enter**: Send message, or queue it while a reply is generating (Shift+Enter for new line)
@@ -289,3 +305,4 @@ MIT License - See LICENSE file for details.
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request on GitHub.
+
