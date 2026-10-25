@@ -49,7 +49,7 @@ git clone https://github.com/bla6987/sillytavern_scratchpad
 
 Drag the panel's left edge to change its width. You can also Tab to the resize handle and use **Left/Right Arrow** (10px steps), **Shift + Arrow** (50px steps), or **Home/End** (minimum/maximum width). Double-click the handle to reset to 400px. The desktop width is shared by Drawer and Pinned Sidebar modes and saved when you finish resizing. Press **Escape** during a drag to cancel it.
 
-Pinned Sidebar reserves space beside the main chat and sits below SillyTavern's toolbar and native drawers. It temporarily falls back to an overlay on windows 1000px or narrower or while **Moving UI** is enabled, and docks again when space allows. Phone-sized windows keep the full-width drawer. Resizing the window clamps the panel to fit without overwriting your saved width. Closing or unpinning restores SillyTavern's layout; its saved chat width and movable-panel positions are unchanged.
+Pinned Sidebar reserves space beside the main chat and sits below SillyTavern's toolbar and native drawers. The main chat and toolbar stay aligned as you resize the sidebar. It temporarily falls back to an overlay on windows 1000px or narrower or while **Moving UI** is enabled, and docks again when space allows. Phone-sized windows keep the full-width drawer. Resizing the window clamps the panel to fit without overwriting your saved width. Closing or unpinning restores SillyTavern's layout; its saved chat width and movable-panel positions are unchanged.
 
 ### Quick Questions
 
