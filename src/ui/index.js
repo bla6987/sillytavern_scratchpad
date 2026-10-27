@@ -109,21 +109,21 @@ function createDrawer() {
     return drawerElement;
 }
 
-/** Apply the actual layout, keeping the user's pinned preference during fallback. */
-function applyDrawerMode(docked) {
-    const mode = docked ? 'pinned' : 'drawer';
+/** Apply overlay behavior, keeping the user's pinned preference during fallback. */
+function applyDrawerMode(pinned) {
+    const mode = pinned ? 'pinned' : 'drawer';
     const changed = currentDisplayMode !== mode;
     currentDisplayMode = mode;
-    document.body.classList.toggle('sp-drawer-pinned', docked);
-    drawerElement.classList.toggle('sp-pinned', docked);
-    // Pin controls reflect the saved preference even when docking cannot fit.
+    document.body.classList.toggle('sp-drawer-pinned', pinned);
+    drawerElement.classList.toggle('sp-pinned', pinned);
+    // Pin controls reflect the saved preference even during modal fallback.
     const wantsPinned = getDisplayMode() === 'pinned';
     drawerElement.querySelectorAll('.sp-pin-btn').forEach(button => {
         button.classList.toggle('sp-pinned-active', wantsPinned);
         button.setAttribute('aria-label', wantsPinned ? 'Unpin drawer' : 'Pin drawer to side');
     });
     if (changed) {
-        if (docked) hideBackdrop();
+        if (pinned) hideBackdrop();
         else showBackdrop();
     }
 }
@@ -547,7 +547,6 @@ export function initUI() {
     document.body.classList.remove('sp-drawer-pinned');
     document.body.classList.remove('sp-fullscreen-open');
     document.body.classList.remove('sp-panel-resizing');
-    document.body.style.removeProperty('--sp-panel-reserved');
 
     // Handle escape key to close (remove old listener first to prevent duplicates)
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler);

@@ -55,7 +55,7 @@ function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = fals
         },
     });
     vm.runInContext(source, context);
-    const layout = context.createPanelLayout(drawer, docked => modes.push(docked));
+    const layout = context.createPanelLayout(drawer, pinned => modes.push(pinned));
     layout.update();
     return {
         context, drawer, handle: drawer.child, layout, settings, writes, body, window, modes,
@@ -66,17 +66,16 @@ function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = fals
     };
 }
 
-test('pinned dimensions preserve a usable chat and gap, including at the breakpoint', () => {
+test('pinned overlay fits the viewport without reserving space in the host layout', () => {
     const h = harness({ preferred: 2000 });
-    assert.equal(h.width(), 948);
-    assert.equal(h.body.properties.get('--sp-panel-reserved'), '960px');
-    assert.equal(1440 - 960, 480);
+    assert.equal(h.width(), 1392);
+    assert.equal(h.body.properties.size, 0);
     h.resize(1001);
-    assert.equal(h.width(), 509);
+    assert.equal(h.width(), 953);
     assert.equal(h.modes.at(-1), true);
     h.resize(1000);
     assert.equal(h.modes.at(-1), false);
-    assert.equal(h.body.properties.has('--sp-panel-reserved'), false);
+    assert.equal(h.body.properties.size, 0);
 });
 
 test('viewport clamping and phone fallback never overwrite the preferred desktop width', () => {
@@ -166,30 +165,54 @@ test('keyboard resizing exposes limits and supports reset', () => {
     h.handle.fire('keydown', { key: 'Home' });
     assert.equal(h.width(), 300);
     h.handle.fire('keydown', { key: 'End' });
-    assert.equal(h.width(), 948);
-    assert.equal(h.handle.attributes.get('aria-valuenow'), '948');
-    assert.equal(h.handle.attributes.get('aria-valuemax'), '948');
+    assert.equal(h.width(), 1392);
+    assert.equal(h.handle.attributes.get('aria-valuenow'), '1392');
+    assert.equal(h.handle.attributes.get('aria-valuemax'), '1392');
     h.handle.fire('dblclick');
     assert.equal(h.width(), 400);
     assert.equal(h.settings.panelWidth, 400);
 });
 
-test('Moving UI and overlay mode release the reserved strip and automatically restore docking', () => {
+test('Moving UI and drawer fallback preserve body styles and restore pinning', () => {
     const h = harness();
     h.moving(true);
     assert.equal(h.modes.at(-1), false);
-    assert.equal(h.body.properties.has('--sp-panel-reserved'), false);
+    assert.equal(h.body.properties.size, 0);
     h.moving(false);
     assert.equal(h.modes.at(-1), true);
     h.settings.displayMode = 'drawer';
     h.layout.update();
     assert.equal(h.modes.at(-1), false);
-    assert.equal(h.body.properties.has('--sp-panel-reserved'), false);
+    assert.equal(h.body.properties.size, 0);
     assert.equal(h.writes.length, 0);
     h.layout.dispose();
     assert.equal(h.observer().disconnected, true);
     assert.equal(h.window.listeners.has('blur'), false);
     assert.equal(h.handle.removed, true);
+});
+
+test('resizing and closing change only Scratch Pad dimensions', () => {
+    for (const mode of ['pinned', 'drawer']) {
+        const h = harness({ mode });
+        h.body.style.setProperty('margin-right', '17px');
+        h.body.style.setProperty('--sheldWidth', '70vw');
+        const original = new Map(h.body.properties);
+        h.handle.fire('pointerdown', { clientX: 1040 });
+        h.handle.fire('pointermove', { clientX: 840 });
+        h.handle.fire('pointerup');
+        h.handle.fire('keydown', { key: 'End' });
+        h.handle.fire('dblclick');
+        h.resize(600);
+        h.resize(390);
+        h.resize(1440);
+        h.layout.dispose();
+        assert.deepEqual(h.body.properties, original);
+    }
+});
+
+test('extension CSS never overrides the main chat or toolbar layout', () => {
+    const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.doesNotMatch(css, /#(?:sheld|top-bar|top-settings-holder)\b|--sheldWidth\s*:|--sp-panel-reserved\b/);
 });
 
 test('switching out of fullscreen renders into the drawer while the old overlay fades out', () => {

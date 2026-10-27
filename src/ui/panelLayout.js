@@ -1,28 +1,24 @@
-/** Scratch Pad owns its resize gesture and never writes SillyTavern's layout settings. */
+/** Scratch Pad resizes only its own overlay and leaves SillyTavern's layout alone. */
 import { getSettings, updateSettings, getDisplayMode } from '../settings.js';
 
 export const DEFAULT_PANEL_WIDTH = 400;
 const MIN_PANEL_WIDTH = 300;
-const MIN_CHAT_WIDTH = 480;
-const PANEL_GAP = 12;
 // SillyTavern switches its native drawers and chat to a mobile layout at 1000px.
-const DOCK_BREAKPOINT = 1000;
+const PIN_BREAKPOINT = 1000;
 
 export function getPanelGeometry(viewportWidth, preferredWidth, { mobile = false, pinned = false, movingUI = false } = {}) {
-    const docked = pinned && !movingUI && !mobile && viewportWidth > DOCK_BREAKPOINT;
-    const maxWidth = mobile ? viewportWidth : Math.max(0, Math.floor(docked
-        ? viewportWidth - MIN_CHAT_WIDTH - PANEL_GAP
-        : viewportWidth - 48));
+    const isPinned = pinned && !movingUI && !mobile && viewportWidth > PIN_BREAKPOINT;
+    const maxWidth = mobile ? viewportWidth : Math.max(0, Math.floor(viewportWidth - 48));
     const minWidth = Math.min(MIN_PANEL_WIDTH, maxWidth);
     const requested = Number.isFinite(preferredWidth) ? preferredWidth : DEFAULT_PANEL_WIDTH;
     const width = mobile ? viewportWidth : Math.round(Math.min(maxWidth, Math.max(minWidth, requested)));
-    return { width, minWidth, maxWidth, docked, reserved: docked ? width + PANEL_GAP : 0 };
+    return { width, minWidth, maxWidth, pinned: isPinned };
 }
 
 /**
  * Attach an accessible left-edge splitter. Dispose before removing the drawer.
  * @param {HTMLElement} drawer
- * @param {(docked: boolean) => void} onModeChange
+ * @param {(pinned: boolean) => void} onModeChange
  */
 export function createPanelLayout(drawer, onModeChange) {
     let preferredWidth = getSettings().panelWidth;
@@ -55,12 +51,7 @@ export function createPanelLayout(drawer, onModeChange) {
         handle.setAttribute('aria-valuemax', String(geometry.maxWidth));
         handle.setAttribute('aria-valuenow', String(geometry.width));
         handle.setAttribute('aria-valuetext', `${geometry.width} pixels wide`);
-        if (geometry.reserved) {
-            document.body.style.setProperty('--sp-panel-reserved', `${geometry.reserved}px`);
-        } else {
-            document.body.style.removeProperty('--sp-panel-reserved');
-        }
-        onModeChange(geometry.docked);
+        onModeChange(geometry.pinned);
     }
 
     function saveWidth() {
@@ -160,7 +151,6 @@ export function createPanelLayout(drawer, onModeChange) {
             observer.disconnect();
             window.removeEventListener('blur', cancelDrag);
             handle.remove();
-            document.body.style.removeProperty('--sp-panel-reserved');
             document.body.classList.remove('sp-panel-resizing');
         },
     };

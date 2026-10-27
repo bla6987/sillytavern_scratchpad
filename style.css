@@ -136,21 +136,6 @@ body.sp-drawer-pinned .sp-drawer-backdrop {
     z-index: 40 !important;
 }
 
-/* Reserve space for the chat and its toolbar as one column. The toolbar's
-   controls are relatively positioned, so use the same explicit margin for all
-   three elements instead of centering only the absolutely positioned chat.
-   Removing the class restores ST's layout, including inline dimensions. */
-body.sp-drawer-pinned:not(.movingUI) #sheld,
-body.sp-drawer-pinned:not(.movingUI) #top-bar,
-body.sp-drawer-pinned:not(.movingUI) #top-settings-holder {
-    left: 0 !important;
-    right: auto !important;
-    width: min(var(--sheldWidth, 50vw), calc(100vw - var(--sp-panel-reserved))) !important;
-    max-width: calc(100vw - var(--sp-panel-reserved)) !important;
-    margin-left: max(0px, calc((100vw - var(--sp-panel-reserved) - var(--sheldWidth, 50vw)) / 2)) !important;
-    margin-right: 0 !important;
-}
-
 .sp-panel-resize-handle {
     position: absolute;
     inset: 0 auto 0 0;
