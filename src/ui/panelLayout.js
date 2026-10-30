@@ -6,13 +6,19 @@ const MIN_PANEL_WIDTH = 300;
 // SillyTavern switches its native drawers and chat to a mobile layout at 1000px.
 const PIN_BREAKPOINT = 1000;
 
-export function getPanelGeometry(viewportWidth, preferredWidth, { mobile = false, pinned = false, movingUI = false } = {}) {
+export function getPanelGeometry(viewportWidth, preferredWidth, { mobile = false, pinned = false, movingUI = false, toolbarRects = [] } = {}) {
     const isPinned = pinned && !movingUI && !mobile && viewportWidth > PIN_BREAKPOINT;
     const maxWidth = mobile ? viewportWidth : Math.max(0, Math.floor(viewportWidth - 48));
     const minWidth = Math.min(MIN_PANEL_WIDTH, maxWidth);
     const requested = Number.isFinite(preferredWidth) ? preferredWidth : DEFAULT_PANEL_WIDTH;
     const width = mobile ? viewportWidth : Math.round(Math.min(maxWidth, Math.max(minWidth, requested)));
-    return { width, minWidth, maxWidth, pinned: isPinned };
+    // The centered toolbar often ends before the panel begins. Reserve vertical
+    // space only when it actually covers part of the panel's horizontal span.
+    const top = isPinned ? toolbarRects.reduce((offset, rect) => {
+        const overlaps = rect.width > 0 && rect.height > 0 && rect.right > viewportWidth - width && rect.left < viewportWidth;
+        return overlaps ? Math.max(offset, Math.ceil(rect.bottom)) : offset;
+    }, 0) : 0;
+    return { width, minWidth, maxWidth, top, pinned: isPinned };
 }
 
 /**
@@ -26,6 +32,7 @@ export function createPanelLayout(drawer, onModeChange) {
     let drag = null;
     let disposed = false;
     let movingUI = document.body.classList.contains('movingUI');
+    const toolbars = [...document.querySelectorAll('#top-bar, #top-settings-holder')];
     const handle = document.createElement('div');
     handle.className = 'sp-panel-resize-handle';
     handle.tabIndex = 0;
@@ -43,9 +50,11 @@ export function createPanelLayout(drawer, onModeChange) {
             mobile,
             pinned: getDisplayMode() === 'pinned',
             movingUI: document.body.classList.contains('movingUI'),
+            toolbarRects: toolbars.map(toolbar => toolbar.getBoundingClientRect()),
         });
         if (mobile && drag) cancelDrag();
         drawer.style.setProperty('--sp-drawer-width', `${geometry.width}px`);
+        drawer.style.setProperty('--sp-panel-top', `${geometry.top}px`);
         handle.hidden = mobile;
         handle.setAttribute('aria-valuemin', String(geometry.minWidth));
         handle.setAttribute('aria-valuemax', String(geometry.maxWidth));
@@ -143,12 +152,17 @@ export function createPanelLayout(drawer, onModeChange) {
     });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
+    // Theme font/chat-width changes can resize the toolbar without a window resize.
+    const toolbarObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    toolbars.forEach(toolbar => toolbarObserver?.observe(toolbar));
+
     return {
         update,
         dispose() {
             cancelDrag();
             disposed = true;
             observer.disconnect();
+            toolbarObserver?.disconnect();
             window.removeEventListener('blur', cancelDrag);
             handle.remove();
             document.body.classList.remove('sp-panel-resizing');

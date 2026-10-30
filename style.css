@@ -128,11 +128,12 @@ body.sp-drawer-pinned .sp-drawer-backdrop {
 
 .sp-drawer.sp-pinned {
     transform: translateX(0) !important;
-    /* Native toolbar/drawers must remain above a nonmodal Scratch Pad. */
-    top: var(--topBarBlockSize, 40px) !important;
-    height: calc(100vh - var(--topBarBlockSize, 40px)) !important;
-    height: calc(var(--sp-viewport-height, 100dvh) - var(--topBarBlockSize, 40px)) !important;
+    /* Leave room for the native toolbar only where it overlaps this panel. */
+    top: var(--sp-panel-top, 0px) !important;
+    height: calc(100vh - var(--sp-panel-top, 0px)) !important;
+    height: calc(var(--sp-viewport-height, 100dvh) - var(--sp-panel-top, 0px)) !important;
     min-height: 0 !important;
+    /* Native toolbar/drawers must remain above a nonmodal Scratch Pad. */
     z-index: 40 !important;
 }
 

@@ -31,7 +31,7 @@ class Element {
     }
 }
 
-function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = false } = {}) {
+function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = false, toolbarRects = [] } = {}) {
     const settings = { panelWidth: preferred, displayMode: mode };
     const body = new Element();
     const drawer = new Element();
@@ -43,14 +43,21 @@ function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = fals
     const writes = [];
     const modes = [];
     let observer;
+    let toolbarObserver;
+    const toolbars = toolbarRects.map(rect => ({ getBoundingClientRect: () => rect }));
     const context = vm.createContext({
-        window, document: { body, createElement: () => new Element() },
+        window, document: { body, createElement: () => new Element(), querySelectorAll: () => toolbars },
         getSettings: () => settings,
         getDisplayMode: () => settings.displayMode,
         updateSettings: update => { writes.push(update); Object.assign(settings, update); },
         MutationObserver: class {
             constructor(callback) { this.callback = callback; observer = this; }
             observe() {}
+            disconnect() { this.disconnected = true; }
+        },
+        ResizeObserver: class {
+            constructor(callback) { this.callback = callback; toolbarObserver = this; this.targets = []; }
+            observe(target) { this.targets.push(target); }
             disconnect() { this.disconnected = true; }
         },
     });
@@ -62,6 +69,8 @@ function harness({ width = 1440, preferred = 400, mode = 'pinned', moving = fals
         resize(width) { window.innerWidth = width; layout.update(); },
         moving(enabled) { if (enabled) body.classes.add('movingUI'); else body.classes.delete('movingUI'); observer.callback(); },
         observer: () => observer,
+        toolbarObserver: () => toolbarObserver,
+        top: () => Number(drawer.properties.get('--sp-panel-top').replace('px', '')),
         width: () => Number(drawer.properties.get('--sp-drawer-width').replace('px', '')),
     };
 }
@@ -76,6 +85,49 @@ test('pinned overlay fits the viewport without reserving space in the host layou
     h.resize(1000);
     assert.equal(h.modes.at(-1), false);
     assert.equal(h.body.properties.size, 0);
+});
+
+test('pinned panel starts at the top when the centered toolbar leaves the side clear', () => {
+    const h = harness({ width: 1920, toolbarRects: [{ left: 480, right: 1440, width: 960, height: 35, bottom: 35 }] });
+    assert.equal(h.top(), 0);
+    h.handle.fire('keydown', { key: 'End' });
+    assert.equal(h.top(), 35, 'widening the panel into the toolbar reserves its height');
+    h.handle.fire('dblclick');
+    assert.equal(h.top(), 0, 'shrinking back into the side gutter removes the gap');
+});
+
+test('toolbar overlap follows viewport and theme changes without changing the host layout', () => {
+    const bar = { left: 360, right: 1080, width: 720, height: 35, bottom: 35 };
+    const h = harness({ toolbarRects: [bar] });
+    assert.equal(h.top(), 35);
+    assert.equal(h.toolbarObserver().targets.length, 1);
+    h.resize(1920);
+    assert.equal(h.top(), 0);
+    Object.assign(bar, { right: 1700, width: 1340, height: 52.5, bottom: 52.5 });
+    h.toolbarObserver().callback();
+    assert.equal(h.top(), 53);
+    assert.equal(h.body.properties.size, 0);
+    h.settings.displayMode = 'drawer';
+    h.layout.update();
+    assert.equal(h.top(), 0, 'modal overlay does not reserve toolbar space');
+    h.settings.displayMode = 'pinned';
+    h.moving(true);
+    assert.equal(h.top(), 0, 'Moving UI uses the modal overlay');
+    h.moving(false);
+    assert.equal(h.top(), 53);
+    h.layout.dispose();
+    assert.equal(h.toolbarObserver().disconnected, true);
+});
+
+test('hidden, offscreen, and exactly adjacent toolbars leave no empty strip', () => {
+    const getTop = toolbarRects => harness({ width: 1920, toolbarRects }).top();
+    assert.equal(getTop([{ left: 0, right: 0, width: 0, height: 0, bottom: 0 }]), 0);
+    assert.equal(getTop([{ left: 1920, right: 2200, width: 280, height: 40, bottom: 40 }]), 0);
+    assert.equal(getTop([{ left: 480, right: 1520, width: 1040, height: 40, bottom: 40 }]), 0);
+    assert.equal(getTop([
+        { left: 480, right: 1530, width: 1050, height: 35, bottom: 35 },
+        { left: 480, right: 1530, width: 1050, height: 42, bottom: 42 },
+    ]), 42);
 });
 
 test('viewport clamping and phone fallback never overwrite the preferred desktop width', () => {
