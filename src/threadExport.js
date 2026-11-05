@@ -107,6 +107,7 @@ export function parseThreadImport(text, generateId) {
                     id: generateId(),
                     content: typeof message.content === 'string' ? message.content : '',
                     chatMessageIndex: null,
+                    branchAnchor: null,
                 })),
             contextSettings: importContextSettings(thread.contextSettings),
             titled: true,

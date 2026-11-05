@@ -698,7 +698,7 @@ test('profile streaming updates tokens and stores streamed reasoning', async () 
     assert.equal(profileCall[4].stream, true);
 });
 
-test('profile streaming failure retries once without streaming', async () => {
+test('profile streaming failure is surfaced without sending a second request', async () => {
     const { calls } = setupHarness({
         extensionSettings: {
             disabledExtensions: [],
@@ -726,14 +726,14 @@ test('profile streaming failure retries once without streaming', async () => {
 
     const thread = createThread('Retry Thread');
     const result = await generateScratchPadResponse('Retry question', thread.id, () => {});
-    assert.equal(result.success, true);
-    assert.equal(result.response, 'Retry response');
-    assert.equal(result.thinking, 'Retry reasoning');
+    assert.equal(result.success, false);
+    assert.match(result.error, /stream failed/);
+    assert.equal(getThread(thread.id).messages.at(-1).status, 'failed');
 
     const streamFlags = calls
         .filter(args => args[0] === 'profileSendRequest')
         .map(args => args[4].stream);
-    assert.deepEqual(streamFlags, [true, false]);
+    assert.deepEqual(streamFlags, [true]);
 });
 
 test('retry recovers from stale failed message id after no-response API failures', async () => {
@@ -979,7 +979,7 @@ function swipeChatFixture() {
     ];
 }
 
-const withoutContextIds = chat => chat.map(({ scratchPadContextId, ...message }) => message);
+const withoutContextIds = chat => chat.map(({ scratchPadContextId, scratchPadBranchId, ...message }) => message);
 
 for (const useStandardGeneration of [true, false]) {
     for (const useMultiMessageFormat of [true, false]) {

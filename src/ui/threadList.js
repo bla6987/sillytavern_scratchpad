@@ -3,6 +3,7 @@
  */
 
 import { getThreads, getThread, getThreadsForCurrentBranch, getCurrentChatLength, createThread, deleteThread, restoreThread, updateThread, saveMetadata, sortThreadsForDisplay, getThreadActivityTime, setThreadPinned, addImportedThreads, generateId } from '../storage.js';
+import { createBranchFilter } from '../branchHistory.js';
 import { getCurrentContextSettings, isGlobalApiProfileForced } from '../settings.js';
 import { getConnectionProfileLabel } from '../connectionProfiles.js';
 import { formatTimestamp, truncateText, createButton, showPromptDialog, showToast, showUndoToast, Icons } from './components.js';
@@ -209,11 +210,13 @@ export function renderThreadList(container) {
     const quickInput = document.createElement('textarea');
     quickInput.className = 'sp-quick-input';
     quickInput.placeholder = 'Ask a question to start a new thread...';
+    quickInput.setAttribute('aria-label', 'Question for a new thread');
     quickInput.rows = 2;
 
     const sendBtn = createButton({
         icon: Icons.send,
-        text: 'Send',
+        text: 'Start thread',
+        ariaLabel: 'Send question in a new thread',
         className: 'sp-send-btn',
         onClick: () => handleQuickSend(quickInput.value)
     });
@@ -470,11 +473,12 @@ function searchThreads(threads, query) {
     if (!normalizedQuery) return [];
 
     const currentLength = getCurrentChatLength();
+    const isCurrent = createBranchFilter();
     const fuzzyTitleIds = getFuzzyTitleMatchIds(threads, query);
     const results = [];
 
     for (const thread of threads) {
-        const index = getThreadSearchIndex(thread, currentLength);
+        const index = getThreadSearchIndex(thread, currentLength, isCurrent);
         const titleIndex = index.title.indexOf(normalizedQuery);
         const contentMatch = findContentMatch(index.entries, normalizedQuery);
         const fuzzyTitleMatch = !contentMatch && titleIndex < 0 && fuzzyTitleIds.has(thread.id);
@@ -503,8 +507,9 @@ function searchThreads(threads, query) {
  * @param {number|null} currentLength Current chat length
  * @returns {Object} Search index
  */
-function getThreadSearchIndex(thread, currentLength) {
-    const cacheKey = `${thread.id}:${thread.updatedAt}:${currentLength ?? 'all'}`;
+function getThreadSearchIndex(thread, currentLength, isCurrent = createBranchFilter()) {
+    const membership = (thread.messages || []).map(message => Number(isCurrent(message))).join('');
+    const cacheKey = `${thread.id}:${thread.updatedAt}:${currentLength ?? 'all'}:${membership}`;
     const cached = searchIndexCache.get(cacheKey);
     if (cached) return cached;
 
@@ -513,7 +518,7 @@ function getThreadSearchIndex(thread, currentLength) {
     let hasOffBranchMessage = false;
 
     for (const msg of thread.messages || []) {
-        const branchLabel = getMessageBranchLabel(msg, currentLength);
+        const branchLabel = isCurrent(msg) ? 'Current branch' : 'Other branch';
         if (branchLabel === 'Other branch') {
             hasOffBranchMessage = true;
         } else {
@@ -561,20 +566,6 @@ function getMessageSearchTexts(message) {
     }
 
     return texts;
-}
-
-/**
- * Get branch label for a stored message.
- * @param {Object} message Message object
- * @param {number|null} currentLength Current chat length
- * @returns {string} Branch label
- */
-function getMessageBranchLabel(message, currentLength) {
-    if (currentLength === null || message.chatMessageIndex === undefined || message.chatMessageIndex === null) {
-        return 'Current branch';
-    }
-
-    return message.chatMessageIndex <= currentLength ? 'Current branch' : 'Other branch';
 }
 
 /**

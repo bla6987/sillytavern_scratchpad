@@ -11,6 +11,7 @@
  */
 
 import { getThreads, getCurrentChatLength } from './storage.js';
+import { createBranchFilter } from './branchHistory.js';
 import { throwIfAborted, abortError } from './embeddingRequests.js';
 import { embedTexts, embedText, getCachedEmbeddingsForTexts, isSemanticSearchEnabled, isEmbeddingVector, getEmbeddingRecipeKey } from './embeddings.js';
 
@@ -133,11 +134,8 @@ function getMessageSearchTexts(message) {
     return texts;
 }
 
-function getMessageBranchLabel(message, currentLength) {
-    if (currentLength === null || message.chatMessageIndex === undefined || message.chatMessageIndex === null) {
-        return 'Current branch';
-    }
-    return message.chatMessageIndex <= currentLength ? 'Current branch' : 'Other branch';
+function getMessageBranchLabel(message, isCurrent) {
+    return isCurrent(message) ? 'Current branch' : 'Other branch';
 }
 
 /**
@@ -146,7 +144,7 @@ function getMessageBranchLabel(message, currentLength) {
  */
 export function buildCorpus() {
     const threads = getThreads();
-    const currentLength = getCurrentChatLength();
+    const isCurrent = createBranchFilter();
     const entries = [];
     const threadsById = new Map();
     const textSet = new Set();
@@ -168,7 +166,7 @@ export function buildCorpus() {
         }
 
         for (const msg of thread.messages || []) {
-            const branchLabel = getMessageBranchLabel(msg, currentLength);
+            const branchLabel = getMessageBranchLabel(msg, isCurrent);
             const variants = getMessageSearchTexts(msg);
             for (let i = 0; i < variants.length; i++) {
                 const text = truncateForEmbedding(variants[i]);
@@ -280,12 +278,12 @@ function createSnippet(text, query, matchIndex) {
  * @param {{ maxResults?: number, onProgress?: (completed:number, total:number)=>void }} [options]
  * @returns {Promise<Array<{thread:object, snippet:string, matchType:string, branchLabel:string, score:number}>>}
  */
-function* iterateCorpusEntries(threads, currentLength) {
+function* iterateCorpusEntries(threads, isCurrent) {
     for (const thread of threads) {
         const title = truncateForEmbedding(thread.name || '');
         if (title.trim()) yield { threadId: thread.id, text: title, branchLabel: 'Current branch', isTitle: true };
         for (const message of thread.messages || []) {
-            const branchLabel = getMessageBranchLabel(message, currentLength);
+            const branchLabel = getMessageBranchLabel(message, isCurrent);
             for (const variant of getMessageSearchTexts(message)) {
                 const text = truncateForEmbedding(variant);
                 if (text.trim()) yield { threadId: thread.id, text, branchLabel, isTitle: false };
@@ -294,7 +292,7 @@ function* iterateCorpusEntries(threads, currentLength) {
     }
 }
 
-function searchableContentFingerprint(thread, currentLength) {
+function searchableContentFingerprint(thread, isCurrent) {
     // Retain two scalar hashes, not a second copy of message/swipe text. Check
     // the complete searchable content at publication, including same-tick edits
     // whose updatedAt value may not change.
@@ -308,7 +306,7 @@ function searchableContentFingerprint(thread, currentLength) {
         first = Math.imul(first ^ text.length, 0x01000193) >>> 0;
         second = Math.imul(second ^ text.length, 0x85ebca6b) >>> 0;
     };
-    for (const entry of iterateCorpusEntries([thread], currentLength)) {
+    for (const entry of iterateCorpusEntries([thread], isCurrent)) {
         append(entry.isTitle); append(entry.branchLabel); append(entry.text); count++;
     }
     return `${first}:${second}:${count}`;
@@ -323,9 +321,10 @@ export async function searchThreadsSemantic(query, options = {}) {
     if (!threads.length) return [];
     const recipe = getEmbeddingRecipeKey();
     const currentLength = getCurrentChatLength();
+    const isCurrent = createBranchFilter();
     const revisions = threads.map(thread => ({ thread, id: thread.id, name: thread.name,
         updatedAt: thread.updatedAt, messages: thread.messages, length: thread.messages?.length,
-        fingerprint: searchableContentFingerprint(thread, currentLength) }));
+        fingerprint: searchableContentFingerprint(thread, isCurrent) }));
     const check = () => {
         throwIfAborted(signal);
         if (threads !== getThreads() || threads.length !== revisions.length || currentLength !== getCurrentChatLength()
@@ -333,12 +332,13 @@ export async function searchThreadsSemantic(query, options = {}) {
     };
     const checkRevisions = (verifyContent = false) => {
         check();
+        const currentBranchFilter = verifyContent ? createBranchFilter() : null;
         for (let index = 0; index < revisions.length; index++) {
             const revision = revisions[index], thread = threads[index];
             if (revision.thread !== thread || revision.id !== thread.id || revision.name !== thread.name
                 || revision.updatedAt !== thread.updatedAt || revision.messages !== thread.messages
                 || revision.length !== thread.messages?.length
-                || (verifyContent && revision.fingerprint !== searchableContentFingerprint(thread, currentLength))) throw abortError();
+                || (verifyContent && revision.fingerprint !== searchableContentFingerprint(thread, currentBranchFilter))) throw abortError();
         }
     };
     check();
@@ -348,7 +348,7 @@ export async function searchThreadsSemantic(query, options = {}) {
     const bestByThread = new Map();
     let batch = [], chars = 0, completed = 0;
     let total = 0;
-    if (options.onProgress) for (const entry of iterateCorpusEntries(threads, currentLength)) total++;
+    if (options.onProgress) for (const entry of iterateCorpusEntries(threads, isCurrent)) total++;
     const scoreBatch = async entries => {
         checkRevisions();
         const texts = [...new Set(entries.map(entry => entry.text))];
@@ -371,7 +371,7 @@ export async function searchThreadsSemantic(query, options = {}) {
         completed += entries.length;
         options.onProgress?.(completed, total);
     };
-    for (const entry of iterateCorpusEntries(threads, currentLength)) {
+    for (const entry of iterateCorpusEntries(threads, isCurrent)) {
         check();
         if (batch.length && (batch.length >= SEARCH_BATCH_SIZE || chars + entry.text.length > SEARCH_BATCH_CHARS)) {
             await scoreBatch(batch); batch = []; chars = 0;

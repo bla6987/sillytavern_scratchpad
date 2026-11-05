@@ -4,6 +4,32 @@
  */
 
 import { createReasoningMeta, REASONING_STATE, REASONING_SOURCE } from './reasoning.js';
+import { throwIfAborted } from './requestLifecycle.js';
+
+export function hasChatCompletionService(context = SillyTavern.getContext()) {
+    const service = context.ChatCompletionService;
+    return typeof service?.presetToGeneratePayload === 'function' && typeof service?.sendRequest === 'function';
+}
+
+/** Let ST own provider settings and parsing, without changing the active preset. */
+export async function requestChatCompletion({ messages, stream = false, signal }) {
+    const context = SillyTavern.getContext();
+    const service = context.ChatCompletionService;
+    throwIfAborted(signal);
+    const settings = structuredClone(context.chatCompletionSettings);
+    const payload = await service.presetToGeneratePayload(settings, {}, {
+        model: context.getChatCompletionModel(), messages, stream,
+    });
+    // Scratch Pad supplies its own context and cannot execute main-chat tools.
+    // In particular, diagnostics and raw questions must not gain character names.
+    delete payload.tools;
+    delete payload.tool_choice;
+    payload.user_name = '';
+    payload.char_name = '';
+    payload.group_names = [];
+    throwIfAborted(signal);
+    return await service.sendRequest(payload, true, signal);
+}
 
 const GENERATE_URL = '/api/backends/chat-completions/generate';
 
@@ -158,6 +184,10 @@ function buildRequestBody(messages, settings, model) {
         body.azure_base_url = settings.azure_base_url;
         body.azure_deployment_name = settings.azure_deployment_name;
         body.azure_api_version = settings.azure_api_version;
+    }
+
+    if (source === SOURCES.WORKERS_AI) {
+        body.workers_ai_account_id = settings.workers_ai_account_id;
     }
 
     if (source === SOURCES.CLAUDE) {
@@ -366,6 +396,22 @@ function extractTokens(data, source) {
  * @yields {{ text: string, reasoning: string }}
  */
 export async function* streamGeneration({ messages, signal }) {
+    if (hasChatCompletionService()) {
+        const response = await requestChatCompletion({ messages, stream: true, signal });
+        if (typeof response !== 'function') throw new Error('SillyTavern did not return a streaming response.');
+        let text = '', reasoning = '';
+        for await (const chunk of response()) {
+            throwIfAborted(signal);
+            const nextText = chunk?.text ?? text;
+            const nextReasoning = chunk?.state?.reasoning ?? reasoning;
+            yield { text: nextText.slice(text.length), reasoning: nextReasoning.slice(reasoning.length) };
+            text = nextText; reasoning = nextReasoning;
+        }
+        throwIfAborted(signal);
+        return;
+    }
+
+    // Compatibility path for ST builds predating ChatCompletionService.
     const context = SillyTavern.getContext();
     const settings = context.chatCompletionSettings;
     const model = context.getChatCompletionModel();
@@ -417,6 +463,7 @@ export async function* streamGeneration({ messages, signal }) {
                         continue;
                     }
 
+                    throwStreamError(data);
                     const tokens = extractTokens(data, source);
                     if (tokens.text || tokens.reasoning) {
                         yield tokens;
@@ -438,6 +485,7 @@ export async function* streamGeneration({ messages, signal }) {
                 } catch {
                     continue;
                 }
+                throwStreamError(data);
                 const tokens = extractTokens(data, source);
                 if (tokens.text || tokens.reasoning) {
                     yield tokens;
@@ -447,6 +495,12 @@ export async function* streamGeneration({ messages, signal }) {
     } finally {
         reader.releaseLock();
     }
+}
+
+function throwStreamError(data) {
+    if (!data?.error && data?.type !== 'error') return;
+    const detail = typeof data.error === 'string' ? data.error : data.error?.message || data.message;
+    throw new Error(detail || 'The provider reported a streaming error.');
 }
 
 /**

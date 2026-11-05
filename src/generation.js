@@ -7,7 +7,8 @@ import { getSettings, isGlobalApiProfileForced } from './settings.js';
 import { getThreads, getThread, updateThread, addMessage, updateMessage, getMessage, saveMetadata, DEFAULT_CONTEXT_SETTINGS, getThreadContextSettings, ensureSwipeFields, addSwipe, setActiveSwipe, deleteSwipe, syncSwipeToMessage, getTimestamp } from './storage.js';
 import { getConnectionProfile, getConnectionProfileApiMap, resolveConnectionProfileId } from './connectionProfiles.js';
 import { parseThinkingFromText, extractReasoningFromResult, mergeReasoningCandidates, createHiddenReasoningCandidate, createReasoningMeta, REASONING_SOURCE, REASONING_STATE } from './reasoning.js';
-import { isStreamingSupported, streamGeneration, buildStreamReasoning } from './streaming.js';
+import { isStreamingSupported, streamGeneration, buildStreamReasoning, hasChatCompletionService, requestChatCompletion } from './streaming.js';
+import { isAbortError, throwIfAborted, awaitWithSignal } from './requestLifecycle.js';
 import { appendAuthorsNoteToMessages, appendAuthorsNoteToPromptParts } from './authorsNote.js';
 import { buildSwipeContext, getSwipeMessageIndices } from './swipeContext.js';
 import { chatScope, captureChatContext, fingerprintChatMessage, previousContext, contextChangeNotice, prepareContextSnapshot, recordSuccessfulContext, CONTEXT_REFERENCE_INSTRUCTION } from './contextTracking.js';
@@ -17,6 +18,8 @@ import { isDebugThread } from './threadModes.js';
 import { buildDebugSnapshot, DEBUG_SYSTEM_PROMPT } from './debugContext.js';
 import { readDebugRuntime } from './debugRuntime.js';
 import { autoSpeakText } from './tts.js';
+import { getStSystemPrompt } from './systemPrompt.js';
+import { filterThreadForCurrentBranch } from './branchHistory.js';
 
 const TITLE_REGEX = /^\*\*Title:\s*(.+?)\*\*\s*/m;
 
@@ -28,25 +31,6 @@ function getAuthorsNote() {
     const { chatMetadata } = SillyTavern.getContext();
     const note = chatMetadata?.note_prompt;
     return (typeof note === 'string' && note.trim()) ? note.trim() : '';
-}
-
-/**
- * Resolve SillyTavern's main system prompt across context variants.
- * @param {Object} [context] SillyTavern context
- * @returns {string} System prompt text, or empty string if unavailable
- */
-function getStSystemPrompt(context = SillyTavern.getContext()) {
-    const fromChatMetadata = context?.chatMetadata?.system_prompt;
-    if (typeof fromChatMetadata === 'string' && fromChatMetadata.trim()) {
-        return fromChatMetadata.trim();
-    }
-
-    const fromChatMetadataLegacy = context?.chat_metadata?.system_prompt;
-    if (typeof fromChatMetadataLegacy === 'string' && fromChatMetadataLegacy.trim()) {
-        return fromChatMetadataLegacy.trim();
-    }
-
-    return '';
 }
 
 /**
@@ -515,10 +499,6 @@ function createReasoningCandidate(text, source = REASONING_SOURCE.RESULT) {
     };
 }
 
-function isAbortError(error) {
-    return error?.name === 'AbortError' || /abort|cancel/i.test(error?.message || '');
-}
-
 function isHiddenReasoningProfile(profile, context = SillyTavern.getContext()) {
     const apiMap = getConnectionProfileApiMap(profile, context);
     if (apiMap?.selected !== 'openai') return false;
@@ -570,91 +550,51 @@ async function reportProfileTokenUsage(inputText, generationResult, profile) {
     }
 }
 
-async function callConnectionProfileGeneration({ profileId, systemPrompt = '', prompt = '', messages: prebuiltMessages = null, onToken, debug = false }) {
+async function callConnectionProfileGeneration({ profileId, systemPrompt = '', prompt = '', messages: prebuiltMessages = null, onToken, debug = false, signal }) {
     const context = SillyTavern.getContext();
     const service = context.ConnectionManagerRequestService;
     const profile = getConnectionProfile(profileId, context);
-
-    if (!service || !profile) {
-        throw new Error(`Connection profile with ID "${profileId}" not found.`);
-    }
+    if (!service || !profile) throw new Error(`Connection profile with ID "${profileId}" not found.`);
 
     const requestMessages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-    const inputText = [
-        systemPrompt || '',
-        ...requestMessages.map(message => message?.content || ''),
-    ].filter(Boolean).join('\n');
     const startedAt = Date.now();
-
-    async function sendProfileRequest(stream) {
-        const controller = new AbortController();
-        activeAbortController = controller;
-
-        try {
-            const response = await service.sendRequest(profileId, requestMessages, undefined, {
-                extractData: true,
-                includePreset: true,
-                ...(debug ? { includeInstruct: false } : {}),
-                stream,
-                signal: controller.signal,
-            });
-
-            if (stream && typeof response === 'function') {
-                let accumulatedText = '';
-                let accumulatedReasoning = '';
-                for await (const chunk of response()) {
-                    accumulatedText = chunk?.text ?? accumulatedText;
-                    accumulatedReasoning = chunk?.state?.reasoning ?? accumulatedReasoning;
-                    if (onToken && chunk?.text !== undefined) {
-                        onToken(accumulatedText, false);
-                    }
-                }
-
-                return {
-                    text: accumulatedText,
-                    streamReasoning: createReasoningCandidate(accumulatedReasoning, REASONING_SOURCE.STREAM),
-                    resultReasoning: null,
-                };
-            }
-
-            return {
-                text: response?.content || '',
-                streamReasoning: null,
-                resultReasoning: createReasoningCandidate(response?.reasoning || '', REASONING_SOURCE.RESULT),
-            };
-        } finally {
-            if (activeAbortController === controller) {
-                activeAbortController = null;
-            }
+    throwIfAborted(signal);
+    // Do not retry API failures as another request: an abort may be wrapped by
+    // Connection Manager, and a provider may already have billed a partial reply.
+    const response = await service.sendRequest(profileId, requestMessages, undefined, {
+        extractData: true, includePreset: true,
+        ...(debug ? { includeInstruct: false } : {}),
+        stream: Boolean(onToken), signal,
+    });
+    throwIfAborted(signal);
+    let text = '', reasoning = '';
+    if (typeof response === 'function') {
+        for await (const chunk of response()) {
+            throwIfAborted(signal);
+            text = chunk?.text ?? text;
+            reasoning = chunk?.state?.reasoning ?? reasoning;
+            if (chunk?.text !== undefined) onToken?.(text, false);
         }
+    } else {
+        text = response?.content || '';
+        reasoning = response?.reasoning || '';
     }
-
-    let generationResult;
-    if (onToken) {
-        try {
-            generationResult = await sendProfileRequest(true);
-        } catch (error) {
-            if (isAbortError(error)) {
-                throw error;
-            }
-            console.warn('[ScratchPad] Connection profile streaming failed, falling back to non-streaming:', error.message);
-        }
-    }
-
-    if (!generationResult) {
-        generationResult = await sendProfileRequest(false);
-    }
-
-    generationResult.hiddenReasoning = createHiddenReasoningCandidateForProfile(Date.now() - startedAt, profile, context);
-    await reportProfileTokenUsage(inputText, generationResult, profile);
+    throwIfAborted(signal);
+    const generationResult = {
+        text,
+        streamReasoning: typeof response === 'function' ? createReasoningCandidate(reasoning, REASONING_SOURCE.STREAM) : null,
+        resultReasoning: typeof response === 'function' ? null : createReasoningCandidate(reasoning),
+        hiddenReasoning: createHiddenReasoningCandidateForProfile(Date.now() - startedAt, profile, context),
+    };
+    await reportProfileTokenUsage(requestMessages.map(message => message.content || '').join('\n'), generationResult, profile);
     return generationResult;
 }
 
 /**
  * Unified generation helper.
- * When streaming is supported and onToken is provided, uses direct SSE streaming.
- * Otherwise uses sendGenerationRequest for the openai backend (returns raw API
- * response with structured reasoning fields), falls back to generateRaw for others.
+ * Uses ST's request service when available, with an isolated abort signal.
+ * Older hosts use the legacy adapter selected before sending; provider errors
+ * never launch an automatic second generation.
  *
  * @param {Object} options
  * @param {string} options.systemPrompt System prompt
@@ -663,93 +603,44 @@ async function callConnectionProfileGeneration({ profileId, systemPrompt = '', p
  * @param {Function} [options.onToken] Callback for streaming tokens: (accumulatedText, false)
  * @returns {Promise<{text: string, streamReasoning: Object|null, resultReasoning: Object|null}>}
  */
-async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages, onToken, debug = false }) {
+async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages, onToken, debug = false, signal }) {
     const context = SillyTavern.getContext();
     const currentApi = context.mainApi;
     let generationResult;
     const startedAt = Date.now();
+    const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
+    throwIfAborted(signal);
 
-    // Try streaming first when supported and a token callback is provided
     if (onToken && currentApi === 'openai' && isStreamingSupported()) {
-        try {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-
-            const controller = new AbortController();
-            activeAbortController = controller;
-
-            let accumulatedText = '';
-            let accumulatedReasoning = '';
-
-            try {
-                for await (const chunk of streamGeneration({ messages, signal: controller.signal })) {
-                    if (chunk.text) accumulatedText += chunk.text;
-                    if (chunk.reasoning) accumulatedReasoning += chunk.reasoning;
-                    if (chunk.text) {
-                        onToken(accumulatedText, false);
-                    }
-                }
-            } finally {
-                if (activeAbortController === controller) {
-                    activeAbortController = null;
-                }
-            }
-
-            const streamReasoning = buildStreamReasoning(accumulatedReasoning);
-            generationResult = { text: accumulatedText, streamReasoning, resultReasoning: null };
-        } catch (err) {
-            if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
-                throw err;
-            }
-            console.warn('[ScratchPad] Streaming failed, falling back to non-streaming:', err.message);
-            // Fall through to non-streaming path
+        let text = '', reasoning = '';
+        for await (const chunk of streamGeneration({ messages, signal })) {
+            throwIfAborted(signal);
+            text += chunk.text || '';
+            reasoning += chunk.reasoning || '';
+            if (chunk.text) onToken(text, false);
         }
-    }
-
-    // Non-streaming path
-    if (!generationResult && currentApi === 'openai') {
-        try {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-
-            const data = await context.sendGenerationRequest('quiet', { prompt: messages });
-            const text = context.extractMessageFromData(data) || '';
-            const resultReasoning = extractReasoningFromResult(data);
-            generationResult = { text, streamReasoning: null, resultReasoning };
-        } catch (err) {
-            if (err.name === 'AbortError' || /abort|cancel/i.test(err.message)) {
-                throw err;
-            }
-            // Diagnostics must not fall back into macro/instruct prompt construction.
-            if (debug) throw err;
-            console.warn('[ScratchPad] sendGenerationRequest failed, falling back to generateRaw:', err.message);
-            if (prebuiltMessages) {
-                // For multi-message mode, pass the messages array to generateRaw
-                const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-                const result = await context.generateRaw({ prompt: messages });
-                generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
-            } else {
-                const result = await context.generateRaw({ systemPrompt, prompt });
-                generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
-            }
-        }
-    }
-
-    if (!generationResult) {
+        generationResult = { text, streamReasoning: buildStreamReasoning(reasoning), resultReasoning: null };
+    } else if (currentApi === 'openai' && hasChatCompletionService(context)) {
+        const response = await requestChatCompletion({ messages, signal });
+        generationResult = { text: response?.content || '', streamReasoning: null, resultReasoning: createReasoningCandidate(response?.reasoning || '') };
+    } else if (currentApi === 'openai' && typeof context.sendGenerationRequest === 'function') {
+        // Legacy host capability, chosen before sending. Failures never launch
+        // another generation, and cancellation never calls the host's global stop.
+        const data = await awaitWithSignal(() => context.sendGenerationRequest('quiet', { prompt: messages }), signal);
+        if (data?.error) throw new Error(data.error.message || 'The provider reported an error.');
+        generationResult = { text: context.extractMessageFromData(data) || '', streamReasoning: null, resultReasoning: extractReasoningFromResult(data) };
+    } else {
+        let args;
         if (debug) {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-            // A system-only raw message avoids character names; disabling instruct
-            // avoids roleplay text embedded in the user's formatting templates.
             const content = (messages.map(message => `[${message.role.toUpperCase()}]\n${message.content}`).join('\n\n') + '\n\n[ASSISTANT]\n').replace(/\{\{/g, '{\u200b{');
-            const result = await context.generateRaw({ prompt: [{ role: 'system', content }], instructOverride: true, trimNames: false });
-            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
-        } else if (prebuiltMessages) {
-            const messages = buildMessagesForGeneration({ systemPrompt, prompt, messages: prebuiltMessages, debug });
-            const result = await context.generateRaw({ prompt: messages });
-            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+            args = { prompt: [{ role: 'system', content }], instructOverride: true, trimNames: false };
         } else {
-            const result = await context.generateRaw({ systemPrompt, prompt });
-            generationResult = { text: result || '', streamReasoning: null, resultReasoning: null };
+            args = prebuiltMessages ? { prompt: messages } : { systemPrompt, prompt };
         }
+        const text = await awaitWithSignal(() => context.generateRaw(args), signal);
+        generationResult = { text: text || '', streamReasoning: null, resultReasoning: null };
     }
+    throwIfAborted(signal);
 
     const durationMs = Date.now() - startedAt;
     if (generationResult) {
@@ -800,7 +691,7 @@ async function callGeneration({ systemPrompt, prompt, messages: prebuiltMessages
  * @param {Array} [options.messages] Pre-built messages array (multi-message format)
  * @returns {Promise<{text: string, streamReasoning: null, resultReasoning: null}>}
  */
-async function callStandardGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null }) {
+async function callStandardGeneration({ systemPrompt = '', prompt = '', messages: prebuiltMessages = null, signal }) {
     const context = SillyTavern.getContext();
     const startedAt = Date.now();
 
@@ -819,9 +710,9 @@ async function callStandardGeneration({ systemPrompt = '', prompt = '', messages
     try {
         let text;
         if (prebuiltMessages) {
-            text = await context.generateRaw({ prompt: buildMessages() });
+            text = await awaitWithSignal(() => context.generateRaw({ prompt: buildMessages() }), signal);
         } else {
-            text = await context.generateRaw({ systemPrompt, prompt });
+            text = await awaitWithSignal(() => context.generateRaw({ systemPrompt, prompt }), signal);
         }
 
         // Report token usage (approximate, mirrors the custom generation path)
@@ -858,7 +749,10 @@ async function callStandardGeneration({ systemPrompt = '', prompt = '', messages
 
 async function runGenerationForThread({ threadId, promptData, onStream = null, useStandardGeneration = false, profileResolution = null, generationInfo = null }) {
     const generationId = `sp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    if (activeGenerationId) throw new Error('A Scratch Pad request is already running.');
     activeGenerationId = generationId;
+    const controller = new AbortController();
+    activeAbortController = controller;
 
     try {
         const resolution = profileResolution || getEffectiveProfileResolutionForThread(threadId);
@@ -874,22 +768,29 @@ async function runGenerationForThread({ threadId, promptData, onStream = null, u
                 messages: promptData.messages,
                 onToken,
                 debug: promptData.debug === true,
+                signal: controller.signal,
             })
             : useStandardGeneration && !promptData.debug
-                ? await callStandardGeneration(promptData)
+                ? await callStandardGeneration({ ...promptData, signal: controller.signal })
                 : await callGeneration({
                     systemPrompt: promptData.systemPrompt,
                     prompt: promptData.prompt,
                     messages: promptData.messages,
                     onToken,
                     debug: promptData.debug === true,
+                    signal: controller.signal,
                 });
 
+        throwIfAborted(controller.signal);
         if (onStream) onStream(result.text, true);
         result.generationInfo = resolvedGenerationInfo;
         return result;
+    } catch (error) {
+        throwIfAborted(controller.signal);
+        throw error;
     } finally {
         if (activeGenerationId === generationId) activeGenerationId = null;
+        if (activeAbortController === controller) activeAbortController = null;
     }
 }
 
@@ -1005,21 +906,6 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
         const reasoningMeta = reasoningPayload.reasoningMeta;
         const responseWithoutThinking = reasoningPayload.cleanedResponse;
 
-        // Check if generation was cancelled
-        if (checkAndResetCancellation()) {
-            updateMessage(threadId, assistantMessage.id, {
-                content: responseText || '',
-                thinking: combinedThinking,
-                reasoningMeta,
-                noContext: true,
-                gen_started: assistantMessage.gen_started,
-                gen_finished: genFinished,
-                extra: generationInfoToExtra(resultGenerationInfo),
-                status: responseText ? 'complete' : 'cancelled'
-            });
-            await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
-        }
 
         updateMessage(threadId, assistantMessage.id, {
             content: responseWithoutThinking,
@@ -1044,7 +930,7 @@ async function generateNoContextResponse(userPrompt, threadId, onStream = null, 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
         // Check if this was a cancellation
-        if (checkAndResetCancellation()) {
+        if (isAbortError(error)) {
             const thread = getThread(threadId);
             if (thread) {
                 const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1130,6 +1016,7 @@ async function buildDebugPrompt(userQuestion, thread, isFirstMessage, profileId)
  * @returns {Promise<Object>} { systemPrompt, prompt } or { systemPrompt, messages } when multi-message mode
  */
 async function buildPrompt(userQuestion, thread, isFirstMessage = false, profileId = null) {
+    thread = filterThreadForCurrentBranch(thread);
     // Fixed thread purpose takes precedence over every story-context toggle.
     if (isDebugThread(thread)) return buildDebugPrompt(userQuestion, thread, isFirstMessage, profileId);
     const context = SillyTavern.getContext();
@@ -1192,7 +1079,7 @@ async function buildPrompt(userQuestion, thread, isFirstMessage = false, profile
     const tokenBudget = getPromptTokenBudget(context, profileId);
 
     // Context that doesn't shrink when the prompt is trimmed to fit
-    const stSystemPrompt = settings.includeSystemPrompt ? getStSystemPrompt(context) : '';
+    const stSystemPrompt = settings.includeSystemPrompt ? await getStSystemPrompt(context) : '';
     const characterCards = (settings.includeCharacterCard || settings.characterCardOnly)
         ? buildCharacterCardsContext(context)
         : '';
@@ -1348,7 +1235,6 @@ export async function buildPromptPreview(threadId, question, contextSettings = n
 
 // Track active generation for streaming token identification
 let activeGenerationId = null;
-let isCancellationRequested = false;
 let activeAbortController = null;
 // Cover the entire request, including metadata saves and async prompt building.
 // Saved pending messages without an owner in this page cannot finish themselves.
@@ -1398,29 +1284,9 @@ export function recoverInterruptedGenerations() {
  * @returns {boolean} True if there was an active generation to cancel
  */
 export function cancelGeneration() {
-    if (activeGenerationId) {
-        isCancellationRequested = true;
-        activeGenerationId = null;
-
-        // Abort our own streaming request if active
-        if (activeAbortController) {
-            try { activeAbortController.abort(); } catch { /* noop */ }
-            activeAbortController = null;
-        }
-
-        // Try to stop SillyTavern's generation if possible
-        try {
-            const context = SillyTavern.getContext();
-            if (context.stopGeneration) {
-                context.stopGeneration();
-            }
-        } catch (e) {
-            console.warn('[ScratchPad] Could not stop ST generation:', e);
-        }
-
-        return true;
-    }
-    return false;
+    if (!activeGenerationId) return false;
+    activeAbortController?.abort();
+    return true;
 }
 
 /**
@@ -1429,16 +1295,6 @@ export function cancelGeneration() {
  */
 export function isGenerationActive() {
     return activeGenerationId !== null;
-}
-
-/**
- * Check and reset cancellation flag
- * @returns {boolean} True if cancellation was requested
- */
-function checkAndResetCancellation() {
-    const wasCancelled = isCancellationRequested;
-    isCancellationRequested = false;
-    return wasCancelled;
 }
 
 async function generateAssistantForUserMessage(threadId, userMessage, isFirstMessage, onStream = null, options = {}) {
@@ -1501,20 +1357,6 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
             }
         }
 
-        // Check if generation was cancelled
-        if (checkAndResetCancellation()) {
-            updateMessage(threadId, assistantMessage.id, {
-                content: responseText || '',
-                thinking: combinedThinking,
-                reasoningMeta,
-                gen_started: assistantMessage.gen_started,
-                gen_finished: genFinished,
-                extra: { ...generationInfoToExtra(resultGenerationInfo, promptData.stats), contextComparisonSkipped: true },
-                status: responseText ? 'complete' : 'cancelled'
-            });
-            await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '', gen_started: assistantMessage.gen_started, gen_finished: genFinished, generationInfo: resultGenerationInfo };
-        }
 
         // Update assistant message with content and thinking
         updateMessage(threadId, assistantMessage.id, {
@@ -1535,7 +1377,7 @@ async function generateAssistantForUserMessage(threadId, userMessage, isFirstMes
 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
-        if (checkAndResetCancellation()) {
+        if (isAbortError(error)) {
             const thread = getThread(threadId);
             if (thread) {
                 const msgIndex = thread.messages.findIndex(m => m.id === assistantMessage.id);
@@ -1727,16 +1569,6 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
             updateThread(threadId, { name: title, titled: true });
         }
 
-        // Check cancellation
-        if (checkAndResetCancellation()) {
-            // Remove the empty swipe and restore previous
-            deleteSwipe(threadId, messageId, newSwipeIndex);
-            setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));
-            message.status = 'complete';
-            syncSwipeToMessage(message);
-            await saveMetadata();
-            return { success: false, cancelled: true, response: responseText || '', generationInfo: resultGenerationInfo };
-        }
 
         // Update the swipe content
         message.swipes[newSwipeIndex] = finalResponse;
@@ -1756,7 +1588,7 @@ export async function generateSwipe(threadId, messageId, onStream = null) {
 
     } catch (error) {
         genFinished = genFinished || new Date().toISOString();
-        if (checkAndResetCancellation()) {
+        if (isAbortError(error)) {
             deleteSwipe(threadId, messageId, newSwipeIndex);
             setActiveSwipe(threadId, messageId, Math.min(previousSwipeId, (message.swipes?.length || 1) - 1));
             message.status = 'complete';
@@ -1968,6 +1800,7 @@ export async function triggerGuidedResponse(guidanceText) {
  * @returns {Promise<Object>} { success, title, error }
  */
 export async function generateThreadTitle(thread) {
+    thread = filterThreadForCurrentBranch(thread);
     if (!thread || !thread.messages || thread.messages.length === 0) {
         return { success: false, error: 'Thread has no messages' };
     }

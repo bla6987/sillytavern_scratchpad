@@ -7,6 +7,7 @@ import { ensureScratchPadExists, saveMetadataDebounced } from './src/storage.js'
 import { getSettings, loadSettingsUI, initSettingsListeners, populateConnectionProfiles, applyTextSize, getDisplayMode } from './src/settings.js';
 import { registerCommands, initPopupFunctions } from './src/commands.js';
 import { isChatActive, recoverInterruptedGenerations } from './src/generation.js';
+import { migrateBranchHistory } from './src/branchHistory.js';
 import { initUI, disposeUI, openScratchPad, closeScratchPad, refreshScratchPadUI, isScratchPadOpen, resetScratchPadUIState } from './src/ui/index.js';
 
 const MODULE_NAME = 'scratchPad';
@@ -167,7 +168,8 @@ function addScratchPadButton(retries = 10) {
  */
 function prepareCurrentChat() {
     ensureScratchPadExists();
-    if (recoverInterruptedGenerations() > 0) {
+    const migrated = migrateBranchHistory();
+    if (recoverInterruptedGenerations() > 0 || migrated) {
         saveMetadataDebounced();
     }
 }

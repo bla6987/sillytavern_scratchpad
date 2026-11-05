@@ -51,6 +51,8 @@ Drag the panel's left edge to change its width. You can also Tab to the resize h
 
 Every display mode overlays the page without moving or resizing SillyTavern's main chat or toolbar. Pinned Sidebar sits below the toolbar and native drawers and keeps the chat usable behind it, so a wide panel can cover part of the chat. It temporarily falls back to a drawer with a backdrop on windows 1000px or narrower or while **Moving UI** is enabled. Phone-sized windows keep the full-width drawer. Resizing the window clamps the panel to fit without overwriting your saved width.
 
+Fullscreen uses its own width rather than SillyTavern's main-chat width setting. Its sidebar composer is labeled **Start thread**; the conversation's **Send** button continues the selected thread. Context Options and multiline inputs support touch scrolling inside the mobile drawer.
+
 ### Quick Questions
 
 Send a question directly from the chat input:
@@ -160,6 +162,8 @@ Going back to the thread list or reopening the drawer reconnects to a running re
 - If the reply they're waiting on is cancelled or fails, that thread's queued messages are put back into its input instead of being sent, so you can retry or rephrase first. This works even if you're in another thread: the text is waiting in that thread's input, ahead of anything you had typed there, when you open it.
 - The queue lives in memory: it is cleared when you switch chats or reload the page.
 
+Cancelling a Scratch Pad request does not stop the main chat. Provider errors, including errors received partway through a stream, fail the turn and do not automatically send a second request. Use **Retry** after addressing the error. Current SillyTavern Chat Completion and Connection Manager requests use a request-specific abort signal. Older hosts and the emergency `generateRaw` path cannot always abort the provider request; cancellation discards its eventual result without interrupting the main chat.
+
 ### Slash Commands
 
 | Command | Aliases | Description |
@@ -198,7 +202,7 @@ Quick questions and custom OOC instructions live in Prompts. Open **Connection â
 ### Content Inclusion
 
 - **Include Character Card**: Send character description and personality (default: ON). In a group chat, every member's card is sent (muted members are left out).
-- **Include System Prompt**: Send the main system prompt (default: OFF)
+- **Include System Prompt**: Send the effective main system prompt, honoring Prompt Manager enabled state, character/chat overrides, and the preference for character prompts. Text Completion uses its enabled system prompt (default: OFF).
 - **Include Author's Note**: Send the chat's Author's Note (default: OFF)
 - **Include Persona**: Send your persona's description (default: ON). Your messages in the chat history are labelled with your persona name either way.
 - **Include World Info**: Send the lorebook entries that the chat history and your question would activate (default: OFF). This is a dry-run scan, so it doesn't affect sticky or cooldown timers in the main chat.
@@ -267,6 +271,12 @@ Scratch pad data is stored in `chatMetadata.scratchPad` for each chat:
 - Threads persist when you close and reopen a chat
 - When you branch a chat, the new branch inherits all existing threads
 - Subsequent activity in either branch stays separate
+
+New turns carry an anchor to the main-chat message present when the question was asked. Display, prompt building, and search labels use that anchor: an old future stays under **Other branch** even when a different branch grows longer. Other-branch turns remain available for inspection and export, but are excluded from generation context and AI title generation. JSON imports intentionally remove source-chat anchors so the imported conversation is usable in its destination.
+
+Legacy position-based history is migrated when a chat opens. If its old position no longer exists, it stays marked as other-branch history instead of becoming current as the chat grows. A legacy branch that already grew past its fork before this upgrade has no reliable provenance to reconstruct; migration uses the history available at upgrade time. No saved turns are deleted by migration.
+
+Chat Completion requests use SillyTavern's own provider payload builder and parser when the installed host exposes them, without switching the active preset. Older hosts retain a compatibility adapter. Scratch Pad does not execute main-chat tools.
 
 ## Memory and long histories
 

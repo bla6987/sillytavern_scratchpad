@@ -21,8 +21,8 @@
 
     /* Text colors from ST theme */
     --sp-text-primary: var(--SmartThemeBodyColor, #e4e4e7);
-    --sp-text-secondary: var(--SmartThemeEmColor, #a1a1aa);
-    --sp-text-muted: color-mix(in srgb, var(--SmartThemeEmColor, #71717a) 60%, var(--SmartThemeBlurTintColor, #1a1a2e) 40%);
+    --sp-text-secondary: color-mix(in srgb, var(--SmartThemeBodyColor, #e4e4e7) 90%, var(--SmartThemeBlurTintColor, #1a1a2e) 10%);
+    --sp-text-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #e4e4e7) 85%, var(--SmartThemeBlurTintColor, #1a1a2e) 15%);
 
     /* Accent colors - blend ST accent with purple for unique branded look */
     --sp-accent: color-mix(in srgb, var(--SmartThemeQuoteColor, #6366f1) 70%, var(--sp-purple-accent) 30%);
@@ -246,7 +246,7 @@ body.sp-fullscreen-open {
 .sp-fullscreen {
     display: flex;
     flex-direction: column;
-    max-width: var(--sheldWidth, 1200px);
+    max-width: 1440px;
     width: calc(100vw - 4rem);
     max-height: calc(100dvh - 4rem);
     height: calc(100dvh - 4rem);
@@ -281,7 +281,7 @@ body.sp-fullscreen-open {
 
 /* Sidebar (thread list) */
 .sp-fullscreen-sidebar {
-    width: 280px;
+    width: clamp(300px, 30vw, 360px);
     border-right: 1px solid var(--sp-border);
     overflow: hidden;
     flex-shrink: 0;
@@ -738,7 +738,7 @@ body.sp-fullscreen-open {
 }
 
 .sp-thread-time {
-    font-size: calc(var(--sp-text-size) * 0.7);
+    font-size: max(0.75rem, calc(var(--sp-text-size) * 0.8));
     color: var(--sp-text-muted);
 }
 
@@ -808,6 +808,16 @@ body.sp-fullscreen-open {
     background: var(--sp-bg-secondary);
     border-top: 1px solid var(--sp-border);
     flex-shrink: 0;
+}
+
+.sp-fullscreen-sidebar .sp-quick-input-container {
+    flex-direction: column;
+}
+
+.sp-quick-input::placeholder,
+.sp-message-input::placeholder,
+.sp-thread-search-input::placeholder {
+    opacity: 1;
 }
 
 .sp-quick-input {
@@ -1361,7 +1371,7 @@ svg.sp-message-model-icon {
 }
 
 .sp-popup-subtitle {
-    font-size: calc(var(--sp-text-size) * 0.7);
+    font-size: max(0.75rem, calc(var(--sp-text-size) * 0.8));
     color: var(--sp-accent);
     text-transform: uppercase;
     letter-spacing: 0.03rem;

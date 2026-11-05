@@ -98,7 +98,7 @@ function createDrawer() {
     // Prevent body scroll when drawer is open (non-passive for iOS Safari)
     drawerElement.addEventListener('touchmove', (e) => {
         const target = e.target;
-        const scrollableEl = target.closest('.sp-messages, .sp-thread-list, .sp-popup-content');
+        const scrollableEl = target.closest('.sp-messages, .sp-thread-list, .sp-popup-content, .sp-context-options, textarea');
         if (!scrollableEl) {
             e.preventDefault();
         }

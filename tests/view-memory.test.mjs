@@ -20,6 +20,15 @@ function environment() {
             };
         }
         appendChild(child) { child.parent = this; this.children.push(child); return child; }
+        closest(selectors) {
+            for (let element = this; element; element = element.parent) {
+                if (selectors.split(',').some(selector => {
+                    selector = selector.trim();
+                    return selector.startsWith('.') ? element.classList.contains(selector.slice(1)) : element.tagName === selector;
+                })) return element;
+            }
+            return null;
+        }
         replaceChildren(...children) { for (const child of this.children) child.parent = null; this.children = []; children.forEach(child => this.appendChild(child)); }
         set innerHTML(_) { this.replaceChildren(); }
         get isConnected() { return this.root === true || !!this.parent?.isConnected; }
@@ -45,6 +54,23 @@ function environment() {
     };
     return { Element, body, host, document, globals, frames, timers, flush() { for (const callback of [...timers.values()]) callback(); timers.clear(); } };
 }
+
+test('drawer permits touch scrolling in context options and multiline inputs while locking its header', () => {
+    const env = environment();
+    const ui = vm.createContext(env.globals);
+    vm.runInContext(source('../src/ui/index.js'), ui);
+    const drawer = ui.createDrawer();
+    const options = new env.Element('sp-context-options');
+    const label = new env.Element('label'); options.appendChild(label); drawer.appendChild(options);
+    const textarea = new env.Element(); textarea.tagName = 'textarea'; drawer.appendChild(textarea);
+    const header = new env.Element('sp-header'); drawer.appendChild(header);
+    for (const [target, allowed] of [[label, true], [textarea, true], [header, false]]) {
+        const event = new Event('touchmove', { cancelable: true });
+        Object.defineProperty(event, 'target', { value: target });
+        drawer.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, !allowed);
+    }
+});
 
 test('all drawer/fullscreen close paths release conversation and thread-list DOM across repeated use', () => {
     const env = environment();

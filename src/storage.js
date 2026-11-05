@@ -11,6 +11,7 @@ import { getThreadMode, THREAD_MODE } from './threadModes.js';
 import { chatScope } from './contextTracking.js';
 import { preserveSnapshotsForUndo, restoreSnapshotsForUndo, pruneContextSnapshots } from './contextSnapshotStore.js';
 import { cloneWithSharedText } from './immutableTextClone.js';
+import { captureBranchAnchor, filterThreadForCurrentBranch, createBranchFilter, migrateBranchHistory } from './branchHistory.js';
 
 const MODULE_NAME = 'scratchPad';
 
@@ -270,13 +271,15 @@ export function addMessage(threadId, role, content, status = 'complete', chatMes
         messageIndex = chat ? chat.length : null;
     }
 
+    migrateBranchHistory();
     const message = {
         id: generateId(),
         role: role,
         content: content,
         timestamp: getTimestamp(),
         status: status,
-        chatMessageIndex: messageIndex
+        chatMessageIndex: messageIndex,
+        branchAnchor: captureBranchAnchor(SillyTavern.getContext(), messageIndex),
     };
 
     if (role === 'assistant') {
@@ -409,31 +412,12 @@ export function getCurrentChatLength() {
 
 /**
  * Get a thread filtered for the current branch
- * Messages created after the current chat length are hidden
+ * Messages anchored to an absent main-chat message remain in Other branch history
  * @param {string} threadId Thread ID
  * @returns {Object|null} Thread with filtered messages or null
  */
 export function getThreadForCurrentBranch(threadId) {
-    const thread = getThread(threadId);
-    if (!thread) return null;
-
-    const currentLength = getCurrentChatLength();
-    if (currentLength === null) return thread;
-
-    // Filter messages - keep legacy (no index) or those within current chat
-    const filteredMessages = [];
-    const branchedMessages = [];
-    for (const msg of thread.messages) {
-        if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
-            filteredMessages.push(msg);  // Legacy messages always shown
-        } else if (msg.chatMessageIndex <= currentLength) {
-            filteredMessages.push(msg);
-        } else {
-            branchedMessages.push(msg);
-        }
-    }
-
-    return { ...thread, messages: filteredMessages, branchedMessages };
+    return filterThreadForCurrentBranch(getThread(threadId));
 }
 
 /**
@@ -685,25 +669,12 @@ export function deleteSwipe(threadId, messageId, index) {
  * @returns {Array} Array of threads with filtered messages
  */
 export function getThreadsForCurrentBranch() {
-    const threads = getThreads();
-    const currentLength = getCurrentChatLength();
-
-    if (currentLength === null) return threads;
-
-    return threads.map(thread => {
-        const filteredMessages = [];
-        const branchedMessages = [];
-        for (const msg of thread.messages) {
-            if (msg.chatMessageIndex === undefined || msg.chatMessageIndex === null) {
-                filteredMessages.push(msg);
-            } else if (msg.chatMessageIndex <= currentLength) {
-                filteredMessages.push(msg);
-            } else {
-                branchedMessages.push(msg);
-            }
-        }
-        return { ...thread, messages: filteredMessages, branchedMessages };
-    });
+    const isCurrent = createBranchFilter();
+    return getThreads().map(thread => ({
+        ...thread,
+        messages: thread.messages.filter(isCurrent),
+        branchedMessages: thread.messages.filter(message => !isCurrent(message)),
+    }));
 }
 
 /**
